@@ -9,7 +9,8 @@ This MVP implements Module 1: Commercial Deal Intake using the Excel files in `d
 - Editable line items
 - Validation and warning checks
 - Deal totals, discounts, and estimated margin
-- Plan vs actual, price-volume, inventory, aging, tender, and competitor context
+- Executive summary, decision score, score breakdown, and plan inclusion logic
+- Planned price-volume variance, incremental opportunity analysis, gross profit impact, inventory, aging, tender, and competitor context
 - Approval route preview
 - Simulated approval queue
 - Session audit log
@@ -30,4 +31,3 @@ streamlit run streamlit_app.py
 ```
 
 The app reads source data from the local `demo-data` folder and stores newly created demo deals in Streamlit session state.
-

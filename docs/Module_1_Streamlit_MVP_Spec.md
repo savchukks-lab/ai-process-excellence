@@ -391,8 +391,8 @@ Header:
 Tabs:
 
 - Overview
-- Intake
 - Line Items
+- Analysis
 - Route Preview
 - Audit
 
@@ -417,6 +417,29 @@ Line Items:
 
 - Product-level details and calculated values
 
+Analysis:
+
+- Executive summary with final recommendation and rationale
+- Decision Score from 0 to 100
+- Score breakdown for Margin, Strategic, Inventory, Competitive, and Risk
+- Plan inclusion flag
+- Planned versus unplanned analysis logic
+- For planned deals:
+  - Planned revenue
+  - Proposed revenue
+  - Price variance = `(New Price - Planned Price) * New Quantity`
+  - Volume variance = `(New Quantity - Planned Quantity) * New Price`
+  - Net revenue variance
+  - Gross profit impact
+- For unplanned deals:
+  - Incremental revenue
+  - Average historical price
+  - Price versus historical average percent
+  - Proposed margin versus historical margin
+- Inventory and aging recommendation
+- Competitor intelligence summary
+- Approval route with trigger reasons
+
 Route Preview:
 
 - Approval policies triggered
@@ -437,6 +460,8 @@ Audit:
 - Submitted deals are read-only.
 - Draft deals can be reopened for editing.
 - User can inspect line-level details.
+- User can see planned versus unplanned analysis.
+- User can see decision score, score breakdown, gross profit impact, inventory and aging recommendation, and competitor intelligence summary.
 - User can see why approval roles are expected.
 
 ## Page 4: Approval Queue Preview
@@ -886,4 +911,3 @@ The Streamlit MVP is complete when:
 - It shows a deal detail view.
 - It records and displays audit events.
 - It can be demonstrated without live integrations.
-

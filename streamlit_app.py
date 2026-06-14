@@ -116,25 +116,39 @@ def init_state() -> None:
     st.session_state.setdefault("runtime_deals", [])
     st.session_state.setdefault("runtime_lines", [])
     st.session_state.setdefault("audit_events", [])
+    st.session_state.setdefault("deal_status_overrides", {})
+    st.session_state.setdefault("approval_confirmation", "")
     st.session_state.setdefault("selected_deal_id", None)
     st.session_state.setdefault("draft_lines", None)
-    st.session_state.setdefault("nav", "Deal Request List")
+    st.session_state.setdefault("current_page", "Deal Request List")
+    st.session_state.setdefault("nav_widget", "Deal Request List")
+    st.session_state.setdefault("_sync_nav_widget", False)
 
 
-def add_audit(deal_id: str, action: str, entity: str = "Deal", details: str = "") -> None:
-    st.session_state.audit_events.append(
-        {
-            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "Deal ID": deal_id,
-            "Actor": st.session_state.get("persona", "Demo User"),
-            "Role": st.session_state.get("role", "Demo Role"),
-            "Action": action,
-            "Entity": entity,
-            "Details": details,
-            "Source": "Streamlit MVP v1",
-            "Correlation ID": str(uuid4())[:8],
-        }
-    )
+def add_audit(
+    deal_id: str,
+    action: str,
+    entity: str = "Deal",
+    details: str = "",
+    decision: str = "",
+    comment: str = "",
+) -> None:
+    event = {
+        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Deal ID": deal_id,
+        "Actor": st.session_state.get("persona", "Demo User"),
+        "Role": st.session_state.get("role", "Demo Role"),
+        "Action": action,
+        "Entity": entity,
+        "Details": details,
+        "Source": "Streamlit MVP v1",
+        "Correlation ID": str(uuid4())[:8],
+    }
+    if decision:
+        event["Decision"] = decision
+    if comment:
+        event["Comment"] = comment
+    st.session_state.audit_events.append(event)
 
 
 def money(value: float | int | None) -> str:
@@ -184,6 +198,12 @@ def combined_deals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     runtime = get_runtime_deals_df()
     if not runtime.empty:
         seed = pd.concat([seed, runtime], ignore_index=True, sort=False)
+    overrides = st.session_state.get("deal_status_overrides", {})
+    if overrides and not seed.empty:
+        for deal_id, values in overrides.items():
+            mask = seed["Deal ID"].astype(str).eq(str(deal_id))
+            for key, value in values.items():
+                seed.loc[mask, key] = value
     return seed
 
 
@@ -197,9 +217,44 @@ def combined_lines(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 def navigate_to_deal_detail(deal_id: str, source: str) -> None:
     st.session_state.selected_deal_id = deal_id
-    st.session_state.nav = "Deal Detail"
+    st.session_state.current_page = "Deal Detail"
+    st.session_state._sync_nav_widget = True
     add_audit(deal_id, "Deal viewed", details=f"Opened from {source}.")
     st.rerun()
+
+
+def set_current_page(page: str) -> None:
+    st.session_state.current_page = page
+    st.session_state._sync_nav_widget = True
+    st.rerun()
+
+
+def sync_current_page_from_nav_widget() -> None:
+    st.session_state.current_page = st.session_state.nav_widget
+
+
+def update_deal_status(deal_id: str, status: str, decision: str, comment: str) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    updated_runtime = False
+    for deal in st.session_state.runtime_deals:
+        if str(deal.get("Deal ID")) == str(deal_id):
+            deal["Status"] = status
+            deal["Last Decision"] = decision
+            deal["Last Decision Comment"] = comment
+            deal["Last Decision Timestamp"] = timestamp
+            deal["Last Decision Actor"] = st.session_state.get("persona", "Demo User")
+            deal["Last Decision Role"] = st.session_state.get("role", "Demo Role")
+            updated_runtime = True
+            break
+    if not updated_runtime:
+        st.session_state.deal_status_overrides[str(deal_id)] = {
+            "Status": status,
+            "Last Decision": decision,
+            "Last Decision Comment": comment,
+            "Last Decision Timestamp": timestamp,
+            "Last Decision Actor": st.session_state.get("persona", "Demo User"),
+            "Last Decision Role": st.session_state.get("role", "Demo Role"),
+        }
 
 
 def product_lookup(data: dict[str, pd.DataFrame]) -> dict[str, dict]:
@@ -770,8 +825,60 @@ def score_deal(
             comp_parts.append("historical tender and nearby market signals are manageable")
         comp_reason = "; ".join(comp_parts)
     rationale = f"Selected because {inv_reason}. Competitor finding: {comp_reason}."
-    score_df = pd.DataFrame([{"Component": key, "Score": value, "Max": 20} for key, value in scores.items()])
+    display_names = {
+        "Margin Score": "Margin",
+        "Strategic Score": "Strategic",
+        "Inventory Score": "Inventory",
+        "Competitive Score": "Competitive",
+        "Risk Score": "Risk",
+    }
+    score_df = pd.DataFrame([{"Component": display_names[key], "Score": value, "Max": 20} for key, value in scores.items()])
     return score_df, total_score, recommendation, rationale
+
+
+def inventory_aging_recommendation(inventory_df: pd.DataFrame, aging_df: pd.DataFrame) -> str:
+    findings = []
+    if not inventory_df.empty:
+        shortage = safe_float(inventory_df["Inventory Shortage"].sum())
+        high_allocation = int((inventory_df["Allocation Risk"] == "High").sum())
+        excess = safe_float(inventory_df["Excess Inventory"].sum())
+        if shortage > 0 or high_allocation:
+            findings.append(f"Supply review recommended: {shortage:,.0f} units short and {high_allocation} line(s) with high allocation risk.")
+        elif excess > 0:
+            findings.append(f"Inventory can support the request with {excess:,.0f} units of excess coverage across analyzed lines.")
+        else:
+            findings.append("Inventory appears balanced against requested quantity and demand forecast.")
+    if not aging_df.empty:
+        near_expiry = int((aging_df["Near Expiry Inventory"] == "Yes").sum())
+        aging = int((aging_df["Aging Inventory"] == "Yes").sum())
+        if near_expiry:
+            findings.append(f"Use FEFO allocation and prioritize {near_expiry} near-expiry line(s) where quality status permits.")
+        elif aging:
+            findings.append(f"Aging inventory exists on {aging} line(s); allocate older released lots first.")
+        else:
+            findings.append("No near-expiry inventory condition is required beyond standard FEFO controls.")
+    return " ".join(findings) if findings else "Inventory and aging data is not available for this deal."
+
+
+def competitor_summary(competitor_df: pd.DataFrame) -> str:
+    if competitor_df.empty:
+        return "No competitor intelligence was found for the selected deal lines."
+    aggressive = int((competitor_df["Aggressive Competitor Pricing"] == "Yes").sum())
+    incumbent = int((competitor_df["Incumbent Competitor"] == "Yes").sum())
+    supply = int((competitor_df["Supply Issues"] == "Yes").sum())
+    responses = competitor_df["Recommended Response"].dropna().astype(str)
+    summary = []
+    if aggressive:
+        summary.append(f"{aggressive} line(s) show aggressive competitor pricing pressure.")
+    if incumbent:
+        summary.append(f"{incumbent} line(s) have incumbent competitor pressure.")
+    if supply:
+        summary.append(f"{supply} line(s) indicate competitor supply issues that may create a reliability opening.")
+    if not summary:
+        summary.append("Historical tender and nearby-market signals are manageable.")
+    if not responses.empty:
+        summary.append(f"Recommended response: {responses.iloc[0]}.")
+    return " ".join(summary)
 
 
 def route_with_trigger_reasons(route_df: pd.DataFrame, inventory_df: pd.DataFrame, competitor_df: pd.DataFrame, gp_impact: dict) -> pd.DataFrame:
@@ -936,8 +1043,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     if col_a.button("Open Selected Deal", type="primary", disabled=not bool(selected_to_open)):
         navigate_to_deal_detail(str(selected_to_open), "deal request list")
     if col_b.button("Create New Deal"):
-        st.session_state.nav = "New Deal Intake"
-        st.rerun()
+        set_current_page("New Deal Intake")
 
 
 def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) -> dict:
@@ -1104,8 +1210,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         if b.button("Submit Deal", type="primary", disabled=bool(errors)):
             deal_id = save_runtime_deal(header, calc_lines, summary, route_df, status="Submitted", recommendation=recommendation)
             add_audit(deal_id, "Deal submitted", details=f"Recommendation: {recommendation}")
-            st.session_state.selected_deal_id = deal_id
-            st.success(f"Submitted {deal_id}.")
+            navigate_to_deal_detail(deal_id, "new deal intake submission")
 
 
 def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df: pd.DataFrame, status: str, recommendation: str) -> str:
@@ -1129,6 +1234,8 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Contract Months": header["Contract Months"],
             "Strategic Rationale": header["Business Justification"],
             "Intake Risk": "High" if "Commercial Executive" in set(route_df["Role"]) else "Medium" if len(route_df) > 2 else "Low",
+            "Channel": header["Channel"],
+            "Included_In_Latest_Financial_Plan": "Yes",
             "Expected Route": " + ".join(route_df["Role"].tolist()),
             "Total Proposed": summary["total_proposed"],
             "Discount %": summary["discount_pct"],
@@ -1260,6 +1367,19 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     )
     st.info(f"Included_In_Latest_Financial_Plan = {included_value}. {flag_message}")
 
+    st.subheader("Planned vs Unplanned Logic")
+    if included_in_plan:
+        st.write(
+            "Planned deal logic: compare requested price and quantity against the latest commercial plan. "
+            "Price variance is `(New Price - Planned Price) * New Quantity`; volume variance is "
+            "`(New Quantity - Planned Quantity) * New Price`; gross profit impact is proposed gross profit minus planned gross profit."
+        )
+    else:
+        st.write(
+            "Unplanned deal logic: classify as an incremental opportunity and compare requested economics against historical outcomes. "
+            "The app shows incremental revenue, average historical price, price versus historical average percent, and proposed margin versus historical margin."
+        )
+
     if included_in_plan:
         st.subheader("Plan Impact Analysis")
         st.dataframe(plan_df, use_container_width=True, hide_index=True)
@@ -1279,6 +1399,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     st.dataframe(price_volume_summary(data, lines, customer, channel), use_container_width=True, hide_index=True)
 
     st.subheader("Inventory Analysis")
+    st.info(inventory_aging_recommendation(inventory_df, aging_df))
     st.dataframe(inventory_df, use_container_width=True, hide_index=True)
 
     st.subheader("Aging Analysis")
@@ -1289,6 +1410,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     st.dataframe(tender_df, use_container_width=True, hide_index=True)
 
     st.subheader("Competitor Intelligence")
+    st.info(competitor_summary(competitor_df))
     st.dataframe(competitor_df, use_container_width=True, hide_index=True)
     with st.expander("Raw competitor signals"):
         st.dataframe(intel_df, use_container_width=True, hide_index=True)
@@ -1300,7 +1422,11 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
 def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     render_header("Approval Queue Preview", "Simulated role-based approval queue for submitted deals.")
     deals = combined_deals(data)
-    submitted = deals[deals["Status"].isin(["Submitted", "Changes Requested", "Pending Approval"])].copy()
+    confirmation = st.session_state.get("approval_confirmation", "")
+    if confirmation:
+        st.success(confirmation)
+        st.session_state.approval_confirmation = ""
+    submitted = deals[deals["Status"].isin(["Submitted", "Pending Approval"])].copy()
     if submitted.empty:
         st.info("No submitted deals available.")
         return
@@ -1344,8 +1470,24 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     decision = st.radio("Decision", ["Approve", "Request Changes", "Escalate", "Reject"], horizontal=True)
     comment = st.text_area("Decision comment")
     if st.button("Capture Simulated Decision", type="primary"):
-        add_audit(selected, f"Simulated approval action: {decision}", entity="Approval Step", details=comment)
-        st.success(f"Captured {decision} for {selected}.")
+        status_by_decision = {
+            "Approve": "Approved",
+            "Request Changes": "Changes Requested",
+            "Escalate": "Escalated",
+            "Reject": "Rejected",
+        }
+        new_status = status_by_decision[decision]
+        update_deal_status(selected, new_status, decision, comment)
+        add_audit(
+            selected,
+            f"Approval decision: {decision}",
+            entity="Approval Step",
+            details=f"Status changed to {new_status}.",
+            decision=decision,
+            comment=comment,
+        )
+        st.session_state.approval_confirmation = f"Captured {decision} for {selected}. Status updated to {new_status}."
+        st.rerun()
 
 
 def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
@@ -1390,9 +1532,13 @@ def sidebar() -> str:
     st.session_state.role = PERSONAS[persona]
     st.sidebar.caption(f"Role: {st.session_state.role}")
     pages = ["Deal Request List", "New Deal Intake", "Deal Detail", "Approval Queue Preview", "Reference Data", "Audit Log"]
-    if st.session_state.get("nav") not in pages:
-        st.session_state.nav = pages[0]
-    page = st.sidebar.radio("Navigation", pages, key="nav")
+    if st.session_state.get("current_page") not in pages:
+        st.session_state.current_page = pages[0]
+        st.session_state._sync_nav_widget = True
+    if st.session_state.get("nav_widget") not in pages or st.session_state.get("_sync_nav_widget"):
+        st.session_state.nav_widget = st.session_state.current_page
+        st.session_state._sync_nav_widget = False
+    st.sidebar.radio("Navigation", pages, key="nav_widget", on_change=sync_current_page_from_nav_widget)
     st.sidebar.divider()
     st.sidebar.metric("Session Deals", len(st.session_state.runtime_deals))
     st.sidebar.metric("Audit Events", len(st.session_state.audit_events))
@@ -1400,10 +1546,14 @@ def sidebar() -> str:
         st.session_state.runtime_deals = []
         st.session_state.runtime_lines = []
         st.session_state.audit_events = []
+        st.session_state.deal_status_overrides = {}
+        st.session_state.approval_confirmation = ""
         st.session_state.selected_deal_id = None
         st.session_state.draft_lines = None
+        st.session_state.current_page = pages[0]
+        st.session_state._sync_nav_widget = True
         st.rerun()
-    return page
+    return st.session_state.current_page
 
 
 def main() -> None:
