@@ -15,6 +15,11 @@ erDiagram
     DEAL ||--o{ DEAL_LINE_ITEM : contains
     PRODUCT ||--o{ DEAL_LINE_ITEM : appears_on
     PRODUCT ||--o{ INVENTORY_POSITION : has
+    PRODUCT ||--o{ INVENTORY_COVERAGE : has
+    PRODUCT ||--o{ EXPIRY_AGING_LOT : has
+    PRODUCT ||--o{ TENDER_HISTORY : appears_in
+    PRODUCT ||--o{ PRICE_VOLUME_HISTORY : appears_in
+    PRODUCT ||--o{ COMMERCIAL_PLAN : planned_for
     DEAL ||--o{ PRICING_ANALYSIS : has
     DEAL ||--o{ INVENTORY_ANALYSIS : has
     DEAL ||--o{ COMPETITIVE_INTEL_SUMMARY : has
@@ -24,6 +29,7 @@ erDiagram
     USER ||--o{ APPROVAL_STEP : assigned
     USER ||--o{ AUDIT_EVENT : performs
     APPROVAL_POLICY ||--o{ APPROVAL_STEP : drives
+    APPROVER_ROSTER ||--o{ APPROVAL_STEP : assigns
 ```
 
 ## Entity Definitions
@@ -149,6 +155,7 @@ Key fields:
 - Target close date
 - Contract duration months
 - Payment terms
+- Included in latest financial plan
 - Strategic rationale
 - Total list price
 - Total proposed price
@@ -266,6 +273,197 @@ Key fields:
 - Allocation restricted flag
 - Last refreshed timestamp
 
+### Commercial Plan
+
+Represents the approved or working commercial baseline used to compare requested deal pricing and volume against plan.
+
+Key fields:
+
+- Plan ID
+- Plan year
+- Plan period
+- Region
+- Country
+- Channel
+- Segment
+- Product ID or SKU
+- Product name
+- Therapeutic area
+- Plan units
+- Plan WAC or list price
+- Planned discount percent
+- Planned net price
+- Planned net revenue
+- Standard cost
+- Planned margin percent
+- Plan owner
+- Plan status
+
+Supports:
+
+- Price request versus plan analysis.
+- Discount variance analysis.
+- Net price variance analysis.
+- Revenue and margin variance analysis.
+- Channel and segment plan comparison.
+
+Financial-plan logic:
+
+- A deal with `Included_In_Latest_Financial_Plan = Yes` should be evaluated against commercial plan rows.
+- A deal with `Included_In_Latest_Financial_Plan = No` should be classified as an incremental opportunity and benchmarked against historical price-volume records instead of plan variance.
+- The field should be stored on the deal header and may be repeated in deal summary outputs for reporting convenience.
+
+Demo source:
+
+- `demo-data/Commercial_Plan.xlsx`
+
+### Price-Volume History
+
+Represents historical requested and approved commercial outcomes at customer, product, period, and channel level.
+
+Key fields:
+
+- History ID
+- Period
+- Region
+- Country
+- Customer
+- Channel
+- Product ID or SKU
+- Product name
+- Therapeutic area
+- Requested units
+- Approved units
+- WAC or list price
+- Requested net price
+- Requested discount percent
+- Approved net price
+- Approved discount percent
+- Approved revenue
+- Outcome
+- Commercial driver
+
+Supports:
+
+- Price-volume analysis.
+- Historical benchmark analysis.
+- Deal comparables.
+- Discount elasticity review.
+- Requested versus approved price and volume review.
+- Incremental opportunity benchmarking when a deal is not included in the latest financial plan.
+
+Demo source:
+
+- `demo-data/Price_Volume_History.xlsx`
+
+### Inventory Coverage
+
+Represents demand-backed inventory availability by product, region, and location.
+
+Key fields:
+
+- Coverage ID
+- Snapshot date
+- Region
+- Location
+- Product ID or SKU
+- Product name
+- Therapeutic area
+- Storage
+- On hand quantity
+- Reserved quantity
+- Available quantity
+- Open orders quantity
+- Average monthly demand
+- Coverage days
+- Lead time days
+- Coverage status
+- Allocation note
+
+Supports:
+
+- Inventory coverage analysis.
+- Supply risk screening.
+- Lead-time feasibility checks.
+- Allocation review.
+- Deal fulfillment risk analysis.
+
+Demo source:
+
+- `demo-data/Inventory_Coverage.xlsx`
+
+### Expiry Aging Lot
+
+Represents lot-level inventory aging and expiry exposure.
+
+Key fields:
+
+- Lot ID
+- Product ID or SKU
+- Product name
+- Therapeutic area
+- Region
+- Location
+- Manufacture date
+- Expiry date
+- Days to expiry
+- Expiry bucket
+- Quantity on hand
+- Inventory value
+- Storage
+- Quality status
+- Disposition recommendation
+
+Supports:
+
+- Expiry and aging analysis.
+- FEFO prioritization.
+- Near-expiry tender allocation.
+- Inventory write-off risk review.
+- Redistribution recommendations.
+
+Demo source:
+
+- `demo-data/Expiry_Aging.xlsx`
+
+### Tender History
+
+Represents public, GPO, payer, hospital, and distributor tender outcomes used for competitive and pricing context.
+
+Key fields:
+
+- Tender ID
+- Tender date
+- Region
+- Country
+- Tendering account
+- Tender type
+- Product ID or SKU
+- Product name
+- Therapeutic area
+- Status
+- Tender value
+- Tender units
+- WAC or list price
+- Winning net price
+- Winning discount percent
+- Primary competitor
+- Outcome
+- Loss or win driver
+- Contract term
+
+Supports:
+
+- Tender competitive intelligence.
+- Win/loss review.
+- Tender price benchmarking.
+- Competitive pressure scoring.
+- Approval rationale for public and institutional deals.
+
+Demo source:
+
+- `demo-data/Tender_History.xlsx`
+
 ### Competitive Intelligence Record
 
 Represents raw or curated competitor context.
@@ -295,6 +493,28 @@ Example signal types:
 - Feature comparison
 - Incumbent vendor
 - Market trend
+
+Additional tender-focused fields:
+
+- Region
+- Country
+- Channel
+- Therapeutic area
+- Signal type
+- Source type
+- Recommended response
+- Freshness
+
+Supports:
+
+- Tender competitive intelligence.
+- Account-specific competitor context.
+- Competitor pressure flags during deal intake.
+- Recommendation and approval rationale.
+
+Demo source:
+
+- `demo-data/Competitor_Intelligence.xlsx`
 
 ### Pricing Analysis
 
@@ -406,6 +626,40 @@ Key fields:
 - Escalation threshold hours
 - Created timestamp
 - Updated timestamp
+
+Demo source:
+
+- `demo-data/Approval_Matrix.xlsx`
+
+### Approver Roster
+
+Represents the users or groups eligible to approve deals for a given role, region, therapeutic area, channel, or segment.
+
+Key fields:
+
+- Approver ID
+- Role
+- Assignment type
+- Approver name
+- Region scope
+- Therapeutic area scope
+- Channel scope
+- Segment scope
+- SLA hours
+- Availability
+- Delegate
+
+Supports:
+
+- Approval routing.
+- Backup assignment.
+- Escalation simulation.
+- SLA calculation.
+- Role and scope matching.
+
+Demo source:
+
+- `demo-data/Approver_Roster.xlsx`
 
 ### Approval Step
 
@@ -529,12 +783,31 @@ Key fields:
 - A customer has many opportunities.
 - An opportunity has many deals.
 - A deal has many line items.
+- A commercial plan has many planned product-period-channel rows.
+- A deal line item can be compared against commercial plan rows by product, region, segment, channel, and period.
+- A deal line item can be compared against price-volume history by product, customer, region, channel, and therapeutic area.
+- A product has many inventory coverage records.
+- A product has many expiry aging lot records.
+- A product has many tender history records.
+- A customer or account type has many competitor intelligence records.
 - A deal has many analyses and recommendations over time.
 - A deal has one current recommendation.
 - A deal has many approval steps.
 - Approval policies generate approval steps.
+- Approval policies and approver roster records determine assigned approval steps.
 - A deal has many audit events.
 - AI-generated summaries reference model metadata.
+
+## Analysis Dataset Coverage
+
+| Analysis Need | Required Datasets | Current Demo Files |
+| --- | --- | --- |
+| Price request versus plan analysis | Deal requests, deal line items, product master, commercial plan | `Sample_Deal_Requests.xlsx`, `Product_Master.xlsx`, `Commercial_Plan.xlsx` |
+| Price-volume analysis | Deal requests, deal line items, price-volume history, product master | `Sample_Deal_Requests.xlsx`, `Price_Volume_History.xlsx`, `Product_Master.xlsx` |
+| Inventory coverage analysis | Deal line items, product master, inventory coverage | `Sample_Deal_Requests.xlsx`, `Product_Master.xlsx`, `Inventory_Coverage.xlsx` |
+| Expiry and aging analysis | Product master, inventory lots, expiry buckets | `Product_Master.xlsx`, `Expiry_Aging.xlsx` |
+| Tender competitive intelligence | Tender history, competitor intelligence, customers, products | `Tender_History.xlsx`, `Competitor_Intelligence.xlsx`, `Customer_Master.xlsx`, `Product_Master.xlsx` |
+| Approval routing | Deal requests, approval matrix, approver roster, customer/product context | `Sample_Deal_Requests.xlsx`, `Approval_Matrix.xlsx`, `Approver_Roster.xlsx`, `Customer_Master.xlsx`, `Product_Master.xlsx` |
 
 ## Derived Fields
 
@@ -546,11 +819,92 @@ The following fields should generally be derived rather than manually entered:
 - Total discount percent
 - Estimated gross margin amount
 - Estimated gross margin percent
+- Planned revenue
+- Proposed revenue
+- Price variance
+- Volume variance
+- Net revenue variance
+- Gross profit variance
+- Incremental revenue
+- Average historical price
+- Price versus historical price percent
+- Historical average margin percent
+- Proposed margin percent
+- Margin difference
 - Pricing risk rating
 - Inventory risk rating
 - Overall risk rating
 - Current approval step
 - Approval cycle time
+
+## Financial Plan Analysis Logic
+
+### Financial Plan Inclusion Flag
+
+`Included_In_Latest_Financial_Plan` indicates whether the requested deal volume and pricing are already represented in the latest approved or working commercial financial plan.
+
+Allowed values:
+
+- Yes
+- No
+
+### When Included_In_Latest_Financial_Plan = Yes
+
+The deal should be analyzed as a variance to plan.
+
+Required inputs:
+
+- Planned price
+- Planned quantity
+- Planned cost or standard cost
+- New proposed price
+- New proposed quantity
+- Standard cost
+
+Calculated fields:
+
+- Planned Revenue = Planned Price multiplied by Planned Quantity
+- Proposed Revenue = New Price multiplied by New Quantity
+- Price Variance = (New Price minus Planned Price) multiplied by New Quantity
+- Volume Variance = (New Quantity minus Planned Quantity) multiplied by New Price
+- Net Revenue Variance = Proposed Revenue minus Planned Revenue
+- Planned Gross Profit = (Planned Price minus Standard Cost) multiplied by Planned Quantity
+- Proposed Gross Profit = (New Price minus Standard Cost) multiplied by New Quantity
+- Gross Profit Variance = Proposed Gross Profit minus Planned Gross Profit
+
+Interpretation:
+
+- Negative price variance indicates requested price is below planned price.
+- Positive volume variance indicates requested quantity exceeds planned quantity.
+- Net revenue variance shows total revenue impact versus plan.
+- Gross profit variance shows margin-dollar impact versus plan.
+
+### When Included_In_Latest_Financial_Plan = No
+
+The deal should be classified as an incremental opportunity.
+
+Required inputs:
+
+- New proposed price
+- New proposed quantity
+- Historical average price
+- Historical average margin percent
+- Standard cost
+
+Calculated fields:
+
+- Incremental Revenue = New Price multiplied by New Quantity
+- Average Historical Price = historical approved or realized average net price
+- Price vs Historical Price % = (New Price minus Average Historical Price) divided by Average Historical Price
+- Historical Average Margin % = average historical gross margin percent
+- Proposed Margin % = (New Price minus Standard Cost) divided by New Price
+- Margin Difference = Proposed Margin % minus Historical Average Margin %
+
+Interpretation:
+
+- Incremental opportunities should not be penalized for missing plan volume.
+- Pricing should be judged against historical price-volume outcomes and margin quality.
+- Negative margin difference indicates the opportunity is below historical margin quality.
 
 ## Audit Requirements
 
@@ -581,4 +935,3 @@ Audit records should not be physically deleted through normal application flows.
 - Audit events should be retained at least as long as related deal records.
 - AI inputs and outputs should be retained only as needed for traceability and governance.
 - Sensitive fields may need masking in lower environments.
-
