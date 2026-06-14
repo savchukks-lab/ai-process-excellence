@@ -118,6 +118,7 @@ def init_state() -> None:
     st.session_state.setdefault("audit_events", [])
     st.session_state.setdefault("deal_status_overrides", {})
     st.session_state.setdefault("approval_confirmation", "")
+    st.session_state.setdefault("deal_detail_confirmation", "")
     st.session_state.setdefault("selected_deal_id", None)
     st.session_state.setdefault("draft_lines", None)
     st.session_state.setdefault("current_page", "Deal Request List")
@@ -1465,12 +1466,59 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
         "Special Terms Requested": False,
     }
     route_df = route_preview(header, calc_lines, summary, data)
+    deal_status = str(deal.get("Status", "")).strip()
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Status", deal.get("Status", ""))
+    c1.metric("Status", deal_status)
     c2.metric("Total Proposed", money(summary["total_proposed"]))
     c3.metric("Discount", pct(summary["discount_pct"]))
     c4.metric("Est. Margin", pct(summary["margin_pct"]))
-    st.markdown(status_badge(deal.get("Status", "")), unsafe_allow_html=True)
+    st.markdown(status_badge(deal_status), unsafe_allow_html=True)
+
+    confirmation = st.session_state.get("deal_detail_confirmation", "")
+    if confirmation:
+        st.success(confirmation)
+        st.session_state.deal_detail_confirmation = ""
+
+    if deal_status in {"Submitted", "Changes Requested"}:
+        context = build_deal_context(data, selected)
+        if context:
+            st.divider()
+            st.subheader("Decision Panel")
+            route_summary = " -> ".join(context["route_triggers"]["Role"].astype(str).tolist()) if not context["route_triggers"].empty else "No route available"
+            st.write(f"**Recommendation:** {context['recommendation']}")
+            panel_cols = st.columns(2)
+            panel_cols[0].metric("Decision Score", f"{context['total_score']}/100")
+            panel_cols[1].metric("Approval Route Summary", route_summary)
+            with st.expander("Approval route trigger reasons", expanded=False):
+                st.dataframe(context["route_triggers"], use_container_width=True, hide_index=True)
+
+            detail_decision = st.radio(
+                "Decision",
+                ["Approve", "Request Changes", "Escalate", "Reject"],
+                horizontal=True,
+                key=f"detail_decision_{selected}",
+            )
+            detail_comment = st.text_area("Decision comment", key=f"detail_decision_comment_{selected}")
+            if st.button("Capture Decision", type="primary", key=f"detail_capture_decision_{selected}"):
+                status_by_decision = {
+                    "Approve": "Approved",
+                    "Request Changes": "Changes Requested",
+                    "Escalate": "Escalated",
+                    "Reject": "Rejected",
+                }
+                new_status = status_by_decision[detail_decision]
+                update_deal_status(selected, new_status, detail_decision, detail_comment)
+                add_audit(
+                    selected,
+                    f"Approval decision: {detail_decision}",
+                    entity="Approval Step",
+                    details=f"Status changed to {new_status} from Deal Detail.",
+                    decision=detail_decision,
+                    comment=detail_comment,
+                )
+                st.session_state.selected_deal_id = selected
+                st.session_state.deal_detail_confirmation = f"Captured {detail_decision} for {selected}. Status updated to {new_status}."
+                st.rerun()
 
     tabs = st.tabs(["Overview", "Line Items", "Analysis", "Route Preview", "Audit"])
     with tabs[0]:
@@ -1772,6 +1820,7 @@ def sidebar() -> str:
         st.session_state.audit_events = []
         st.session_state.deal_status_overrides = {}
         st.session_state.approval_confirmation = ""
+        st.session_state.deal_detail_confirmation = ""
         st.session_state.approval_deal_to_review = ""
         st.session_state.selected_deal_id = None
         st.session_state.draft_lines = None
