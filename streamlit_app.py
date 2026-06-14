@@ -118,6 +118,7 @@ def init_state() -> None:
     st.session_state.setdefault("audit_events", [])
     st.session_state.setdefault("selected_deal_id", None)
     st.session_state.setdefault("draft_lines", None)
+    st.session_state.setdefault("nav", "Deal Request List")
 
 
 def add_audit(deal_id: str, action: str, entity: str = "Deal", details: str = "") -> None:
@@ -192,6 +193,13 @@ def combined_lines(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     if not runtime.empty:
         seed = pd.concat([seed, runtime], ignore_index=True, sort=False)
     return seed
+
+
+def navigate_to_deal_detail(deal_id: str, source: str) -> None:
+    st.session_state.selected_deal_id = deal_id
+    st.session_state.nav = "Deal Detail"
+    add_audit(deal_id, "Deal viewed", details=f"Opened from {source}.")
+    st.rerun()
 
 
 def product_lookup(data: dict[str, pd.DataFrame]) -> dict[str, dict]:
@@ -903,14 +911,30 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
             filtered = filtered[filtered[col].isin(selected)]
 
     display_cols = [col for col in ["Deal ID", "Deal Title", "Customer Name", "Deal Type", "Region", "Status", "Target Close Date", "Payment Terms", "Intake Risk", "Expected Route"] if col in filtered]
-    st.dataframe(filtered[display_cols], use_container_width=True, hide_index=True)
+    display_df = filtered[display_cols].reset_index(drop=True)
+    table_event = st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="deal_request_list_table",
+    )
+    table_selected = None
+    if isinstance(table_event, dict):
+        selected_rows = table_event.get("selection", {}).get("rows", [])
+    else:
+        selected_rows = getattr(getattr(table_event, "selection", None), "rows", [])
+    if selected_rows:
+        table_selected = str(display_df.iloc[selected_rows[0]]["Deal ID"])
 
     selected = st.selectbox("Open deal", filtered["Deal ID"].tolist(), index=0 if not filtered.empty else None)
     col_a, col_b = st.columns([1, 4])
-    if col_a.button("Open Selected Deal", type="primary", disabled=not bool(selected)):
-        st.session_state.selected_deal_id = selected
-        add_audit(selected, "Deal viewed", details="Opened from deal request list.")
-        st.rerun()
+    selected_to_open = table_selected or selected
+    if table_selected:
+        st.caption(f"Selected from list: {table_selected}")
+    if col_a.button("Open Selected Deal", type="primary", disabled=not bool(selected_to_open)):
+        navigate_to_deal_detail(str(selected_to_open), "deal request list")
     if col_b.button("Create New Deal"):
         st.session_state.nav = "New Deal Intake"
         st.rerun()
@@ -1366,9 +1390,9 @@ def sidebar() -> str:
     st.session_state.role = PERSONAS[persona]
     st.sidebar.caption(f"Role: {st.session_state.role}")
     pages = ["Deal Request List", "New Deal Intake", "Deal Detail", "Approval Queue Preview", "Reference Data", "Audit Log"]
-    default = st.session_state.get("nav", pages[0])
-    page = st.sidebar.radio("Navigation", pages, index=pages.index(default) if default in pages else 0)
-    st.session_state.nav = page
+    if st.session_state.get("nav") not in pages:
+        st.session_state.nav = pages[0]
+    page = st.sidebar.radio("Navigation", pages, key="nav")
     st.sidebar.divider()
     st.sidebar.metric("Session Deals", len(st.session_state.runtime_deals))
     st.sidebar.metric("Audit Events", len(st.session_state.audit_events))
