@@ -233,6 +233,18 @@ def sync_current_page_from_nav_widget() -> None:
     st.session_state.current_page = st.session_state.nav_widget
 
 
+def get_selected_dataframe_deal_id(table_event: object, display_df: pd.DataFrame) -> str | None:
+    if display_df.empty:
+        return None
+    if isinstance(table_event, dict):
+        selected_rows = table_event.get("selection", {}).get("rows", [])
+    else:
+        selected_rows = getattr(getattr(table_event, "selection", None), "rows", [])
+    if selected_rows:
+        return str(display_df.iloc[selected_rows[0]]["Deal ID"])
+    return None
+
+
 def update_deal_status(deal_id: str, status: str, decision: str, comment: str) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     updated_runtime = False
@@ -907,6 +919,177 @@ def route_with_trigger_reasons(route_df: pd.DataFrame, inventory_df: pd.DataFram
     return pd.DataFrame(rows)
 
 
+def build_deal_context(data: dict[str, pd.DataFrame], deal_id: str) -> dict | None:
+    deals = combined_deals(data)
+    if deals.empty or deal_id not in set(deals["Deal ID"].astype(str)):
+        return None
+    deal = deals[deals["Deal ID"].astype(str).eq(str(deal_id))].iloc[0].to_dict()
+    lines = combined_lines(data)
+    calc_lines = normalize_lines(lines[lines["Deal ID"].astype(str).eq(str(deal_id))], data)
+    summary = summarize_lines(calc_lines)
+    customer = deal.get("Customer Name", "")
+    region = deal.get("Region", "")
+    segment = deal.get("Segment", "")
+    account = customer_lookup(data).get(customer, {})
+    channel = account.get("Account Type", "")
+    included_value = str(deal.get("Included_In_Latest_Financial_Plan", "Yes")).strip() or "Yes"
+    included_in_plan = included_value.lower() == "yes"
+    plan_df = plan_impact_analysis(data, calc_lines, region, segment)
+    incremental_df = incremental_opportunity_analysis(data, calc_lines, customer, channel)
+    inventory_df = enhanced_inventory_analysis(data, calc_lines, region)
+    aging_df = enhanced_aging_analysis(data, calc_lines, region)
+    competitor_df = enhanced_competitor_intelligence(data, calc_lines, customer, region)
+    gp_impact = gross_profit_impact(calc_lines, plan_df, incremental_df, included_in_plan)
+    header = {
+        "Customer Name": customer,
+        "Region": region,
+        "Segment": segment,
+        "Account Type": channel,
+        "Channel": deal.get("Channel", channel),
+        "Payment Terms": deal.get("Payment Terms"),
+        "Contract Months": deal.get("Contract Months", 0),
+        "Special Terms Requested": False,
+    }
+    route_df = route_preview(header, calc_lines, summary, data)
+    score_df, total_score, recommendation, rationale = score_deal(
+        summary,
+        plan_df,
+        incremental_df,
+        inventory_df,
+        aging_df,
+        competitor_df,
+        route_df,
+        included_in_plan,
+    )
+    route_triggers = route_with_trigger_reasons(route_df, inventory_df, competitor_df, gp_impact)
+    return {
+        "deal": deal,
+        "lines": calc_lines,
+        "summary": summary,
+        "included_value": included_value,
+        "included_in_plan": included_in_plan,
+        "plan_df": plan_df,
+        "incremental_df": incremental_df,
+        "inventory_df": inventory_df,
+        "aging_df": aging_df,
+        "competitor_df": competitor_df,
+        "gp_impact": gp_impact,
+        "route_df": route_df,
+        "route_triggers": route_triggers,
+        "score_df": score_df,
+        "total_score": total_score,
+        "recommendation": recommendation,
+        "rationale": rationale,
+    }
+
+
+def render_inline_deal_preview(context: dict, compact: bool = False) -> None:
+    deal = context["deal"]
+    gp_impact = context["gp_impact"]
+    st.subheader("Selected Deal Preview")
+    st.write(
+        f"**{deal.get('Deal Title', '')}** · {deal.get('Customer Name', '')} · "
+        f"Status: **{deal.get('Status', '')}** · Plan flag: **{context['included_value']}**"
+    )
+    metrics = st.columns(4)
+    metrics[0].metric("Proposed Value", money(gp_impact["Proposed Revenue"]))
+    metrics[1].metric("Decision Score", f"{context['total_score']}/100")
+    metrics[2].metric("Recommendation", context["recommendation"])
+    metrics[3].metric("Gross Profit Impact", money(gp_impact["Gross Profit Variance"]))
+    st.caption(context["rationale"])
+    if compact:
+        st.info(inventory_aging_recommendation(context["inventory_df"], context["aging_df"]))
+        st.info(competitor_summary(context["competitor_df"]))
+        return
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Inventory / Aging Summary**")
+        st.info(inventory_aging_recommendation(context["inventory_df"], context["aging_df"]))
+        st.dataframe(context["inventory_df"], use_container_width=True, hide_index=True)
+        st.dataframe(context["aging_df"], use_container_width=True, hide_index=True)
+    with right:
+        st.markdown("**Competitor Summary**")
+        st.info(competitor_summary(context["competitor_df"]))
+        st.dataframe(context["competitor_df"], use_container_width=True, hide_index=True)
+    st.markdown("**Approval Route Trigger Reasons**")
+    st.dataframe(context["route_triggers"], use_container_width=True, hide_index=True)
+
+
+def approval_review_summary(context: dict) -> dict:
+    summary = context["summary"]
+    inventory_df = context["inventory_df"]
+    aging_df = context["aging_df"]
+    competitor_df = context["competitor_df"]
+    key_risk = "No material risk signal detected."
+    if not inventory_df.empty and safe_float(inventory_df["Inventory Shortage"].sum()) > 0:
+        key_risk = f"Inventory shortage of {safe_float(inventory_df['Inventory Shortage'].sum()):,.0f} units requires review."
+    elif not competitor_df.empty and (competitor_df["Aggressive Competitor Pricing"] == "Yes").any():
+        key_risk = "Aggressive competitor pricing may pressure approval economics."
+    elif summary["margin_pct"] is not None and summary["margin_pct"] < summary["weighted_target_margin"]:
+        key_risk = "Estimated margin is below weighted target margin."
+
+    required_condition = "No special condition required."
+    if not aging_df.empty and (aging_df["Near Expiry Inventory"] == "Yes").any():
+        required_condition = "Use FEFO and confirm aging or near-expiry stock allocation before approval."
+    elif not inventory_df.empty and (inventory_df["Allocation Risk"] == "High").any():
+        required_condition = "Operations must confirm allocation feasibility and supply continuity."
+    elif context["recommendation"] in {"Request Price Revision", "Approve with Conditions"}:
+        required_condition = "Pricing or finance reviewer must document approval guardrails."
+
+    return {
+        "Key Reason": context["rationale"],
+        "Key Risk": key_risk,
+        "Required Condition": required_condition,
+        "Inventory Summary": inventory_aging_recommendation(inventory_df, aging_df),
+        "Aging Summary": aging_df[["SKU", "Days To Expiry", "Near Expiry Inventory", "Aging Inventory", "Disposition"]].copy() if not aging_df.empty else pd.DataFrame(),
+        "Competitor Summary": competitor_summary(competitor_df),
+    }
+
+
+def render_approval_review_panel(context: dict) -> None:
+    deal = context["deal"]
+    summary = context["summary"]
+    review = approval_review_summary(context)
+
+    st.subheader("Selected Deal Review")
+    top = st.columns(5)
+    top[0].metric("Deal ID", str(deal.get("Deal ID", "")))
+    top[1].metric("Status", str(deal.get("Status", "")))
+    top[2].metric("Proposed Value", money(summary["total_proposed"]))
+    top[3].metric("Discount", pct(summary["discount_pct"]))
+    top[4].metric("Est. Margin", pct(summary["margin_pct"]))
+
+    st.write(f"Customer: **{deal.get('Customer Name', '')}**")
+    st.write(f"Deal title: **{deal.get('Deal Title', '')}**")
+
+    decision_cols = st.columns(2)
+    decision_cols[0].metric("Decision Score", f"{context['total_score']}/100")
+    decision_cols[1].metric("Recommendation", context["recommendation"])
+
+    st.markdown("**Key reason**")
+    st.write(review["Key Reason"])
+    st.markdown("**Key risk**")
+    st.warning(review["Key Risk"])
+    st.markdown("**Required condition**")
+    st.info(review["Required Condition"])
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Inventory summary**")
+        st.info(review["Inventory Summary"])
+        st.markdown("**Aging summary**")
+        if review["Aging Summary"].empty:
+            st.caption("No aging summary available.")
+        else:
+            st.dataframe(review["Aging Summary"], use_container_width=True, hide_index=True)
+    with right:
+        st.markdown("**Competitor summary**")
+        st.info(review["Competitor Summary"])
+
+    st.markdown("**Approval route trigger reasons**")
+    st.dataframe(context["route_triggers"], use_container_width=True, hide_index=True)
+
+
 def validate_deal(header: dict, lines: pd.DataFrame, data: dict[str, pd.DataFrame]) -> tuple[list[str], list[str]]:
     errors = []
     warnings = []
@@ -1017,6 +1200,12 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         if selected and col in filtered:
             filtered = filtered[filtered[col].isin(selected)]
 
+    if st.button("Create New Deal", type="secondary"):
+        set_current_page("New Deal Intake")
+    if filtered.empty:
+        st.info("No deals match the current filters.")
+        return
+
     display_cols = [col for col in ["Deal ID", "Deal Title", "Customer Name", "Deal Type", "Region", "Status", "Target Close Date", "Payment Terms", "Intake Risk", "Expected Route"] if col in filtered]
     display_df = filtered[display_cols].reset_index(drop=True)
     table_event = st.dataframe(
@@ -1027,23 +1216,23 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         selection_mode="single-row",
         key="deal_request_list_table",
     )
-    table_selected = None
-    if isinstance(table_event, dict):
-        selected_rows = table_event.get("selection", {}).get("rows", [])
-    else:
-        selected_rows = getattr(getattr(table_event, "selection", None), "rows", [])
-    if selected_rows:
-        table_selected = str(display_df.iloc[selected_rows[0]]["Deal ID"])
+    table_selected = get_selected_dataframe_deal_id(table_event, display_df)
 
-    selected = st.selectbox("Open deal", filtered["Deal ID"].tolist(), index=0 if not filtered.empty else None)
-    col_a, col_b = st.columns([1, 4])
-    selected_to_open = table_selected or selected
+    selected_to_open = table_selected
     if table_selected:
-        st.caption(f"Selected from list: {table_selected}")
-    if col_a.button("Open Selected Deal", type="primary", disabled=not bool(selected_to_open)):
-        navigate_to_deal_detail(str(selected_to_open), "deal request list")
-    if col_b.button("Create New Deal"):
-        set_current_page("New Deal Intake")
+        context = build_deal_context(data, table_selected)
+        if context:
+            render_inline_deal_preview(context, compact=True)
+            if st.button("Open Deal Detail", type="primary"):
+                navigate_to_deal_detail(table_selected, "deal request list row selection")
+    else:
+        st.caption("Select a deal row to preview it here.")
+
+    with st.expander("Fallback: open by dropdown"):
+        selected = st.selectbox("Open deal", filtered["Deal ID"].tolist(), index=0 if not filtered.empty else None)
+        selected_to_open = selected_to_open or selected
+        if st.button("Open Selected Deal", type="secondary", disabled=not bool(selected_to_open)):
+            navigate_to_deal_detail(str(selected_to_open), "deal request list dropdown")
 
 
 def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) -> dict:
@@ -1421,6 +1610,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
 
 def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     render_header("Approval Queue Preview", "Simulated role-based approval queue for submitted deals.")
+    st.info("Select a deal from the approval queue to review details and capture a decision.")
     deals = combined_deals(data)
     confirmation = st.session_state.get("approval_confirmation", "")
     if confirmation:
@@ -1465,11 +1655,42 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if queue.empty:
         st.info(f"No deals currently require {role}.")
         return
-    st.dataframe(queue, use_container_width=True, hide_index=True)
-    selected = st.selectbox("Review Deal", queue["Deal ID"].tolist())
-    decision = st.radio("Decision", ["Approve", "Request Changes", "Escalate", "Reject"], horizontal=True)
-    comment = st.text_area("Decision comment")
-    if st.button("Capture Simulated Decision", type="primary"):
+    table_event = st.dataframe(
+        queue,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="approval_queue_table",
+    )
+    table_selected = get_selected_dataframe_deal_id(table_event, queue)
+    if table_selected:
+        st.caption(f"Selected in table: {table_selected}. Use the dropdown below to load the review panel.")
+
+    deal_options = [""] + queue["Deal ID"].astype(str).tolist()
+    if st.session_state.get("approval_deal_to_review", "") not in deal_options:
+        st.session_state.approval_deal_to_review = ""
+    selected = st.selectbox(
+        "Select deal to review",
+        deal_options,
+        format_func=lambda value: "Select a deal..." if value == "" else value,
+        key="approval_deal_to_review",
+    )
+    if not selected:
+        st.warning("Select a deal to review before capturing a decision.")
+        return
+
+    context = build_deal_context(data, selected)
+    if not context:
+        st.warning("Selected deal details are no longer available.")
+        return
+
+    render_approval_review_panel(context)
+
+    st.subheader("Decision")
+    decision = st.radio("Decision", ["Approve", "Request Changes", "Escalate", "Reject"], horizontal=True, key=f"decision_{selected}")
+    comment = st.text_area("Decision comment", key=f"decision_comment_{selected}")
+    if st.button("Capture Decision", type="primary"):
         status_by_decision = {
             "Approve": "Approved",
             "Request Changes": "Changes Requested",
@@ -1488,6 +1709,9 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
         )
         st.session_state.approval_confirmation = f"Captured {decision} for {selected}. Status updated to {new_status}."
         st.rerun()
+
+    if st.button("Open Full Deal Detail", type="secondary"):
+        navigate_to_deal_detail(selected, "approval queue preview")
 
 
 def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
@@ -1548,6 +1772,7 @@ def sidebar() -> str:
         st.session_state.audit_events = []
         st.session_state.deal_status_overrides = {}
         st.session_state.approval_confirmation = ""
+        st.session_state.approval_deal_to_review = ""
         st.session_state.selected_deal_id = None
         st.session_state.draft_lines = None
         st.session_state.current_page = pages[0]
