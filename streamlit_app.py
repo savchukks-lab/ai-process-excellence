@@ -37,6 +37,10 @@ ROLE_ORDER = [
 
 PERSONAS = {
     "Maya Chen": "Sales Representative",
+    "Ethan Brooks": "Sales Representative",
+    "Sofia Romano": "Sales Representative",
+    "Noah Patel": "Sales Representative",
+    "Priya Shah": "Sales Representative",
     "Jordan Blake": "Sales Manager",
     "Priya Nair": "Pricing Analyst",
     "Marcus Reed": "Market Access Director",
@@ -44,6 +48,13 @@ PERSONAS = {
     "Elena Rossi": "Operations Reviewer",
     "Aisha Khan": "Legal Reviewer",
     "Sarah Morgan": "Commercial Executive",
+    "Admin User": "Admin",
+}
+
+SALES_MANAGER_TEAMS = {
+    "Jordan Blake": ["Maya Chen", "Sofia Romano", "Priya Shah"],
+    "Lena Torres": ["Ethan Brooks", "Noah Patel", "Sofia Romano"],
+    "Sarah Morgan": ["Maya Chen", "Ethan Brooks", "Sofia Romano", "Noah Patel", "Priya Shah", "Jordan Blake", "Lena Torres"],
 }
 
 APPROVAL_STEP_STATUS = {
@@ -78,11 +89,50 @@ DECISIONS = ["Approve", "Request Changes", "Escalate", "Reject"]
 
 ROLE_ALLOWED_DECISIONS = {
     "Sales Representative": [],
-    "Sales Manager": ["Approve", "Request Changes", "Escalate"],
-    "Pricing Analyst": ["Approve", "Request Changes", "Escalate"],
-    "Finance Approver": ["Approve", "Request Changes", "Escalate"],
-    "Operations Reviewer": ["Approve", "Request Changes", "Escalate"],
-    "Commercial Executive": ["Approve", "Request Changes", "Reject"],
+    "Sales Manager": ["Approve", "Request Changes"],
+    "Pricing Analyst": ["Approve", "Request Changes"],
+    "Finance Approver": ["Approve", "Request Changes"],
+    "Operations Reviewer": ["Approve", "Request Changes"],
+    "Commercial Executive": ["Approve", "Request Changes", "Escalate", "Reject"],
+    "Admin": [],
+}
+
+SENSITIVE_FIELD_PATTERNS = [
+    "COGS",
+    "Cost",
+    "Gross Margin",
+    "Gross Profit",
+    "Margin %",
+    "Margin Variance",
+    "Floor Price",
+    "Walk-away Price",
+    "Guidance Price",
+    "Target Margin",
+    "Price Corridor",
+    "IRP",
+    "Plan Impact",
+    "Planned Gross Profit",
+    "Proposed Gross Profit",
+    "Gross Profit Variance",
+    "Net Revenue Variance",
+    "Revenue Variance",
+    "Planned Revenue",
+    "Proposed Revenue",
+    "Planned Net Price",
+    "Historical Margin",
+    "Margin Difference",
+]
+
+ROLE_VISIBLE_SENSITIVE_PATTERNS = {
+    "Sales Representative": [],
+    "Sales Manager": ["Gross Margin", "Margin %", "Proposed Revenue", "Planned Revenue", "Net Revenue Variance", "Revenue Variance"],
+    "Pricing Analyst": ["Floor Price", "Walk-away Price", "Guidance Price", "Price Corridor", "IRP", "Gross Margin", "Margin %", "Margin Difference"],
+    "Market Access Director": ["Gross Margin", "Margin %", "IRP", "Price Corridor"],
+    "Finance Approver": SENSITIVE_FIELD_PATTERNS,
+    "Operations Reviewer": [],
+    "Legal Reviewer": [],
+    "Commercial Executive": SENSITIVE_FIELD_PATTERNS,
+    "Admin": SENSITIVE_FIELD_PATTERNS,
 }
 
 
@@ -98,12 +148,70 @@ def inject_css() -> None:
     st.markdown(
         """
         <style>
-        .block-container { padding-top: 1.4rem; padding-bottom: 2rem; }
+        .block-container {
+            padding-top: 0.35rem;
+            padding-bottom: 1.25rem;
+            max-width: 100%;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.top-title) {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.98);
+            border-bottom: 1px solid #dbe3ef;
+            padding: 0.18rem 0 0.28rem;
+            margin: -0.35rem 0 0.55rem;
+            box-shadow: 0 1px 6px rgba(15, 23, 42, 0.05);
+        }
+        div[data-testid="stHorizontalBlock"]:has(.top-title) div[data-testid="stVerticalBlock"] {
+            gap: 0.12rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.top-title) button {
+            min-height: 2.15rem;
+            padding-top: 0.25rem;
+            padding-bottom: 0.25rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.top-title) [data-baseweb="select"] > div {
+            min-height: 2.15rem;
+        }
+        h1, h2, h3 {
+            letter-spacing: 0;
+        }
+        h1 {
+            font-size: 1.55rem !important;
+            margin: 0.1rem 0 0.35rem !important;
+        }
+        h2 {
+            font-size: 1.16rem !important;
+            margin: 0.55rem 0 0.25rem !important;
+        }
+        h3 {
+            font-size: 1rem !important;
+            margin: 0.45rem 0 0.2rem !important;
+        }
+        div[data-testid="stMarkdownContainer"] p {
+            margin-bottom: 0.35rem;
+        }
+        div[data-testid="stExpander"] {
+            margin-top: 0.35rem;
+        }
+        div[data-testid="stTabs"] {
+            margin-top: 0.15rem;
+        }
+        hr {
+            margin: 0.55rem 0 !important;
+        }
         [data-testid="stMetric"] {
             background: #f6f8fb;
             border: 1px solid #d7dee8;
             border-radius: 8px;
-            padding: 10px 12px;
+            padding: 7px 10px;
+        }
+        [data-testid="stMetric"] label {
+            font-size: 0.76rem;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.18rem;
         }
         .status-pill {
             display: inline-block;
@@ -119,18 +227,55 @@ def inject_css() -> None:
         .risk-low { color: #166534; background: #dcfce7; border-color: #bbf7d0; }
         .section-note {
             color: #475569;
-            font-size: 0.92rem;
+            font-size: 0.86rem;
+            margin-bottom: 0.35rem;
+        }
+        .page-breadcrumb {
+            color: #64748b;
+            font-size: 0.76rem;
+            margin: 0 0 0.05rem;
         }
         .top-title {
-            font-size: 1.18rem;
+            font-size: 1.05rem;
             font-weight: 750;
             letter-spacing: 0;
-            padding-top: 0.35rem;
+            padding-top: 0.42rem;
+            white-space: nowrap;
         }
         .top-role {
             color: #475569;
-            font-size: 0.82rem;
-            margin-top: -0.35rem;
+            font-size: 0.74rem;
+            margin-top: -0.45rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .compact-gap {
+            height: 0.15rem;
+        }
+        @media (max-width: 760px) {
+            .block-container {
+                padding-left: 0.65rem;
+                padding-right: 0.65rem;
+                padding-top: 0.2rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.top-title) {
+                position: sticky;
+                top: 0;
+                overflow-x: auto;
+                padding-bottom: 0.2rem;
+                margin-bottom: 0.35rem;
+            }
+            .top-title {
+                font-size: 0.98rem;
+                padding-top: 0.48rem;
+            }
+            h1 {
+                font-size: 1.32rem !important;
+            }
+            [data-testid="stMetric"] {
+                padding: 6px 8px;
+            }
         }
         </style>
         """,
@@ -200,6 +345,7 @@ def add_audit(
     approval_step: str = "",
     previous_status: str = "",
     new_status: str = "",
+    sensitive_fields_visible: str | None = None,
 ) -> None:
     event = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -211,6 +357,7 @@ def add_audit(
         "Details": details,
         "Source": "Streamlit MVP v1",
         "Correlation ID": str(uuid4())[:8],
+        "Sensitive Fields Visible": sensitive_fields_visible if sensitive_fields_visible is not None else sensitive_fields_visible_for_role(st.session_state.get("role", "")),
     }
     if decision:
         event["Decision"] = decision
@@ -248,6 +395,115 @@ def risk_badge(value: str) -> str:
         "Low": "risk-low",
     }.get(str(value), "")
     return f"<span class='status-pill {risk_class}'>{value}</span>"
+
+
+def current_persona() -> str:
+    return st.session_state.get("persona", "Maya Chen")
+
+
+def current_role() -> str:
+    return st.session_state.get("role", PERSONAS.get(current_persona(), "Sales Representative"))
+
+
+def is_sensitive_field(field_name: object) -> bool:
+    name = str(field_name)
+    return any(pattern.lower() in name.lower() for pattern in SENSITIVE_FIELD_PATTERNS)
+
+
+def can_view_sensitive_field(role: str, field_name: object) -> bool:
+    if not is_sensitive_field(field_name):
+        return True
+    allowed = ROLE_VISIBLE_SENSITIVE_PATTERNS.get(str(role), [])
+    return any(pattern.lower() in str(field_name).lower() for pattern in allowed)
+
+
+def sensitive_fields_visible_for_role(role: str) -> str:
+    allowed = ROLE_VISIBLE_SENSITIVE_PATTERNS.get(str(role), [])
+    return "Yes" if allowed == SENSITIVE_FIELD_PATTERNS or bool(allowed) else "No"
+
+
+def mask_sensitive_dataframe(df: pd.DataFrame, role: str | None = None, replacement: str = "Restricted") -> pd.DataFrame:
+    if df.empty:
+        return df
+    role_name = role or current_role()
+    masked = df.copy()
+    for col in masked.columns:
+        if is_sensitive_field(col) and not can_view_sensitive_field(role_name, col):
+            masked[col] = replacement
+    return masked
+
+
+def sensitive_data_note() -> None:
+    st.caption("Sensitive fields are displayed based on role permissions.")
+
+
+def sensitive_value(field_name: str, value: object, role: str | None = None, replacement: str = "Restricted") -> object:
+    role_name = role or current_role()
+    if is_sensitive_field(field_name) and not can_view_sensitive_field(role_name, field_name):
+        return replacement
+    return value
+
+
+def sensitive_money(field_name: str, value: object, role: str | None = None) -> str:
+    masked = sensitive_value(field_name, value, role)
+    return str(masked) if masked == "Restricted" else money(masked)
+
+
+def sensitive_pct(field_name: str, value: object, role: str | None = None) -> str:
+    masked = sensitive_value(field_name, value, role)
+    return str(masked) if masked == "Restricted" else pct(masked)
+
+
+def visible_deals_for_current_role(deals: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    if deals.empty:
+        return deals
+    role = current_role()
+    persona = current_persona()
+    if role == "Admin":
+        return deals
+    if role == "Sales Representative":
+        return deals[deals.get("Sales Owner", pd.Series(dtype=str)).astype(str).eq(persona)].copy()
+    if role == "Sales Manager":
+        team = SALES_MANAGER_TEAMS.get(persona, SALES_MANAGER_TEAMS.get("Jordan Blake", []))
+        return deals[
+            deals.get("Sales Owner", pd.Series(dtype=str)).astype(str).isin(team)
+            | deals.get("Sales Manager", pd.Series(dtype=str)).astype(str).eq(persona)
+        ].copy()
+    if role in {"Pricing Analyst", "Market Access Director", "Finance Approver", "Operations Reviewer", "Legal Reviewer"}:
+        lines = combined_lines(data)
+        visible_ids = []
+        for _, deal in deals.iterrows():
+            calc_lines = normalize_lines(lines[lines["Deal ID"].astype(str).eq(str(deal["Deal ID"]))], data)
+            summary = summarize_lines(calc_lines)
+            header = {
+                "Customer Name": deal.get("Customer Name"),
+                "Region": deal.get("Region"),
+                "Segment": deal.get("Segment"),
+                "Account Type": customer_lookup(data).get(deal.get("Customer Name"), {}).get("Account Type", ""),
+                "Channel": customer_lookup(data).get(deal.get("Customer Name"), {}).get("Account Type", ""),
+                "Payment Terms": deal.get("Payment Terms"),
+                "Contract Months": deal.get("Contract Months", 0),
+                "Special Terms Requested": False,
+            }
+            route = route_preview(header, calc_lines, summary, data)
+            status = str(deal.get("Status", "")).strip()
+            active_status = status in ACTIVE_APPROVAL_STATUSES - {"Changes Requested"}
+            route_roles = set(route.get("Role", pd.Series(dtype=str)).astype(str)) if not route.empty else set()
+            if active_status and role in route_roles:
+                visible_ids.append(str(deal["Deal ID"]))
+        return deals[deals["Deal ID"].astype(str).isin(visible_ids)].copy()
+    if role == "Commercial Executive":
+        if "Total Proposed" in deals:
+            proposed_values = pd.to_numeric(deals["Total Proposed"], errors="coerce").fillna(0)
+        else:
+            lines = combined_lines(data)
+            proposed_by_deal = lines.groupby("Deal ID")["Extended Proposed"].sum() if "Extended Proposed" in lines else pd.Series(dtype=float)
+            proposed_values = deals["Deal ID"].map(proposed_by_deal).fillna(0)
+        high_value = proposed_values > 1_000_000
+        high_risk = deals.get("Intake Risk", pd.Series(dtype=str)).astype(str).eq("High")
+        escalated = deals.get("Status", pd.Series(dtype=str)).astype(str).isin(["Pending Executive", "Rejected", "Final Approved"])
+        return deals[high_value | high_risk | escalated].copy()
+    return deals.iloc[0:0].copy()
 
 
 def demo_commercial_price_defaults(data: dict[str, pd.DataFrame], sku: str) -> dict[str, float]:
@@ -320,6 +576,8 @@ def navigate_to_deal_detail(deal_id: str, source: str) -> None:
     st.session_state.current_page = "Deal Detail"
     st.session_state.deal_detail_parent = "Review Queue" if "approval" in source.lower() else "Deal Requests"
     add_audit(deal_id, "Deal viewed", details=f"Opened from {source}.")
+    if sensitive_fields_visible_for_role(current_role()) == "Yes":
+        add_audit(deal_id, "Sensitive deal data accessed", details=f"Opened from {source}.", sensitive_fields_visible="Yes")
     st.rerun()
 
 
@@ -882,7 +1140,7 @@ def route_with_trigger_reasons(route_df: pd.DataFrame, inventory_df: pd.DataFram
         if role == "Market Access Director" and incumbent:
             trigger += " Incumbent competitor or access defense is present."
         if role == "Finance Approver":
-            trigger += f" Gross profit variance is {money(gp_impact['Gross Profit Variance'])}."
+            trigger += " Gross profit variance requires finance review."
         if role == "Operations Reviewer" and shortage > 0:
             trigger += f" Inventory shortage is {shortage:,.0f} units across requested lines."
         if role == "Commercial Executive":
@@ -995,14 +1253,14 @@ def render_inline_deal_preview(context: dict, compact: bool = False) -> None:
     gp_impact = context["gp_impact"]
     st.subheader("Selected Deal Preview")
     st.write(
-        f"**{deal.get('Deal Title', '')}** · {deal.get('Customer Name', '')} · "
-        f"Status: **{deal.get('Status', '')}** · Plan flag: **{context['included_value']}**"
+        f"**{deal.get('Deal Title', '')}** | {deal.get('Customer Name', '')} | "
+        f"Status: **{deal.get('Status', '')}** | Plan flag: **{context['included_value']}**"
     )
     metrics = st.columns(4)
     metrics[0].metric("Proposed Value", money(gp_impact["Proposed Revenue"]))
     metrics[1].metric("Decision Score", f"{context['total_score']}/100")
     metrics[2].metric("Recommendation", context["recommendation"])
-    metrics[3].metric("Gross Profit Impact", money(gp_impact["Gross Profit Variance"]))
+    metrics[3].metric("Gross Profit Impact", sensitive_money("Gross Profit Variance", gp_impact["Gross Profit Variance"]))
     st.caption(context["rationale"])
     if compact:
         st.info(inventory_aging_recommendation(context["inventory_df"], context["aging_df"]))
@@ -1012,14 +1270,14 @@ def render_inline_deal_preview(context: dict, compact: bool = False) -> None:
     with left:
         st.markdown("**Inventory / Aging Summary**")
         st.info(inventory_aging_recommendation(context["inventory_df"], context["aging_df"]))
-        st.dataframe(context["inventory_df"], use_container_width=True, hide_index=True)
-        st.dataframe(context["aging_df"], use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(context["inventory_df"]), use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(context["aging_df"]), use_container_width=True, hide_index=True)
     with right:
         st.markdown("**Competitor Summary**")
         st.info(competitor_summary(context["competitor_df"]))
-        st.dataframe(context["competitor_df"], use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(context["competitor_df"]), use_container_width=True, hide_index=True)
     st.markdown("**Approval Route Trigger Reasons**")
-    st.dataframe(context["route_triggers"], use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(context["route_triggers"]), use_container_width=True, hide_index=True)
 
 
 def approval_review_summary(context: dict) -> dict:
@@ -1064,7 +1322,7 @@ def render_approval_review_panel(context: dict) -> None:
     top[1].metric("Status", str(deal.get("Status", "")))
     top[2].metric("Proposed Value", money(summary["total_proposed"]))
     top[3].metric("Discount", pct(summary["discount_pct"]))
-    top[4].metric("Est. Margin", pct(summary["margin_pct"]))
+    top[4].metric("Est. Margin", sensitive_pct("Gross Margin %", summary["margin_pct"]))
 
     st.write(f"Customer: **{deal.get('Customer Name', '')}**")
     st.write(f"Deal title: **{deal.get('Deal Title', '')}**")
@@ -1072,6 +1330,7 @@ def render_approval_review_panel(context: dict) -> None:
     decision_cols = st.columns(2)
     decision_cols[0].metric("Decision Score", f"{context['total_score']}/100")
     decision_cols[1].metric("Recommendation", context["recommendation"])
+    sensitive_data_note()
 
     st.markdown("**Key reason**")
     st.write(review["Key Reason"])
@@ -1088,13 +1347,13 @@ def render_approval_review_panel(context: dict) -> None:
         if review["Aging Summary"].empty:
             st.caption("No aging summary available.")
         else:
-            st.dataframe(review["Aging Summary"], use_container_width=True, hide_index=True)
+            st.dataframe(mask_sensitive_dataframe(review["Aging Summary"]), use_container_width=True, hide_index=True)
     with right:
         st.markdown("**Competitor summary**")
         st.info(review["Competitor Summary"])
 
     st.markdown("**Approval route trigger reasons**")
-    st.dataframe(context["route_triggers"], use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(context["route_triggers"]), use_container_width=True, hide_index=True)
 
 
 def validate_deal(header: dict, lines: pd.DataFrame, data: dict[str, pd.DataFrame]) -> tuple[list[str], list[str]]:
@@ -1182,17 +1441,20 @@ def breadcrumb_for_current_page() -> str:
 
 
 def render_header(title: str, subtitle: str = "") -> None:
-    st.caption(breadcrumb_for_current_page())
-    st.title(title)
+    breadcrumb = breadcrumb_for_current_page()
+    if breadcrumb and breadcrumb != title:
+        st.markdown(f"<div class='page-breadcrumb'>{breadcrumb}</div>", unsafe_allow_html=True)
+    st.markdown(f"<h1>{title}</h1>", unsafe_allow_html=True)
     if subtitle:
         st.markdown(f"<div class='section-note'>{subtitle}</div>", unsafe_allow_html=True)
 
 
 def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     render_header("Deal Requests", "Seeded and session-created commercial deal requests.")
-    deals = combined_deals(data)
+    deals = visible_deals_for_current_role(combined_deals(data), data)
+    sensitive_data_note()
     if deals.empty:
-        st.info("No deal requests available.")
+        st.info("No deal requests are visible for the selected persona and role.")
         return
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -1202,7 +1464,6 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     c4.metric("Changes Requested", int((deals["Status"] == "Changes Requested").sum()) if "Status" in deals else 0)
     c5.metric("High Risk", int((deals.get("Intake Risk", pd.Series(dtype=str)) == "High").sum()))
 
-    st.divider()
     filters = st.columns([1, 1, 1, 1, 1])
     status = filters[0].multiselect("Status", sorted(deals["Status"].dropna().unique()), default=[])
     region = filters[1].multiselect("Region", sorted(deals["Region"].dropna().unique()), default=[])
@@ -1223,7 +1484,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         return
 
     display_cols = [col for col in ["Deal ID", "Deal Title", "Customer Name", "Deal Type", "Region", "Status", "Target Close Date", "Payment Terms", "Intake Risk", "Expected Route"] if col in filtered]
-    display_df = filtered[display_cols].reset_index(drop=True)
+    display_df = mask_sensitive_dataframe(filtered[display_cols].reset_index(drop=True))
     table_event = st.dataframe(
         display_df,
         use_container_width=True,
@@ -1373,35 +1634,22 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         editor_config = {
             "SKU": st.column_config.SelectboxColumn("SKU", options=products["SKU"].tolist(), required=True),
             "Quantity": st.column_config.NumberColumn("Quantity", min_value=1, step=1),
-            "Unit List Price": st.column_config.NumberColumn("List Price", min_value=0.0, step=1.0, format="$%.2f"),
-            "Gross Price": st.column_config.NumberColumn("Gross Price", min_value=0.0, step=1.0, format="$%.2f"),
             "Requested Net Price": st.column_config.NumberColumn("Requested Net Price", min_value=-1_000_000.0, step=1.0, format="$%.2f"),
-            "Requested Discount %": st.column_config.NumberColumn("Requested Discount %", min_value=-100.0, max_value=100.0, step=0.1, format="%.1f%%"),
-            "Floor Price": st.column_config.NumberColumn("Floor Price", min_value=0.0, step=1.0, format="$%.2f"),
-            "Guidance Price": st.column_config.NumberColumn("Guidance Price", min_value=0.0, step=1.0, format="$%.2f"),
-            "Walk-away Price": st.column_config.NumberColumn("Walk-away Price", min_value=0.0, step=1.0, format="$%.2f"),
             "Requested Delivery Date": st.column_config.DateColumn("Requested Delivery Date"),
             "Notes": st.column_config.TextColumn("Notes"),
         }
-        visible_line_cols = [
+        editable_line_cols = [
             "SKU",
             "Quantity",
-            "Unit List Price",
-            "Gross Price",
             "Requested Net Price",
-            "Requested Discount %",
-            "Floor Price",
-            "Guidance Price",
-            "Walk-away Price",
             "Requested Delivery Date",
             "Notes",
         ]
         st.session_state.draft_lines = st.data_editor(
-            st.session_state.draft_lines[[col for col in visible_line_cols if col in st.session_state.draft_lines]],
+            st.session_state.draft_lines[[col for col in editable_line_cols if col in st.session_state.draft_lines]],
             num_rows="dynamic",
             use_container_width=True,
             column_config=editor_config,
-            disabled=["Unit List Price", "Gross Price", "Requested Discount %", "Floor Price", "Guidance Price", "Walk-away Price"],
             hide_index=True,
             key="line_editor",
         )
@@ -1413,7 +1661,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         metric_cols[1].metric("Total Gross Value", money(summary["total_gross"]))
         metric_cols[2].metric("Total Requested Net Value", money(summary["total_proposed"]))
         metric_cols[3].metric("Weighted Discount %", pct(summary["discount_pct"]))
-        metric_cols[4].metric("Estimated Gross Margin %", pct(summary["margin_pct"]))
+        metric_cols[4].metric("Estimated Gross Margin %", sensitive_pct("Gross Margin %", summary["margin_pct"]))
         if not calc_lines.empty:
             view_cols = [
                 "SKU",
@@ -1433,7 +1681,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             view = calc_lines[[col for col in view_cols if col in calc_lines]].copy()
             if "Requested Discount %" in view:
                 view["Requested Discount %"] = view["Requested Discount %"] * 100
-            st.dataframe(view, use_container_width=True, hide_index=True)
+            st.dataframe(mask_sensitive_dataframe(view), use_container_width=True, hide_index=True)
 
     with tabs[2]:
         st.subheader("Customer Health")
@@ -1442,8 +1690,8 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         health_cols[0].metric("Revenue last 12 months", money(health["Revenue last 12 months"]))
         health_cols[1].metric("Units last 12 months", f"{health['Units last 12 months']:,.0f}")
         health_cols[2].metric("Average net price last 12 months", money(health["Average net price last 12 months"]))
-        health_cols[3].metric("Gross margin last 12 months", money(health["Gross margin last 12 months"]))
-        health_cols[4].metric("Gross margin %", pct(health["Gross margin %"]))
+        health_cols[3].metric("Gross margin last 12 months", sensitive_money("Gross Profit", health["Gross margin last 12 months"]))
+        health_cols[4].metric("Gross margin %", sensitive_pct("Gross Margin %", health["Gross margin %"]))
         ar_cols = st.columns(6)
         ar_cols[0].metric("Total AR", money(health["Total AR"]))
         ar_cols[1].metric("Current AR", money(health["Current AR"]))
@@ -1569,6 +1817,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
     with tabs[3]:
         st.subheader("Financial Impact")
+        sensitive_data_note()
         included_value = st.selectbox("Included_In_Latest_Financial_Plan", ["Yes", "No"], key="form_included_plan")
         included_in_plan = included_value == "Yes"
         plan_df = plan_impact_analysis(data, calc_lines, header["Region"], header["Segment"])
@@ -1590,16 +1839,16 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
             st.info("Plan logic uses only Price Variance and Volume Variance.")
             kpis = st.columns(5)
-            kpis[0].metric("Planned Revenue", money(planned_revenue))
-            kpis[1].metric("Proposed Revenue", money(proposed_revenue), delta=money(revenue_variance))
-            kpis[2].metric("Planned Gross Profit", money(planned_gp))
-            kpis[3].metric("Proposed Gross Profit", money(proposed_gp))
-            kpis[4].metric("Gross Profit Variance", money(gp_variance))
+            kpis[0].metric("Planned Revenue", sensitive_money("Planned Revenue", planned_revenue))
+            kpis[1].metric("Proposed Revenue", sensitive_money("Proposed Revenue", proposed_revenue), delta=sensitive_money("Revenue Variance", revenue_variance))
+            kpis[2].metric("Planned Gross Profit", sensitive_money("Planned Gross Profit", planned_gp))
+            kpis[3].metric("Proposed Gross Profit", sensitive_money("Proposed Gross Profit", proposed_gp))
+            kpis[4].metric("Gross Profit Variance", sensitive_money("Gross Profit Variance", gp_variance))
             margin_cols = st.columns(4)
-            margin_cols[0].metric("Planned Net Price", money(planned_net))
+            margin_cols[0].metric("Planned Net Price", sensitive_money("Planned Net Price", planned_net))
             margin_cols[1].metric("Proposed Net Price", money(proposed_net))
-            margin_cols[2].metric("Planned Margin %", pct(planned_margin))
-            margin_cols[3].metric("Proposed Margin %", pct(proposed_margin))
+            margin_cols[2].metric("Planned Margin %", sensitive_pct("Gross Margin %", planned_margin))
+            margin_cols[3].metric("Proposed Margin %", sensitive_pct("Gross Margin %", proposed_margin))
 
             st.markdown("**Revenue variance bridge**")
             bridge_df = pd.DataFrame(
@@ -1610,9 +1859,12 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                     {"Component": "Gross Profit Variance", "Value": gp_variance},
                 ]
             )
-            st.bar_chart(bridge_df.set_index("Component"))
+            if can_view_sensitive_field(current_role(), "Revenue Variance"):
+                st.bar_chart(bridge_df.set_index("Component"))
+            else:
+                st.info("Variance visualization is visible to Finance/Pricing only.")
             st.dataframe(
-                plan_df[
+                mask_sensitive_dataframe(plan_df[
                     [
                         "SKU",
                         "Product",
@@ -1631,7 +1883,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                         "Planned Margin %",
                         "Proposed Margin %",
                     ]
-                ] if not plan_df.empty else plan_df,
+                ] if not plan_df.empty else plan_df),
                 use_container_width=True,
                 hide_index=True,
             )
@@ -1646,13 +1898,13 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             st.info("Classified as Incremental Opportunity because it is not included in the latest financial plan.")
             kpis = st.columns(4)
             kpis[0].metric("Incremental Revenue", money(incremental_revenue))
-            kpis[1].metric("Incremental Gross Profit", money(incremental_gp))
-            kpis[2].metric("Proposed Margin %", pct(proposed_margin))
+            kpis[1].metric("Incremental Gross Profit", sensitive_money("Gross Profit", incremental_gp))
+            kpis[2].metric("Proposed Margin %", sensitive_pct("Gross Margin %", proposed_margin))
             kpis[3].metric("Historical Average Net Price", money(hist_price))
             benchmark_cols = st.columns(3)
             benchmark_cols[0].metric("Price Difference vs Historical Average %", pct(price_vs_hist))
-            benchmark_cols[1].metric("Historical Margin %", pct(hist_margin))
-            benchmark_cols[2].metric("Margin Difference vs Historical Margin %", pct(margin_difference))
+            benchmark_cols[1].metric("Historical Margin %", sensitive_pct("Historical Margin %", hist_margin))
+            benchmark_cols[2].metric("Margin Difference vs Historical Margin %", sensitive_pct("Margin Difference vs Historical Margin %", margin_difference))
 
             st.markdown("**Incremental economics bridge**")
             bridge_df = pd.DataFrame(
@@ -1661,7 +1913,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                     {"Component": "Incremental Gross Profit", "Value": incremental_gp},
                 ]
             )
-            st.bar_chart(bridge_df.set_index("Component"))
+            if can_view_sensitive_field(current_role(), "Gross Profit"):
+                st.bar_chart(bridge_df.set_index("Component"))
+            else:
+                st.info("Gross profit visualization is visible to Finance/Pricing only.")
             display_cols = [
                 "SKU",
                 "Product",
@@ -1673,7 +1928,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 "Proposed Margin %",
                 "Margin Difference vs Historical Margin %",
             ]
-            st.dataframe(incremental_df[[col for col in display_cols if col in incremental_df]], use_container_width=True, hide_index=True)
+            st.dataframe(mask_sensitive_dataframe(incremental_df[[col for col in display_cols if col in incremental_df]]), use_container_width=True, hide_index=True)
 
         st.markdown("**Financial Review Signals**")
         if errors:
@@ -1728,12 +1983,13 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 <div class="section-note">Executive approval view</div>
                 <h3>{executive["Recommendation"]}</h3>
                 <p><strong>{header["Deal Title"]}</strong> for <strong>{customer_name}</strong></p>
-                <p>Decision score: <strong>{total_score}/100</strong> | Proposed value: <strong>{money(summary["total_proposed"])}</strong> | Gross profit impact: <strong>{money(gp_impact["Gross Profit Variance"])}</strong></p>
+                <p>Decision score: <strong>{total_score}/100</strong> | Proposed value: <strong>{money(summary["total_proposed"])}</strong> | Gross profit impact: <strong>{sensitive_money("Gross Profit Variance", gp_impact["Gross Profit Variance"])}</strong></p>
                 <p>{executive["Key Reason"]}</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        sensitive_data_note()
 
         score_cols = st.columns(6)
         score_cols[0].metric("Decision Score", f"{total_score}/100")
@@ -1758,14 +2014,14 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         if route_dashboard.empty:
             st.info("No approval route could be generated from current deal inputs.")
         else:
-            st.dataframe(route_dashboard, use_container_width=True, hide_index=True)
+            st.dataframe(mask_sensitive_dataframe(route_dashboard), use_container_width=True, hide_index=True)
 
         with st.expander("Commercial summary"):
             st.write(f"Customer: **{customer_name}**")
             st.write(f"Plan inclusion: **{included_value}**")
             st.write(f"Rationale: {header['Business Justification'] or 'Not provided'}")
             st.caption(score_rationale)
-            st.dataframe(calc_lines, use_container_width=True, hide_index=True)
+            st.dataframe(mask_sensitive_dataframe(calc_lines), use_container_width=True, hide_index=True)
 
         if errors:
             st.error("Blocking issues")
@@ -1841,9 +2097,11 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
 
 def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     render_header("Deal Detail", "Review intake, analysis context, route preview, and audit trail.")
-    deals = combined_deals(data)
+    all_deals = combined_deals(data)
+    deals = visible_deals_for_current_role(all_deals, data)
+    sensitive_data_note()
     if deals.empty:
-        st.info("No deals available.")
+        st.info("No deal details are visible for the selected persona and role.")
         return
     default = st.session_state.selected_deal_id if st.session_state.selected_deal_id in set(deals["Deal ID"]) else deals.iloc[0]["Deal ID"]
     selected = st.selectbox("Deal", deals["Deal ID"].tolist(), index=deals["Deal ID"].tolist().index(default))
@@ -1869,7 +2127,7 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     c1.metric("Status", deal_status)
     c2.metric("Total Proposed", money(summary["total_proposed"]))
     c3.metric("Discount", pct(summary["discount_pct"]))
-    c4.metric("Est. Margin", pct(summary["margin_pct"]))
+    c4.metric("Est. Margin", sensitive_pct("Gross Margin %", summary["margin_pct"]))
     st.markdown(status_badge(deal_status), unsafe_allow_html=True)
 
     confirmation = st.session_state.get("deal_detail_confirmation", "")
@@ -1898,7 +2156,7 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
             else:
                 st.warning(f"{user_role} cannot approve this step. Required role: {current_role or 'none'}.")
             with st.expander("Approval route trigger reasons", expanded=False):
-                st.dataframe(context["route_triggers"], use_container_width=True, hide_index=True)
+                st.dataframe(mask_sensitive_dataframe(context["route_triggers"]), use_container_width=True, hide_index=True)
 
             detail_decision = st.radio(
                 "Decision",
@@ -1937,13 +2195,13 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
         st.write(f"**{deal.get('Deal Title')}**")
         st.write(f"Customer: {deal.get('Customer Name')}")
         st.write(f"Strategic rationale: {deal.get('Strategic Rationale', '')}")
-        st.dataframe(pd.DataFrame([deal]), use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(pd.DataFrame([deal])), use_container_width=True, hide_index=True)
     with tabs[1]:
-        st.dataframe(calc_lines, use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(calc_lines), use_container_width=True, hide_index=True)
     with tabs[2]:
         render_analysis_blocks(data, deal, calc_lines)
     with tabs[3]:
-        st.dataframe(route_df, use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(route_df), use_container_width=True, hide_index=True)
     with tabs[4]:
         audit = pd.DataFrame(st.session_state.audit_events)
         if not audit.empty:
@@ -1990,11 +2248,12 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     route_triggers = route_with_trigger_reasons(route_df, inventory_df, competitor_df, gp_impact)
 
     st.subheader("Executive Summary")
+    sensitive_data_note()
     st.write(
         f"**{recommendation}** for {deal.get('Deal Title', 'selected deal')}. "
         f"The deal is classified as **{'included in latest financial plan' if included_in_plan else 'incremental opportunity'}** "
-        f"with proposed revenue of **{money(gp_impact['Proposed Revenue'])}**, gross profit impact of "
-        f"**{money(gp_impact['Gross Profit Variance'])}**, and a decision score of **{total_score}/100**."
+        f"with proposed revenue of **{sensitive_money('Proposed Revenue', gp_impact['Proposed Revenue'])}**, gross profit impact of "
+        f"**{sensitive_money('Gross Profit Variance', gp_impact['Gross Profit Variance'])}**, and a decision score of **{total_score}/100**."
     )
     st.caption(rationale)
 
@@ -2002,7 +2261,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     c1.metric("Decision Score", f"{total_score}/100")
     c2.metric("Recommendation", recommendation)
     c3.metric("Plan Inclusion Flag", included_value)
-    c4.metric("Gross Profit Impact", money(gp_impact["Gross Profit Variance"]))
+    c4.metric("Gross Profit Impact", sensitive_money("Gross Profit Variance", gp_impact["Gross Profit Variance"]))
 
     st.subheader("Score Breakdown")
     st.dataframe(score_df, use_container_width=True, hide_index=True)
@@ -2031,47 +2290,48 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
 
     if included_in_plan:
         st.subheader("Plan Impact Analysis")
-        st.dataframe(plan_df, use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(plan_df), use_container_width=True, hide_index=True)
     else:
         st.subheader("Incremental Opportunity Analysis")
-        st.dataframe(incremental_df, use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(incremental_df), use_container_width=True, hide_index=True)
 
     st.subheader("Gross Profit Impact")
     gp_cols = st.columns(5)
     gp_cols[0].metric("Context", gp_impact["Context"])
-    gp_cols[1].metric("Planned Revenue", money(gp_impact["Planned Revenue"]))
-    gp_cols[2].metric("Proposed Revenue", money(gp_impact["Proposed Revenue"]))
-    gp_cols[3].metric("Net Revenue Variance", money(gp_impact["Net Revenue Variance"]))
-    gp_cols[4].metric("Proposed Margin", pct(gp_impact["Proposed Margin %"]))
+    gp_cols[1].metric("Planned Revenue", sensitive_money("Planned Revenue", gp_impact["Planned Revenue"]))
+    gp_cols[2].metric("Proposed Revenue", sensitive_money("Proposed Revenue", gp_impact["Proposed Revenue"]))
+    gp_cols[3].metric("Net Revenue Variance", sensitive_money("Net Revenue Variance", gp_impact["Net Revenue Variance"]))
+    gp_cols[4].metric("Proposed Margin", sensitive_pct("Gross Margin %", gp_impact["Proposed Margin %"]))
 
     st.subheader("Price-Volume Benchmark")
-    st.dataframe(price_volume_summary(data, lines, customer, channel), use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(price_volume_summary(data, lines, customer, channel)), use_container_width=True, hide_index=True)
 
     st.subheader("Inventory Analysis")
     st.info(inventory_aging_recommendation(inventory_df, aging_df))
-    st.dataframe(inventory_df, use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(inventory_df), use_container_width=True, hide_index=True)
 
     st.subheader("Aging Analysis")
-    st.dataframe(aging_df, use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(aging_df), use_container_width=True, hide_index=True)
 
     tender_df, intel_df = tender_competitor_summary(data, lines, customer, region)
     st.subheader("Tender History")
-    st.dataframe(tender_df, use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(tender_df), use_container_width=True, hide_index=True)
 
     st.subheader("Competitor Intelligence")
     st.info(competitor_summary(competitor_df))
-    st.dataframe(competitor_df, use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(competitor_df), use_container_width=True, hide_index=True)
     with st.expander("Raw competitor signals"):
-        st.dataframe(intel_df, use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(intel_df), use_container_width=True, hide_index=True)
 
     st.subheader("Approval Route with Trigger Reasons")
-    st.dataframe(route_triggers, use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(route_triggers), use_container_width=True, hide_index=True)
 
 
 def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     render_header("Review Queue", "Role-based review queue for submitted commercial deal requests.")
     st.info("Select a deal from the review queue to review details and capture a decision.")
-    deals = combined_deals(data)
+    deals = visible_deals_for_current_role(combined_deals(data), data)
+    sensitive_data_note()
     confirmation = st.session_state.get("approval_confirmation", "")
     if confirmation:
         st.success(confirmation)
@@ -2080,7 +2340,8 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if submitted.empty:
         st.info("No submitted deals available.")
         return
-    role = st.selectbox("Queue Role", ROLE_ORDER, index=ROLE_ORDER.index(st.session_state.get("role", "Sales Manager")) if st.session_state.get("role") in ROLE_ORDER else 0)
+    selectable_roles = ROLE_ORDER if current_role() == "Admin" else [current_role()] if current_role() in ROLE_ORDER else ROLE_ORDER
+    role = st.selectbox("Queue Role", selectable_roles, index=0)
     lines = combined_lines(data)
     rows = []
     for _, deal in submitted.iterrows():
@@ -2097,8 +2358,8 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
             "Special Terms Requested": False,
         }
         route = route_preview(header, calc_lines, summary, data)
-        current_role = current_required_approval_role(str(deal["Deal ID"]), str(deal.get("Status", "")).strip(), route)
-        if role == current_role:
+        required_role = current_required_approval_role(str(deal["Deal ID"]), str(deal.get("Status", "")).strip(), route)
+        if role == required_role:
             reason = route[route["Role"].eq(role)].iloc[0]["Reason"] if role in set(route["Role"]) else "Current required approval step."
             rows.append(
                 {
@@ -2117,8 +2378,9 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if queue.empty:
         st.info(f"No deals currently require {role}.")
         return
+    queue_display = mask_sensitive_dataframe(queue)
     table_event = st.dataframe(
-        queue,
+        queue_display,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
@@ -2142,16 +2404,16 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
 
     render_approval_review_panel(context)
     previous_status = str(context["deal"].get("Status", "")).strip()
-    current_role = current_required_approval_role(selected, previous_status, context["route_df"])
+    required_role = current_required_approval_role(selected, previous_status, context["route_df"])
     user_role = st.session_state.get("role", "Demo Role")
     allowed_decisions = allowed_decisions_for_role(user_role)
-    can_act_on_step = bool(current_role) and user_role == current_role and bool(allowed_decisions)
+    can_act_on_step = bool(required_role) and user_role == required_role and bool(allowed_decisions)
     role_cols = st.columns(3)
-    role_cols[0].metric("Current Required Role", current_role or "None")
+    role_cols[0].metric("Current Required Role", required_role or "None")
     role_cols[1].metric("Current User Role", user_role)
     role_cols[2].metric("Can Approve", "Yes" if can_act_on_step else "No")
     if not can_act_on_step:
-        st.warning(f"{user_role} cannot capture a decision for this step. Required role: {current_role or 'none'}.")
+        st.warning(f"{user_role} cannot capture a decision for this step. Required role: {required_role or 'none'}.")
 
     st.subheader("Decision")
     decision = st.radio("Decision", DECISIONS, horizontal=True, key=f"decision_{selected}")
@@ -2173,7 +2435,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
             entity="Approval Comment",
             details="Comment added without status change.",
             comment=comment,
-            approval_step=current_role,
+            approval_step=required_role,
             previous_status=previous_status,
             new_status=previous_status,
         )
@@ -2186,6 +2448,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
 
 def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
     render_header("Reference Data", "Inspect source datasets powering the MVP.")
+    sensitive_data_note()
     labels = {
         "customers": "Customers",
         "opportunities": "Opportunities",
@@ -2208,7 +2471,7 @@ def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
         mask = view.astype(str).apply(lambda col: col.str.contains(query, case=False, na=False)).any(axis=1)
         view = view[mask]
     st.caption(f"{len(view):,} rows shown")
-    st.dataframe(view, use_container_width=True, hide_index=True)
+    st.dataframe(mask_sensitive_dataframe(view), use_container_width=True, hide_index=True)
 
 
 def page_audit_log() -> None:
@@ -2249,7 +2512,7 @@ def top_navigation() -> str:
     if st.session_state.get("current_page") not in valid_pages:
         st.session_state.current_page = "Deal Request List"
 
-    nav_cols = st.columns([2.5, 1.1, 1.1, 1.45, 0.8])
+    nav_cols = st.columns([2.0, 0.95, 1.05, 1.3, 0.85])
     nav_cols[0].markdown("<div class='top-title'>Deal Desk Copilot</div>", unsafe_allow_html=True)
 
     current_page = st.session_state.get("current_page", "Deal Request List")
@@ -2271,7 +2534,7 @@ def top_navigation() -> str:
     st.session_state.role = PERSONAS[persona]
     nav_cols[3].markdown(f"<div class='top-role'>{st.session_state.role}</div>", unsafe_allow_html=True)
 
-    with nav_cols[4].popover("Settings / Admin"):
+    with nav_cols[4].popover("Settings"):
         st.metric("Session Deals", len(st.session_state.runtime_deals))
         st.metric("Audit Events", len(st.session_state.audit_events))
         if st.button("Reference Data", key="admin_reference_data", use_container_width=True):
@@ -2286,7 +2549,6 @@ def top_navigation() -> str:
         if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
             reset_demo_session()
 
-    st.divider()
     return st.session_state.current_page
 
 
