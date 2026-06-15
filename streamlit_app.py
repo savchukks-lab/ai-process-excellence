@@ -32,6 +32,45 @@ PERSONAS = {
     "Sarah Morgan": "Commercial Executive",
 }
 
+APPROVAL_STEP_STATUS = {
+    "Sales Manager": "Pending Sales Manager",
+    "Pricing Analyst": "Pending Pricing",
+    "Finance Approver": "Pending Finance",
+    "Operations Reviewer": "Pending Operations",
+    "Commercial Executive": "Pending Executive",
+}
+
+STATUS_APPROVAL_STEP = {status: role for role, status in APPROVAL_STEP_STATUS.items()}
+
+ACTIONABLE_APPROVAL_ROLES = [
+    "Sales Manager",
+    "Pricing Analyst",
+    "Finance Approver",
+    "Operations Reviewer",
+    "Commercial Executive",
+]
+
+ACTIVE_APPROVAL_STATUSES = {
+    "Submitted",
+    "Pending Sales Manager",
+    "Pending Pricing",
+    "Pending Finance",
+    "Pending Operations",
+    "Pending Executive",
+    "Changes Requested",
+}
+
+DECISIONS = ["Approve", "Request Changes", "Escalate", "Reject"]
+
+ROLE_ALLOWED_DECISIONS = {
+    "Sales Representative": [],
+    "Sales Manager": ["Approve", "Request Changes", "Escalate"],
+    "Pricing Analyst": ["Approve", "Request Changes", "Escalate"],
+    "Finance Approver": ["Approve", "Request Changes", "Escalate"],
+    "Operations Reviewer": ["Approve", "Request Changes", "Escalate"],
+    "Commercial Executive": ["Approve", "Request Changes", "Reject"],
+}
+
 
 st.set_page_config(
     page_title="Commercial Deal Desk Copilot",
@@ -117,6 +156,7 @@ def init_state() -> None:
     st.session_state.setdefault("runtime_lines", [])
     st.session_state.setdefault("audit_events", [])
     st.session_state.setdefault("deal_status_overrides", {})
+    st.session_state.setdefault("deal_approval_steps", {})
     st.session_state.setdefault("approval_confirmation", "")
     st.session_state.setdefault("deal_detail_confirmation", "")
     st.session_state.setdefault("selected_deal_id", None)
@@ -133,6 +173,9 @@ def add_audit(
     details: str = "",
     decision: str = "",
     comment: str = "",
+    approval_step: str = "",
+    previous_status: str = "",
+    new_status: str = "",
 ) -> None:
     event = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -149,6 +192,12 @@ def add_audit(
         event["Decision"] = decision
     if comment:
         event["Comment"] = comment
+    if approval_step:
+        event["Approval Step"] = approval_step
+    if previous_status:
+        event["Previous Status"] = previous_status
+    if new_status:
+        event["New Status"] = new_status
     st.session_state.audit_events.append(event)
 
 
@@ -246,7 +295,69 @@ def get_selected_dataframe_deal_id(table_event: object, display_df: pd.DataFrame
     return None
 
 
-def update_deal_status(deal_id: str, status: str, decision: str, comment: str) -> None:
+def table_cell_label(column: str, value: object) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    if column in {"Value", "Total Proposed"}:
+        return money(safe_float(value))
+    if column == "Discount %":
+        return pct(safe_float(value))
+    text = str(value)
+    return text if len(text) <= 44 else f"{text[:41]}..."
+
+
+def table_column_weights(columns: list[str]) -> list[float]:
+    weights = []
+    for column in columns:
+        if column in {"Deal Title", "Trigger Reason", "Expected Route"}:
+            weights.append(2.6)
+        elif column in {"Customer", "Customer Name"}:
+            weights.append(2.1)
+        elif column in {"Value", "Discount %", "Risk", "Status", "Role"}:
+            weights.append(1.0)
+        else:
+            weights.append(1.25)
+    return weights
+
+
+def render_clickable_deal_table(display_df: pd.DataFrame, key_prefix: str, selected_key: str) -> str | None:
+    if display_df.empty or "Deal ID" not in display_df:
+        return None
+    columns = display_df.columns.tolist()
+    weights = table_column_weights(columns)
+    header_cols = st.columns(weights)
+    for col, name in zip(header_cols, columns):
+        col.markdown(f"**{name}**")
+    for row_index, row in display_df.reset_index(drop=True).iterrows():
+        deal_id = str(row["Deal ID"])
+        selected = st.session_state.get(selected_key) == deal_id
+        row_cols = st.columns(weights)
+        for col_index, column in enumerate(columns):
+            label = table_cell_label(column, row[column])
+            if row_cols[col_index].button(
+                label,
+                key=f"{key_prefix}_{row_index}_{col_index}",
+                type="primary" if selected else "secondary",
+                use_container_width=True,
+                help=f"Select {deal_id}",
+            ):
+                st.session_state[selected_key] = deal_id
+                st.session_state.selected_deal_id = deal_id
+                selected = True
+    selected_deal = st.session_state.get(selected_key)
+    if selected_deal in set(display_df["Deal ID"].astype(str)):
+        return selected_deal
+    return None
+
+
+def update_deal_status(
+    deal_id: str,
+    status: str,
+    decision: str,
+    comment: str,
+    approval_step: str = "",
+    previous_status: str = "",
+) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     updated_runtime = False
     for deal in st.session_state.runtime_deals:
@@ -257,6 +368,8 @@ def update_deal_status(deal_id: str, status: str, decision: str, comment: str) -
             deal["Last Decision Timestamp"] = timestamp
             deal["Last Decision Actor"] = st.session_state.get("persona", "Demo User")
             deal["Last Decision Role"] = st.session_state.get("role", "Demo Role")
+            deal["Last Approval Step"] = approval_step
+            deal["Previous Status"] = previous_status
             updated_runtime = True
             break
     if not updated_runtime:
@@ -267,7 +380,89 @@ def update_deal_status(deal_id: str, status: str, decision: str, comment: str) -
             "Last Decision Timestamp": timestamp,
             "Last Decision Actor": st.session_state.get("persona", "Demo User"),
             "Last Decision Role": st.session_state.get("role", "Demo Role"),
+            "Last Approval Step": approval_step,
+            "Previous Status": previous_status,
         }
+
+
+def actionable_route_roles(route_df: pd.DataFrame) -> list[str]:
+    if route_df.empty or "Role" not in route_df:
+        return ["Sales Manager"]
+    roles = [role for role in route_df["Role"].astype(str).tolist() if role in ACTIONABLE_APPROVAL_ROLES]
+    return roles or ["Sales Manager"]
+
+
+def completed_approval_steps(deal_id: str) -> list[str]:
+    return list(st.session_state.get("deal_approval_steps", {}).get(str(deal_id), []))
+
+
+def current_required_approval_role(deal_id: str, status: str, route_df: pd.DataFrame) -> str:
+    clean_status = str(status or "").strip()
+    if clean_status in {"Rejected", "Final Approved"}:
+        return ""
+    if clean_status == "Changes Requested":
+        return "Sales Representative"
+    if clean_status in STATUS_APPROVAL_STEP:
+        return STATUS_APPROVAL_STEP[clean_status]
+    roles = actionable_route_roles(route_df)
+    completed = set(completed_approval_steps(deal_id))
+    for role in roles:
+        if role not in completed:
+            return role
+    return roles[-1] if roles else "Sales Manager"
+
+
+def next_approval_status(deal_id: str, current_role: str, route_df: pd.DataFrame) -> str:
+    roles = actionable_route_roles(route_df)
+    if current_role == "Commercial Executive" and current_role not in roles:
+        completed = completed_approval_steps(deal_id)
+        if current_role not in completed:
+            completed.append(current_role)
+        st.session_state.deal_approval_steps[str(deal_id)] = completed
+        return "Final Approved"
+    completed = completed_approval_steps(deal_id)
+    if current_role and current_role not in completed and current_role in roles:
+        completed.append(current_role)
+    st.session_state.deal_approval_steps[str(deal_id)] = completed
+    for role in roles:
+        if role not in completed:
+            return APPROVAL_STEP_STATUS[role]
+    return "Final Approved"
+
+
+def allowed_decisions_for_role(role: str) -> list[str]:
+    return ROLE_ALLOWED_DECISIONS.get(role, [])
+
+
+def process_approval_decision(deal_id: str, decision: str, comment: str, route_df: pd.DataFrame, previous_status: str) -> tuple[bool, str]:
+    current_role = current_required_approval_role(deal_id, previous_status, route_df)
+    user_role = st.session_state.get("role", "Demo Role")
+    allowed = allowed_decisions_for_role(user_role)
+    if user_role != current_role or decision not in allowed:
+        return False, f"{user_role} cannot capture `{decision}` for this step. Current required role is {current_role or 'none'}."
+
+    if decision == "Approve":
+        new_status = next_approval_status(deal_id, current_role, route_df)
+    elif decision == "Request Changes":
+        new_status = "Changes Requested"
+    elif decision == "Reject":
+        new_status = "Rejected"
+    else:
+        new_status = "Pending Executive"
+
+    update_deal_status(deal_id, new_status, decision, comment, approval_step=current_role, previous_status=previous_status)
+    add_audit(
+        deal_id,
+        f"Approval decision: {decision}",
+        entity="Approval Step",
+        details=f"Status changed from {previous_status} to {new_status}.",
+        decision=decision,
+        comment=comment,
+        approval_step=current_role,
+        previous_status=previous_status,
+        new_status=new_status,
+    )
+    return True, f"Captured {decision} for {deal_id}. Status moved from {previous_status} to {new_status}."
 
 
 def product_lookup(data: dict[str, pd.DataFrame]) -> dict[str, dict]:
@@ -1209,17 +1404,8 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
 
     display_cols = [col for col in ["Deal ID", "Deal Title", "Customer Name", "Deal Type", "Region", "Status", "Target Close Date", "Payment Terms", "Intake Risk", "Expected Route"] if col in filtered]
     display_df = filtered[display_cols].reset_index(drop=True)
-    table_event = st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="deal_request_list_table",
-    )
-    table_selected = get_selected_dataframe_deal_id(table_event, display_df)
+    table_selected = render_clickable_deal_table(display_df, "deal_list_clickable", "deal_list_selected_deal_id")
 
-    selected_to_open = table_selected
     if table_selected:
         context = build_deal_context(data, table_selected)
         if context:
@@ -1227,13 +1413,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
             if st.button("Open Deal Detail", type="primary"):
                 navigate_to_deal_detail(table_selected, "deal request list row selection")
     else:
-        st.caption("Select a deal row to preview it here.")
-
-    with st.expander("Fallback: open by dropdown"):
-        selected = st.selectbox("Open deal", filtered["Deal ID"].tolist(), index=0 if not filtered.empty else None)
-        selected_to_open = selected_to_open or selected
-        if st.button("Open Selected Deal", type="secondary", disabled=not bool(selected_to_open)):
-            navigate_to_deal_detail(str(selected_to_open), "deal request list dropdown")
+        st.caption("Click any cell in a deal row to select and preview it here.")
 
 
 def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) -> dict:
@@ -1406,6 +1586,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df: pd.DataFrame, status: str, recommendation: str) -> str:
     deal_id = f"DEAL-S-{len(st.session_state.runtime_deals) + 1:04d}"
     opportunity_id = ""
+    workflow_status = "Pending Sales Manager" if status == "Submitted" else status
     st.session_state.runtime_deals.append(
         {
             "Deal ID": deal_id,
@@ -1418,7 +1599,7 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Segment": header["Segment"],
             "Sales Owner": header["Sales Owner"],
             "Sales Manager": header["Sales Manager"],
-            "Status": status,
+            "Status": workflow_status,
             "Target Close Date": str(header["Target Close Date"]),
             "Payment Terms": header["Payment Terms"],
             "Contract Months": header["Contract Months"],
@@ -1437,7 +1618,7 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
         item["Deal ID"] = deal_id
         item["Line #"] = i
         st.session_state.runtime_lines.append(item)
-    add_audit(deal_id, "Deal draft saved" if status == "Draft" else "Deal created", details=f"Status: {status}")
+    add_audit(deal_id, "Deal draft saved" if status == "Draft" else "Deal created", details=f"Status: {workflow_status}")
     return deal_id
 
 
@@ -1479,45 +1660,59 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
         st.success(confirmation)
         st.session_state.deal_detail_confirmation = ""
 
-    if deal_status in {"Submitted", "Changes Requested"}:
+    if deal_status in ACTIVE_APPROVAL_STATUSES:
         context = build_deal_context(data, selected)
         if context:
             st.divider()
             st.subheader("Decision Panel")
             route_summary = " -> ".join(context["route_triggers"]["Role"].astype(str).tolist()) if not context["route_triggers"].empty else "No route available"
+            current_role = current_required_approval_role(selected, deal_status, context["route_df"])
+            user_role = st.session_state.get("role", "Demo Role")
+            allowed_decisions = allowed_decisions_for_role(user_role)
             st.write(f"**Recommendation:** {context['recommendation']}")
-            panel_cols = st.columns(2)
+            panel_cols = st.columns(4)
             panel_cols[0].metric("Decision Score", f"{context['total_score']}/100")
             panel_cols[1].metric("Approval Route Summary", route_summary)
+            panel_cols[2].metric("Current Required Role", current_role or "None")
+            panel_cols[3].metric("Current User Role", user_role)
+            can_act_on_step = bool(current_role) and user_role == current_role and bool(allowed_decisions)
+            if can_act_on_step:
+                st.success("Current user can capture a decision for this approval step.")
+            else:
+                st.warning(f"{user_role} cannot approve this step. Required role: {current_role or 'none'}.")
             with st.expander("Approval route trigger reasons", expanded=False):
                 st.dataframe(context["route_triggers"], use_container_width=True, hide_index=True)
 
             detail_decision = st.radio(
                 "Decision",
-                ["Approve", "Request Changes", "Escalate", "Reject"],
+                DECISIONS,
                 horizontal=True,
                 key=f"detail_decision_{selected}",
             )
             detail_comment = st.text_area("Decision comment", key=f"detail_decision_comment_{selected}")
-            if st.button("Capture Decision", type="primary", key=f"detail_capture_decision_{selected}"):
-                status_by_decision = {
-                    "Approve": "Approved",
-                    "Request Changes": "Changes Requested",
-                    "Escalate": "Escalated",
-                    "Reject": "Rejected",
-                }
-                new_status = status_by_decision[detail_decision]
-                update_deal_status(selected, new_status, detail_decision, detail_comment)
+            can_capture = can_act_on_step and detail_decision in allowed_decisions
+            if detail_decision not in allowed_decisions:
+                st.warning(f"{user_role} is not permitted to capture `{detail_decision}`.")
+            if st.button("Capture Decision", type="primary", key=f"detail_capture_decision_{selected}", disabled=not can_capture):
+                success, message = process_approval_decision(selected, detail_decision, detail_comment, context["route_df"], deal_status)
+                st.session_state.selected_deal_id = selected
+                if success:
+                    st.session_state.deal_detail_confirmation = message
+                    st.rerun()
+                else:
+                    st.error(message)
+            if not can_act_on_step and st.button("Add Comment", type="secondary", key=f"detail_add_comment_{selected}", disabled=not detail_comment.strip()):
                 add_audit(
                     selected,
-                    f"Approval decision: {detail_decision}",
-                    entity="Approval Step",
-                    details=f"Status changed to {new_status} from Deal Detail.",
-                    decision=detail_decision,
+                    "Approval comment added",
+                    entity="Approval Comment",
+                    details="Comment added without status change.",
                     comment=detail_comment,
+                    approval_step=current_role,
+                    previous_status=deal_status,
+                    new_status=deal_status,
                 )
-                st.session_state.selected_deal_id = selected
-                st.session_state.deal_detail_confirmation = f"Captured {detail_decision} for {selected}. Status updated to {new_status}."
+                st.session_state.deal_detail_confirmation = f"Comment added for {selected}. Status remains {deal_status}."
                 st.rerun()
 
     tabs = st.tabs(["Overview", "Line Items", "Analysis", "Route Preview", "Audit"])
@@ -1664,7 +1859,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if confirmation:
         st.success(confirmation)
         st.session_state.approval_confirmation = ""
-    submitted = deals[deals["Status"].isin(["Submitted", "Pending Approval"])].copy()
+    submitted = deals[deals["Status"].astype(str).str.strip().isin(ACTIVE_APPROVAL_STATUSES - {"Changes Requested"})].copy()
     if submitted.empty:
         st.info("No submitted deals available.")
         return
@@ -1685,8 +1880,9 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
             "Special Terms Requested": False,
         }
         route = route_preview(header, calc_lines, summary, data)
-        if role in set(route["Role"]):
-            reason = route[route["Role"].eq(role)].iloc[0]["Reason"]
+        current_role = current_required_approval_role(str(deal["Deal ID"]), str(deal.get("Status", "")).strip(), route)
+        if role == current_role:
+            reason = route[route["Role"].eq(role)].iloc[0]["Reason"] if role in set(route["Role"]) else "Current required approval step."
             rows.append(
                 {
                     "Deal ID": deal["Deal ID"],
@@ -1696,6 +1892,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
                     "Discount %": summary["discount_pct"],
                     "Risk": deal.get("Intake Risk", ""),
                     "Role": role,
+                    "Current Status": deal.get("Status", ""),
                     "Trigger Reason": reason,
                 }
             )
@@ -1703,29 +1900,9 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if queue.empty:
         st.info(f"No deals currently require {role}.")
         return
-    table_event = st.dataframe(
-        queue,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="approval_queue_table",
-    )
-    table_selected = get_selected_dataframe_deal_id(table_event, queue)
-    if table_selected:
-        st.caption(f"Selected in table: {table_selected}. Use the dropdown below to load the review panel.")
-
-    deal_options = [""] + queue["Deal ID"].astype(str).tolist()
-    if st.session_state.get("approval_deal_to_review", "") not in deal_options:
-        st.session_state.approval_deal_to_review = ""
-    selected = st.selectbox(
-        "Select deal to review",
-        deal_options,
-        format_func=lambda value: "Select a deal..." if value == "" else value,
-        key="approval_deal_to_review",
-    )
+    selected = render_clickable_deal_table(queue, "approval_queue_clickable", "approval_queue_selected_deal_id")
     if not selected:
-        st.warning("Select a deal to review before capturing a decision.")
+        st.warning("Click any cell in a deal row to review details and capture a decision.")
         return
 
     context = build_deal_context(data, selected)
@@ -1734,28 +1911,43 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
         return
 
     render_approval_review_panel(context)
+    previous_status = str(context["deal"].get("Status", "")).strip()
+    current_role = current_required_approval_role(selected, previous_status, context["route_df"])
+    user_role = st.session_state.get("role", "Demo Role")
+    allowed_decisions = allowed_decisions_for_role(user_role)
+    can_act_on_step = bool(current_role) and user_role == current_role and bool(allowed_decisions)
+    role_cols = st.columns(3)
+    role_cols[0].metric("Current Required Role", current_role or "None")
+    role_cols[1].metric("Current User Role", user_role)
+    role_cols[2].metric("Can Approve", "Yes" if can_act_on_step else "No")
+    if not can_act_on_step:
+        st.warning(f"{user_role} cannot capture a decision for this step. Required role: {current_role or 'none'}.")
 
     st.subheader("Decision")
-    decision = st.radio("Decision", ["Approve", "Request Changes", "Escalate", "Reject"], horizontal=True, key=f"decision_{selected}")
+    decision = st.radio("Decision", DECISIONS, horizontal=True, key=f"decision_{selected}")
     comment = st.text_area("Decision comment", key=f"decision_comment_{selected}")
-    if st.button("Capture Decision", type="primary"):
-        status_by_decision = {
-            "Approve": "Approved",
-            "Request Changes": "Changes Requested",
-            "Escalate": "Escalated",
-            "Reject": "Rejected",
-        }
-        new_status = status_by_decision[decision]
-        update_deal_status(selected, new_status, decision, comment)
+    can_capture = can_act_on_step and decision in allowed_decisions
+    if decision not in allowed_decisions:
+        st.warning(f"{user_role} is not permitted to capture `{decision}`.")
+    if st.button("Capture Decision", type="primary", disabled=not can_capture):
+        success, message = process_approval_decision(selected, decision, comment, context["route_df"], previous_status)
+        if success:
+            st.session_state.approval_confirmation = message
+            st.rerun()
+        else:
+            st.error(message)
+    if not can_act_on_step and st.button("Add Comment", type="secondary", disabled=not comment.strip()):
         add_audit(
             selected,
-            f"Approval decision: {decision}",
-            entity="Approval Step",
-            details=f"Status changed to {new_status}.",
-            decision=decision,
+            "Approval comment added",
+            entity="Approval Comment",
+            details="Comment added without status change.",
             comment=comment,
+            approval_step=current_role,
+            previous_status=previous_status,
+            new_status=previous_status,
         )
-        st.session_state.approval_confirmation = f"Captured {decision} for {selected}. Status updated to {new_status}."
+        st.session_state.approval_confirmation = f"Comment added for {selected}. Status remains {previous_status}."
         st.rerun()
 
     if st.button("Open Full Deal Detail", type="secondary"):
@@ -1819,9 +2011,12 @@ def sidebar() -> str:
         st.session_state.runtime_lines = []
         st.session_state.audit_events = []
         st.session_state.deal_status_overrides = {}
+        st.session_state.deal_approval_steps = {}
         st.session_state.approval_confirmation = ""
         st.session_state.deal_detail_confirmation = ""
         st.session_state.approval_deal_to_review = ""
+        st.session_state.deal_list_selected_deal_id = None
+        st.session_state.approval_queue_selected_deal_id = None
         st.session_state.selected_deal_id = None
         st.session_state.draft_lines = None
         st.session_state.current_page = pages[0]
