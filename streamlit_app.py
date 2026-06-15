@@ -160,10 +160,9 @@ def init_state() -> None:
     st.session_state.setdefault("approval_confirmation", "")
     st.session_state.setdefault("deal_detail_confirmation", "")
     st.session_state.setdefault("selected_deal_id", None)
+    st.session_state.setdefault("deal_detail_parent", "Deal Requests")
     st.session_state.setdefault("draft_lines", None)
     st.session_state.setdefault("current_page", "Deal Request List")
-    st.session_state.setdefault("nav_widget", "Deal Request List")
-    st.session_state.setdefault("_sync_nav_widget", False)
 
 
 def add_audit(
@@ -268,19 +267,14 @@ def combined_lines(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
 def navigate_to_deal_detail(deal_id: str, source: str) -> None:
     st.session_state.selected_deal_id = deal_id
     st.session_state.current_page = "Deal Detail"
-    st.session_state._sync_nav_widget = True
+    st.session_state.deal_detail_parent = "Approval Queue" if "approval" in source.lower() else "Deal Requests"
     add_audit(deal_id, "Deal viewed", details=f"Opened from {source}.")
     st.rerun()
 
 
 def set_current_page(page: str) -> None:
     st.session_state.current_page = page
-    st.session_state._sync_nav_widget = True
     st.rerun()
-
-
-def sync_current_page_from_nav_widget() -> None:
-    st.session_state.current_page = st.session_state.nav_widget
 
 
 def get_selected_dataframe_deal_id(table_event: object, display_df: pd.DataFrame) -> str | None:
@@ -1307,7 +1301,28 @@ def final_recommendation(errors: list[str], warnings: list[str], summary: dict, 
     return "Approve", "No blocking issues or material warning conditions detected."
 
 
+def breadcrumb_for_current_page() -> str:
+    page = st.session_state.get("current_page", "Deal Request List")
+    if page == "Deal Request List":
+        return "Deal Requests"
+    if page == "New Deal Intake":
+        return "Deals > New Deal"
+    if page == "Deal Detail":
+        deal_id = st.session_state.get("selected_deal_id") or "Deal"
+        parent = st.session_state.get("deal_detail_parent", "Deal Requests")
+        return f"{parent} > {deal_id}"
+    if page == "Approval Queue Preview":
+        selected = st.session_state.get("approval_queue_selected_deal_id")
+        return f"Approval Queue > {selected}" if selected else "Approval Queue"
+    if page == "Reference Data":
+        return "Admin > Reference Data"
+    if page == "Audit Log":
+        return "Admin > Audit Log"
+    return str(page)
+
+
 def render_header(title: str, subtitle: str = "") -> None:
+    st.caption(breadcrumb_for_current_page())
     st.title(title)
     if subtitle:
         st.markdown(f"<div class='section-note'>{subtitle}</div>", unsafe_allow_html=True)
@@ -1966,14 +1981,32 @@ def sidebar() -> str:
     persona = st.sidebar.selectbox("Demo Persona", list(PERSONAS.keys()), key="persona")
     st.session_state.role = PERSONAS[persona]
     st.sidebar.caption(f"Role: {st.session_state.role}")
-    pages = ["Deal Request List", "New Deal Intake", "Deal Detail", "Approval Queue Preview", "Reference Data", "Audit Log"]
-    if st.session_state.get("current_page") not in pages:
-        st.session_state.current_page = pages[0]
-        st.session_state._sync_nav_widget = True
-    if st.session_state.get("nav_widget") not in pages or st.session_state.get("_sync_nav_widget"):
-        st.session_state.nav_widget = st.session_state.current_page
-        st.session_state._sync_nav_widget = False
-    st.sidebar.radio("Navigation", pages, key="nav_widget", on_change=sync_current_page_from_nav_widget)
+    menu_pages = {
+        "Deal Request List": "Deal Requests",
+        "New Deal Intake": "New Deal",
+        "Approval Queue Preview": "Approval Queue",
+        "Reference Data": "Reference Data",
+        "Audit Log": "Audit Log",
+    }
+    valid_pages = set(menu_pages) | {"Deal Detail"}
+    if st.session_state.get("current_page") not in valid_pages:
+        st.session_state.current_page = "Deal Request List"
+
+    def menu_button(page: str, label: str) -> None:
+        active = st.session_state.get("current_page") == page
+        prefix = "▸ " if active else ""
+        if st.sidebar.button(f"{prefix}{label}", key=f"menu_{page}", use_container_width=True, type="primary" if active else "secondary"):
+            st.session_state.current_page = page
+            st.rerun()
+
+    st.sidebar.markdown("### 📥 Deals")
+    menu_button("Deal Request List", "Deal Requests")
+    menu_button("New Deal Intake", "New Deal")
+    st.sidebar.markdown("### ✅ Reviews")
+    menu_button("Approval Queue Preview", "Approval Queue")
+    st.sidebar.markdown("### ⚙️ Admin")
+    menu_button("Reference Data", "Reference Data")
+    menu_button("Audit Log", "Audit Log")
     st.sidebar.divider()
     st.sidebar.metric("Session Deals", len(st.session_state.runtime_deals))
     st.sidebar.metric("Audit Events", len(st.session_state.audit_events))
@@ -1989,9 +2022,9 @@ def sidebar() -> str:
         st.session_state.deal_list_selected_deal_id = None
         st.session_state.approval_queue_selected_deal_id = None
         st.session_state.selected_deal_id = None
+        st.session_state.deal_detail_parent = "Deal Requests"
         st.session_state.draft_lines = None
-        st.session_state.current_page = pages[0]
-        st.session_state._sync_nav_widget = True
+        st.session_state.current_page = "Deal Request List"
         st.rerun()
     return st.session_state.current_page
 
