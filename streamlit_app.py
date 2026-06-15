@@ -149,30 +149,9 @@ def inject_css() -> None:
         """
         <style>
         .block-container {
-            padding-top: 0.35rem;
+            padding-top: 0.6rem;
             padding-bottom: 1.25rem;
             max-width: 100%;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.top-title) {
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-            background: rgba(255, 255, 255, 0.98);
-            border-bottom: 1px solid #dbe3ef;
-            padding: 0.18rem 0 0.28rem;
-            margin: -0.35rem 0 0.55rem;
-            box-shadow: 0 1px 6px rgba(15, 23, 42, 0.05);
-        }
-        div[data-testid="stHorizontalBlock"]:has(.top-title) div[data-testid="stVerticalBlock"] {
-            gap: 0.12rem;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.top-title) button {
-            min-height: 2.15rem;
-            padding-top: 0.25rem;
-            padding-bottom: 0.25rem;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.top-title) [data-baseweb="select"] > div {
-            min-height: 2.15rem;
         }
         h1, h2, h3 {
             letter-spacing: 0;
@@ -236,16 +215,19 @@ def inject_css() -> None:
             margin: 0 0 0.05rem;
         }
         .top-title {
-            font-size: 1.05rem;
+            display: block;
+            color: #0f172a;
+            font-size: 1.16rem;
             font-weight: 750;
             letter-spacing: 0;
-            padding-top: 0.42rem;
+            line-height: 2.35rem;
             white-space: nowrap;
         }
         .top-role {
             color: #475569;
-            font-size: 0.74rem;
-            margin-top: -0.45rem;
+            font-size: 0.76rem;
+            line-height: 1rem;
+            margin-top: 0.05rem;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -253,22 +235,19 @@ def inject_css() -> None:
         .compact-gap {
             height: 0.15rem;
         }
+        .app-header-rule {
+            border-bottom: 1px solid #dbe3ef;
+            margin: 0.25rem 0 0.45rem;
+        }
         @media (max-width: 760px) {
             .block-container {
                 padding-left: 0.65rem;
                 padding-right: 0.65rem;
-                padding-top: 0.2rem;
-            }
-            div[data-testid="stHorizontalBlock"]:has(.top-title) {
-                position: sticky;
-                top: 0;
-                overflow-x: auto;
-                padding-bottom: 0.2rem;
-                margin-bottom: 0.35rem;
+                padding-top: 0.45rem;
             }
             .top-title {
-                font-size: 0.98rem;
-                padding-top: 0.48rem;
+                font-size: 1rem;
+                line-height: 2rem;
             }
             h1 {
                 font-size: 1.32rem !important;
@@ -2549,6 +2528,7 @@ def top_navigation() -> str:
         if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
             reset_demo_session()
 
+    st.markdown("<div class='app-header-rule'></div>", unsafe_allow_html=True)
     return st.session_state.current_page
 
 
