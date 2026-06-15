@@ -295,61 +295,6 @@ def get_selected_dataframe_deal_id(table_event: object, display_df: pd.DataFrame
     return None
 
 
-def table_cell_label(column: str, value: object) -> str:
-    if value is None or pd.isna(value):
-        return "-"
-    if column in {"Value", "Total Proposed"}:
-        return money(safe_float(value))
-    if column == "Discount %":
-        return pct(safe_float(value))
-    text = str(value)
-    return text if len(text) <= 44 else f"{text[:41]}..."
-
-
-def table_column_weights(columns: list[str]) -> list[float]:
-    weights = []
-    for column in columns:
-        if column in {"Deal Title", "Trigger Reason", "Expected Route"}:
-            weights.append(2.6)
-        elif column in {"Customer", "Customer Name"}:
-            weights.append(2.1)
-        elif column in {"Value", "Discount %", "Risk", "Status", "Role"}:
-            weights.append(1.0)
-        else:
-            weights.append(1.25)
-    return weights
-
-
-def render_clickable_deal_table(display_df: pd.DataFrame, key_prefix: str, selected_key: str) -> str | None:
-    if display_df.empty or "Deal ID" not in display_df:
-        return None
-    columns = display_df.columns.tolist()
-    weights = table_column_weights(columns)
-    header_cols = st.columns(weights)
-    for col, name in zip(header_cols, columns):
-        col.markdown(f"**{name}**")
-    for row_index, row in display_df.reset_index(drop=True).iterrows():
-        deal_id = str(row["Deal ID"])
-        selected = st.session_state.get(selected_key) == deal_id
-        row_cols = st.columns(weights)
-        for col_index, column in enumerate(columns):
-            label = table_cell_label(column, row[column])
-            if row_cols[col_index].button(
-                label,
-                key=f"{key_prefix}_{row_index}_{col_index}",
-                type="primary" if selected else "secondary",
-                use_container_width=True,
-                help=f"Select {deal_id}",
-            ):
-                st.session_state[selected_key] = deal_id
-                st.session_state.selected_deal_id = deal_id
-                selected = True
-    selected_deal = st.session_state.get(selected_key)
-    if selected_deal in set(display_df["Deal ID"].astype(str)):
-        return selected_deal
-    return None
-
-
 def update_deal_status(
     deal_id: str,
     status: str,
@@ -1404,7 +1349,20 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
 
     display_cols = [col for col in ["Deal ID", "Deal Title", "Customer Name", "Deal Type", "Region", "Status", "Target Close Date", "Payment Terms", "Intake Risk", "Expected Route"] if col in filtered]
     display_df = filtered[display_cols].reset_index(drop=True)
-    table_selected = render_clickable_deal_table(display_df, "deal_list_clickable", "deal_list_selected_deal_id")
+    table_event = st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="deal_request_list_table",
+    )
+    table_selected = get_selected_dataframe_deal_id(table_event, display_df)
+    if table_selected:
+        st.session_state.deal_list_selected_deal_id = table_selected
+        st.session_state.selected_deal_id = table_selected
+    else:
+        st.session_state.deal_list_selected_deal_id = None
 
     if table_selected:
         context = build_deal_context(data, table_selected)
@@ -1413,7 +1371,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
             if st.button("Open Deal Detail", type="primary"):
                 navigate_to_deal_detail(table_selected, "deal request list row selection")
     else:
-        st.caption("Click any cell in a deal row to select and preview it here.")
+        st.caption("Select a deal row using the checkbox column to preview it here.")
 
 
 def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) -> dict:
@@ -1900,9 +1858,22 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if queue.empty:
         st.info(f"No deals currently require {role}.")
         return
-    selected = render_clickable_deal_table(queue, "approval_queue_clickable", "approval_queue_selected_deal_id")
+    table_event = st.dataframe(
+        queue,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="approval_queue_table",
+    )
+    selected = get_selected_dataframe_deal_id(table_event, queue)
+    if selected:
+        st.session_state.approval_queue_selected_deal_id = selected
+        st.session_state.selected_deal_id = selected
+    else:
+        st.session_state.approval_queue_selected_deal_id = None
     if not selected:
-        st.warning("Click any cell in a deal row to review details and capture a decision.")
+        st.warning("Select a deal row using the checkbox column to review details and capture a decision.")
         return
 
     context = build_deal_context(data, selected)
