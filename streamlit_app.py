@@ -214,40 +214,11 @@ def inject_css() -> None:
             font-size: 0.76rem;
             margin: 0 0 0.05rem;
         }
-        .top-title {
-            display: block;
-            color: #0f172a;
-            font-size: 1.16rem;
-            font-weight: 750;
-            letter-spacing: 0;
-            line-height: 2.35rem;
-            white-space: nowrap;
-        }
-        .top-role {
-            color: #475569;
-            font-size: 0.76rem;
-            line-height: 1rem;
-            margin-top: 0.05rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .compact-gap {
-            height: 0.15rem;
-        }
-        .app-header-rule {
-            border-bottom: 1px solid #dbe3ef;
-            margin: 0.25rem 0 0.45rem;
-        }
         @media (max-width: 760px) {
             .block-container {
                 padding-left: 0.65rem;
                 padding-right: 0.65rem;
                 padding-top: 0.45rem;
-            }
-            .top-title {
-                font-size: 1rem;
-                line-height: 2rem;
             }
             h1 {
                 font-size: 1.32rem !important;
@@ -2491,9 +2462,6 @@ def top_navigation() -> str:
     if st.session_state.get("current_page") not in valid_pages:
         st.session_state.current_page = "Deal Request List"
 
-    nav_cols = st.columns([2.0, 0.95, 1.05, 1.3, 0.85])
-    nav_cols[0].markdown("<div class='top-title'>Deal Desk Copilot</div>", unsafe_allow_html=True)
-
     current_page = st.session_state.get("current_page", "Deal Request List")
     submit_active = current_page in {"Deal Request List", "New Deal Intake"} or (
         current_page == "Deal Detail" and st.session_state.get("deal_detail_parent") == "Deal Requests"
@@ -2502,33 +2470,36 @@ def top_navigation() -> str:
         current_page == "Deal Detail" and st.session_state.get("deal_detail_parent") == "Review Queue"
     )
 
-    if nav_cols[1].button("Submit Deal", type="primary" if submit_active else "secondary", use_container_width=True):
-        st.session_state.current_page = "Deal Request List"
-        st.rerun()
-    if nav_cols[2].button("Review Queue", type="primary" if review_active else "secondary", use_container_width=True):
-        st.session_state.current_page = "Approval Queue Preview"
-        st.rerun()
-
-    persona = nav_cols[3].selectbox("User persona", list(PERSONAS.keys()), key="persona", label_visibility="collapsed")
-    st.session_state.role = PERSONAS[persona]
-    nav_cols[3].markdown(f"<div class='top-role'>{st.session_state.role}</div>", unsafe_allow_html=True)
-
-    with nav_cols[4].popover("Settings"):
-        st.metric("Session Deals", len(st.session_state.runtime_deals))
-        st.metric("Audit Events", len(st.session_state.audit_events))
-        if st.button("Reference Data", key="admin_reference_data", use_container_width=True):
-            st.session_state.current_page = "Reference Data"
+    with st.container():
+        st.markdown("### Deal Desk Copilot")
+        nav_cols = st.columns([1.05, 1.05, 0.25, 1.7, 0.9])
+        if nav_cols[0].button("Submit Deal", type="primary" if submit_active else "secondary", use_container_width=True):
+            st.session_state.current_page = "Deal Request List"
             st.rerun()
-        if st.button("Global Audit Log", key="admin_audit_log", use_container_width=True):
-            st.session_state.current_page = "Audit Log"
+        if nav_cols[1].button("Review Queue", type="primary" if review_active else "secondary", use_container_width=True):
+            st.session_state.current_page = "Approval Queue Preview"
             st.rerun()
-        st.divider()
-        st.warning("Reset clears session-created deals, status overrides, and session audit events.")
-        confirm_reset = st.checkbox("I understand and want to reset this demo session.", key="admin_confirm_reset")
-        if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
-            reset_demo_session()
 
-    st.markdown("<div class='app-header-rule'></div>", unsafe_allow_html=True)
+        persona = nav_cols[3].selectbox("Persona", list(PERSONAS.keys()), key="persona")
+        st.session_state.role = PERSONAS[persona]
+        nav_cols[3].caption(st.session_state.role)
+
+        with nav_cols[4].popover("Settings/Admin"):
+            st.metric("Session Deals", len(st.session_state.runtime_deals))
+            st.metric("Audit Events", len(st.session_state.audit_events))
+            if st.button("Reference Data", key="admin_reference_data", use_container_width=True):
+                st.session_state.current_page = "Reference Data"
+                st.rerun()
+            if st.button("Global Audit Log", key="admin_audit_log", use_container_width=True):
+                st.session_state.current_page = "Audit Log"
+                st.rerun()
+            st.divider()
+            st.warning("Reset clears session-created deals, status overrides, and session audit events.")
+            confirm_reset = st.checkbox("I understand and want to reset this demo session.", key="admin_confirm_reset")
+            if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
+                reset_demo_session()
+
+    st.divider()
     return st.session_state.current_page
 
 
