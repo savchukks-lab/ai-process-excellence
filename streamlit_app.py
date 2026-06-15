@@ -90,7 +90,7 @@ st.set_page_config(
     page_title="Commercial Deal Desk Copilot",
     page_icon="",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -120,6 +120,17 @@ def inject_css() -> None:
         .section-note {
             color: #475569;
             font-size: 0.92rem;
+        }
+        .top-title {
+            font-size: 1.18rem;
+            font-weight: 750;
+            letter-spacing: 0;
+            padding-top: 0.35rem;
+        }
+        .top-role {
+            color: #475569;
+            font-size: 0.82rem;
+            margin-top: -0.35rem;
         }
         </style>
         """,
@@ -307,7 +318,7 @@ def combined_lines(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
 def navigate_to_deal_detail(deal_id: str, source: str) -> None:
     st.session_state.selected_deal_id = deal_id
     st.session_state.current_page = "Deal Detail"
-    st.session_state.deal_detail_parent = "Approval Queue" if "approval" in source.lower() else "Deal Requests"
+    st.session_state.deal_detail_parent = "Review Queue" if "approval" in source.lower() else "Deal Requests"
     add_audit(deal_id, "Deal viewed", details=f"Opened from {source}.")
     st.rerun()
 
@@ -1162,7 +1173,7 @@ def breadcrumb_for_current_page() -> str:
         return f"{parent} > {deal_id}"
     if page == "Approval Queue Preview":
         selected = st.session_state.get("approval_queue_selected_deal_id")
-        return f"Approval Queue > {selected}" if selected else "Approval Queue"
+        return f"Review Queue > {selected}" if selected else "Review Queue"
     if page == "Reference Data":
         return "Admin > Reference Data"
     if page == "Audit Log":
@@ -2058,8 +2069,8 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
 
 
 def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
-    render_header("Approval Queue Preview", "Simulated role-based approval queue for submitted deals.")
-    st.info("Select a deal from the approval queue to review details and capture a decision.")
+    render_header("Review Queue", "Role-based review queue for submitted commercial deal requests.")
+    st.info("Select a deal from the review queue to review details and capture a decision.")
     deals = combined_deals(data)
     confirmation = st.session_state.get("approval_confirmation", "")
     if confirmation:
@@ -2209,55 +2220,73 @@ def page_audit_log() -> None:
     st.dataframe(audit.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
 
 
-def sidebar() -> str:
-    st.sidebar.title("Deal Desk Copilot")
-    persona = st.sidebar.selectbox("Demo Persona", list(PERSONAS.keys()), key="persona")
-    st.session_state.role = PERSONAS[persona]
-    st.sidebar.caption(f"Role: {st.session_state.role}")
-    menu_pages = {
-        "Deal Request List": "Deal Requests",
-        "New Deal Intake": "New Deal",
-        "Approval Queue Preview": "Approval Queue",
-        "Reference Data": "Reference Data",
-        "Audit Log": "Audit Log",
+def reset_demo_session() -> None:
+    st.session_state.runtime_deals = []
+    st.session_state.runtime_lines = []
+    st.session_state.audit_events = []
+    st.session_state.deal_status_overrides = {}
+    st.session_state.deal_approval_steps = {}
+    st.session_state.approval_confirmation = ""
+    st.session_state.deal_detail_confirmation = ""
+    st.session_state.deal_list_selected_deal_id = None
+    st.session_state.approval_queue_selected_deal_id = None
+    st.session_state.selected_deal_id = None
+    st.session_state.deal_detail_parent = "Deal Requests"
+    st.session_state.draft_lines = None
+    st.session_state.current_page = "Deal Request List"
+    st.rerun()
+
+
+def top_navigation() -> str:
+    valid_pages = {
+        "Deal Request List",
+        "New Deal Intake",
+        "Approval Queue Preview",
+        "Deal Detail",
+        "Reference Data",
+        "Audit Log",
     }
-    valid_pages = set(menu_pages) | {"Deal Detail"}
     if st.session_state.get("current_page") not in valid_pages:
         st.session_state.current_page = "Deal Request List"
 
-    def menu_button(page: str, label: str) -> None:
-        active = st.session_state.get("current_page") == page
-        prefix = "▸ " if active else ""
-        if st.sidebar.button(f"{prefix}{label}", key=f"menu_{page}", use_container_width=True, type="primary" if active else "secondary"):
-            st.session_state.current_page = page
-            st.rerun()
+    nav_cols = st.columns([2.5, 1.1, 1.1, 1.45, 0.8])
+    nav_cols[0].markdown("<div class='top-title'>Deal Desk Copilot</div>", unsafe_allow_html=True)
 
-    st.sidebar.markdown("### 📥 Deals")
-    menu_button("Deal Request List", "Deal Requests")
-    menu_button("New Deal Intake", "New Deal")
-    st.sidebar.markdown("### ✅ Reviews")
-    menu_button("Approval Queue Preview", "Approval Queue")
-    st.sidebar.markdown("### ⚙️ Admin")
-    menu_button("Reference Data", "Reference Data")
-    menu_button("Audit Log", "Audit Log")
-    st.sidebar.divider()
-    st.sidebar.metric("Session Deals", len(st.session_state.runtime_deals))
-    st.sidebar.metric("Audit Events", len(st.session_state.audit_events))
-    if st.sidebar.button("Reset Demo Session"):
-        st.session_state.runtime_deals = []
-        st.session_state.runtime_lines = []
-        st.session_state.audit_events = []
-        st.session_state.deal_status_overrides = {}
-        st.session_state.deal_approval_steps = {}
-        st.session_state.approval_confirmation = ""
-        st.session_state.deal_detail_confirmation = ""
-        st.session_state.deal_list_selected_deal_id = None
-        st.session_state.approval_queue_selected_deal_id = None
-        st.session_state.selected_deal_id = None
-        st.session_state.deal_detail_parent = "Deal Requests"
-        st.session_state.draft_lines = None
+    current_page = st.session_state.get("current_page", "Deal Request List")
+    submit_active = current_page in {"Deal Request List", "New Deal Intake"} or (
+        current_page == "Deal Detail" and st.session_state.get("deal_detail_parent") == "Deal Requests"
+    )
+    review_active = current_page == "Approval Queue Preview" or (
+        current_page == "Deal Detail" and st.session_state.get("deal_detail_parent") == "Review Queue"
+    )
+
+    if nav_cols[1].button("Submit Deal", type="primary" if submit_active else "secondary", use_container_width=True):
         st.session_state.current_page = "Deal Request List"
         st.rerun()
+    if nav_cols[2].button("Review Queue", type="primary" if review_active else "secondary", use_container_width=True):
+        st.session_state.current_page = "Approval Queue Preview"
+        st.rerun()
+
+    persona = nav_cols[3].selectbox("User persona", list(PERSONAS.keys()), key="persona", label_visibility="collapsed")
+    st.session_state.role = PERSONAS[persona]
+    nav_cols[3].markdown(f"<div class='top-role'>{st.session_state.role}</div>", unsafe_allow_html=True)
+
+    with nav_cols[4].popover("Settings / Admin"):
+        st.metric("Session Deals", len(st.session_state.runtime_deals))
+        st.metric("Audit Events", len(st.session_state.audit_events))
+        if st.button("Reference Data", key="admin_reference_data", use_container_width=True):
+            st.session_state.current_page = "Reference Data"
+            st.rerun()
+        if st.button("Global Audit Log", key="admin_audit_log", use_container_width=True):
+            st.session_state.current_page = "Audit Log"
+            st.rerun()
+        st.divider()
+        st.warning("Reset clears session-created deals, status overrides, and session audit events.")
+        confirm_reset = st.checkbox("I understand and want to reset this demo session.", key="admin_confirm_reset")
+        if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
+            reset_demo_session()
+
+    st.divider()
     return st.session_state.current_page
 
 
@@ -2265,7 +2294,7 @@ def main() -> None:
     inject_css()
     init_state()
     data = load_demo_data()
-    page = sidebar()
+    page = top_navigation()
     if page == "Deal Request List":
         page_deal_list(data)
     elif page == "New Deal Intake":
