@@ -181,7 +181,7 @@ def calculate_decision_score(
     roles = set(route_df["Role"]) if not route_df.empty else set()
     if "Market Access Director" in roles:
         strategic_score += 3
-    if "Commercial Executive" in roles:
+    if "General Manager" in roles:
         strategic_score += 4
     if summary["total_proposed"] > 1_000_000:
         strategic_score += 2
@@ -202,13 +202,11 @@ def calculate_decision_score(
         competitive_score -= int((competitor_df["Supply Issues"] == "Yes").sum()) * 1
 
     risk_score = 18
-    if "Legal Reviewer" in roles:
-        risk_score -= 3
-    if "Finance Approver" in roles:
+    if "Finance Director" in roles:
         risk_score -= 2
-    if "Operations Reviewer" in roles:
+    if "Supply Chain Manager" in roles:
         risk_score -= 2
-    if "Commercial Executive" in roles:
+    if "General Manager" in roles:
         risk_score -= 2
 
     scores = {
@@ -223,7 +221,7 @@ def calculate_decision_score(
     has_shortage = not inventory_df.empty and safe_float(inventory_df["Inventory Shortage"].sum()) > 0
     has_near_expiry = not aging_df.empty and (aging_df["Near Expiry Inventory"] == "Yes").any()
     aggressive_pricing = not competitor_df.empty and (competitor_df["Aggressive Competitor Pricing"] == "Yes").any()
-    executive_exposure = "Commercial Executive" in roles
+    executive_exposure = "General Manager" in roles
 
     if has_shortage and scores["Inventory Score"] <= 8:
         recommendation = "Request Supply Review"

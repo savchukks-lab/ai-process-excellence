@@ -26,75 +26,76 @@ BASE_DIR = Path(__file__).resolve().parent
 DEMO_DIR = BASE_DIR / "demo-data"
 
 ROLE_ORDER = [
+    "KAM North",
+    "KAM South",
     "Sales Manager",
-    "Pricing Analyst",
+    "Pricing Governance Owner",
     "Market Access Director",
-    "Finance Approver",
-    "Operations Reviewer",
-    "Legal Reviewer",
-    "Commercial Executive",
+    "Finance Director",
+    "Supply Chain Manager",
+    "General Manager",
+    "System Administrator",
 ]
 
 PERSONAS = {
-    "Maya Chen": "Sales Representative",
-    "Ethan Brooks": "Sales Representative",
-    "Sofia Romano": "Sales Representative",
-    "Noah Patel": "Sales Representative",
-    "Priya Shah": "Sales Representative",
+    "Maya Chen": "KAM North",
+    "Ethan Brooks": "KAM South",
     "Jordan Blake": "Sales Manager",
-    "Priya Nair": "Pricing Analyst",
+    "Priya Nair": "Pricing Governance Owner",
     "Marcus Reed": "Market Access Director",
-    "Daniel Ortiz": "Finance Approver",
-    "Elena Rossi": "Operations Reviewer",
-    "Aisha Khan": "Legal Reviewer",
-    "Sarah Morgan": "Commercial Executive",
-    "Admin User": "Admin",
+    "Daniel Ortiz": "Finance Director",
+    "Elena Rossi": "Supply Chain Manager",
+    "Sarah Morgan": "General Manager",
+    "Admin User": "System Administrator",
 }
 
 SALES_MANAGER_TEAMS = {
-    "Jordan Blake": ["Maya Chen", "Sofia Romano", "Priya Shah"],
-    "Lena Torres": ["Ethan Brooks", "Noah Patel", "Sofia Romano"],
-    "Sarah Morgan": ["Maya Chen", "Ethan Brooks", "Sofia Romano", "Noah Patel", "Priya Shah", "Jordan Blake", "Lena Torres"],
+    "Jordan Blake": ["Maya Chen", "Ethan Brooks"],
 }
 
 APPROVAL_STEP_STATUS = {
     "Sales Manager": "Pending Sales Manager",
-    "Pricing Analyst": "Pending Pricing",
-    "Finance Approver": "Pending Finance",
-    "Operations Reviewer": "Pending Operations",
-    "Commercial Executive": "Pending Executive",
+    "Pricing Governance Owner": "Pending Pricing Governance",
+    "Market Access Director": "Pending Market Access",
+    "Finance Director": "Pending Finance",
+    "Supply Chain Manager": "Pending Supply Chain",
+    "General Manager": "Pending General Manager",
 }
 
 STATUS_APPROVAL_STEP = {status: role for role, status in APPROVAL_STEP_STATUS.items()}
 
 ACTIONABLE_APPROVAL_ROLES = [
     "Sales Manager",
-    "Pricing Analyst",
-    "Finance Approver",
-    "Operations Reviewer",
-    "Commercial Executive",
+    "Pricing Governance Owner",
+    "Market Access Director",
+    "Finance Director",
+    "Supply Chain Manager",
+    "General Manager",
 ]
 
 ACTIVE_APPROVAL_STATUSES = {
     "Submitted",
     "Pending Sales Manager",
-    "Pending Pricing",
+    "Pending Pricing Governance",
+    "Pending Market Access",
     "Pending Finance",
-    "Pending Operations",
-    "Pending Executive",
+    "Pending Supply Chain",
+    "Pending General Manager",
     "Changes Requested",
 }
 
 DECISIONS = ["Approve", "Request Changes", "Escalate", "Reject"]
 
 ROLE_ALLOWED_DECISIONS = {
-    "Sales Representative": [],
+    "KAM North": [],
+    "KAM South": [],
     "Sales Manager": ["Approve", "Request Changes"],
-    "Pricing Analyst": ["Approve", "Request Changes"],
-    "Finance Approver": ["Approve", "Request Changes"],
-    "Operations Reviewer": ["Approve", "Request Changes"],
-    "Commercial Executive": ["Approve", "Request Changes", "Escalate", "Reject"],
-    "Admin": [],
+    "Pricing Governance Owner": ["Approve", "Request Changes"],
+    "Market Access Director": ["Approve", "Request Changes"],
+    "Finance Director": ["Approve", "Request Changes"],
+    "Supply Chain Manager": ["Approve", "Request Changes"],
+    "General Manager": ["Approve", "Request Changes", "Escalate", "Reject"],
+    "System Administrator": [],
 }
 
 SENSITIVE_FIELD_PATTERNS = [
@@ -124,15 +125,15 @@ SENSITIVE_FIELD_PATTERNS = [
 ]
 
 ROLE_VISIBLE_SENSITIVE_PATTERNS = {
-    "Sales Representative": [],
-    "Sales Manager": ["Gross Margin", "Margin %", "Proposed Revenue", "Planned Revenue", "Net Revenue Variance", "Revenue Variance"],
-    "Pricing Analyst": ["Floor Price", "Walk-away Price", "Guidance Price", "Price Corridor", "IRP", "Gross Margin", "Margin %", "Margin Difference"],
-    "Market Access Director": ["Gross Margin", "Margin %", "IRP", "Price Corridor"],
-    "Finance Approver": SENSITIVE_FIELD_PATTERNS,
-    "Operations Reviewer": [],
-    "Legal Reviewer": [],
-    "Commercial Executive": SENSITIVE_FIELD_PATTERNS,
-    "Admin": SENSITIVE_FIELD_PATTERNS,
+    "KAM North": [],
+    "KAM South": [],
+    "Sales Manager": ["Proposed Revenue", "Planned Revenue", "Net Revenue Variance", "Revenue Variance"],
+    "Pricing Governance Owner": SENSITIVE_FIELD_PATTERNS,
+    "Market Access Director": SENSITIVE_FIELD_PATTERNS,
+    "Finance Director": SENSITIVE_FIELD_PATTERNS,
+    "Supply Chain Manager": [],
+    "General Manager": SENSITIVE_FIELD_PATTERNS,
+    "System Administrator": SENSITIVE_FIELD_PATTERNS,
 }
 
 
@@ -277,6 +278,9 @@ def init_state() -> None:
     st.session_state.setdefault("audit_events", [])
     st.session_state.setdefault("deal_status_overrides", {})
     st.session_state.setdefault("deal_approval_steps", {})
+    st.session_state.setdefault("approval_assignments", {})
+    st.session_state.setdefault("workflow_audit_keys", [])
+    st.session_state.setdefault("delegate_overrides", None)
     st.session_state.setdefault("approval_confirmation", "")
     st.session_state.setdefault("deal_detail_confirmation", "")
     st.session_state.setdefault("selected_deal_id", None)
@@ -352,7 +356,45 @@ def current_persona() -> str:
 
 
 def current_role() -> str:
-    return st.session_state.get("role", PERSONAS.get(current_persona(), "Sales Representative"))
+    return st.session_state.get("role", PERSONAS.get(current_persona(), "KAM North"))
+
+
+def is_kam_role(role: str | None = None) -> bool:
+    return (role or current_role()) in {"KAM North", "KAM South"}
+
+
+def has_full_visibility(role: str | None = None) -> bool:
+    return (role or current_role()) in {
+        "Pricing Governance Owner",
+        "Market Access Director",
+        "Finance Director",
+        "General Manager",
+        "System Administrator",
+    }
+
+
+def can_configure_system(role: str | None = None) -> bool:
+    return (role or current_role()) == "System Administrator"
+
+
+def margin_status(margin_value: object, target_value: object) -> str:
+    margin = safe_float(margin_value)
+    target = safe_float(target_value)
+    return "Above Margin Target" if margin >= target else "Below Margin Target"
+
+
+def margin_display(summary: dict, role: str | None = None) -> str:
+    role_name = role or current_role()
+    if role_name == "Sales Manager":
+        return margin_status(summary.get("margin_pct"), summary.get("weighted_target_margin"))
+    return sensitive_pct("Gross Margin %", summary.get("margin_pct"), role_name)
+
+
+def margin_value_display(value: object, target: object | None = None, role: str | None = None) -> str:
+    role_name = role or current_role()
+    if role_name == "Sales Manager":
+        return margin_status(value, target) if target is not None else "Margin Status Only"
+    return sensitive_pct("Gross Margin %", value, role_name)
 
 
 def is_sensitive_field(field_name: object) -> bool:
@@ -377,7 +419,26 @@ def mask_sensitive_dataframe(df: pd.DataFrame, role: str | None = None, replacem
         return df
     role_name = role or current_role()
     masked = df.copy()
+    if role_name == "Sales Manager":
+        target_col = next((col for col in masked.columns if "target margin" in str(col).lower()), None)
+        margin_cols = [
+            col
+            for col in masked.columns
+            if "margin" in str(col).lower()
+            and "target margin" not in str(col).lower()
+            and is_sensitive_field(col)
+        ]
+        for col in margin_cols:
+            if target_col:
+                masked[col] = [
+                    margin_status(row.get(col), row.get(target_col))
+                    for _, row in masked.iterrows()
+                ]
+            else:
+                masked[col] = "Margin Status Only"
     for col in masked.columns:
+        if role_name == "Sales Manager" and "margin" in str(col).lower() and "target margin" not in str(col).lower():
+            continue
         if is_sensitive_field(col) and not can_view_sensitive_field(role_name, col):
             masked[col] = replacement
     return masked
@@ -404,55 +465,330 @@ def sensitive_pct(field_name: str, value: object, role: str | None = None) -> st
     return str(masked) if masked == "Restricted" else pct(masked)
 
 
+def route_visible_deal_ids_for_roles(deals: pd.DataFrame, data: dict[str, pd.DataFrame], roles: list[str]) -> set[str]:
+    if deals.empty or not roles:
+        return set()
+    lines = combined_lines(data)
+    visible_ids: set[str] = set()
+    for _, deal in deals.iterrows():
+        calc_lines = normalize_lines(lines[lines["Deal ID"].astype(str).eq(str(deal["Deal ID"]))], data)
+        summary = summarize_lines(calc_lines)
+        route = route_preview(build_route_header(deal.to_dict(), data), calc_lines, summary, data)
+        status = str(deal.get("Status", "")).strip()
+        active_status = status in ACTIVE_APPROVAL_STATUSES - {"Changes Requested"}
+        route_roles = set(route.get("Role", pd.Series(dtype=str)).astype(str)) if not route.empty else set()
+        if active_status and route_roles.intersection(roles):
+            visible_ids.add(str(deal["Deal ID"]))
+    return visible_ids
+
+
+def parse_percent_threshold(text: object, default: float = 0.0) -> float:
+    import re
+
+    match = re.search(r"(\d+(?:\.\d+)?)\s*%", str(text))
+    return float(match.group(1)) / 100 if match else default
+
+
+def parse_numeric_threshold(text: object, default: float = 0.0) -> float:
+    import re
+
+    match = re.search(r"(\d+(?:\.\d+)?)", str(text).replace(",", ""))
+    return float(match.group(1)) if match else default
+
+
+def discount_trigger_matches(trigger: object, discount_pct: float) -> bool:
+    text = str(trigger).replace(" ", "").lower()
+    if not text or text in {"nan", "any"}:
+        return False
+    if "<=" in text and ">" not in text:
+        return discount_pct <= parse_percent_threshold(text)
+    if ">" in text and "<=" in text:
+        parts = text.split("and") if "and" in text else text.split("/")
+        lower = parse_percent_threshold(parts[0])
+        upper = parse_percent_threshold(parts[-1])
+        return discount_pct > lower and discount_pct <= upper
+    if ">" in text:
+        return discount_pct > parse_percent_threshold(text)
+    return False
+
+
+def comparison_trigger_matches(trigger: object, value: float) -> bool:
+    text = str(trigger).replace(" ", "").lower()
+    if not text or text in {"nan", "any"}:
+        return False
+    threshold = parse_percent_threshold(text, parse_numeric_threshold(text))
+    if "<=" in text:
+        return value <= threshold
+    if "<" in text:
+        return value < threshold
+    if ">=" in text:
+        return value >= threshold
+    if ">" in text:
+        return value > threshold
+    return False
+
+
+def approval_rule_rows(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    rules = data.get("approval_matrix", pd.DataFrame()).copy()
+    if rules.empty or "Required Role" not in rules:
+        return pd.DataFrame()
+    rules["Policy ID"] = rules.get("Policy ID", pd.Series(dtype=str)).astype(str)
+    rules["Rule Type"] = rules["Policy ID"].str.extract(r"POL-([A-Z]+)", expand=False).fillna("")
+    return rules
+
+
+def add_route_rule(rows: list[dict], rule: pd.Series, reason: str) -> None:
+    rows.append(
+        {
+            "Role": str(rule.get("Required Role", "")),
+            "Sequence": int(safe_float(rule.get("Sequence"), 99)),
+            "Reason": reason,
+            "SLA Hours": int(safe_float(rule.get("SLA Hours"), 24)),
+            "Policy ID": str(rule.get("Policy ID", "")),
+            "Policy Name": str(rule.get("Policy Name", "")),
+        }
+    )
+
+
+def compact_route(rows: list[dict]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame(columns=["Role", "Sequence", "Reason", "SLA Hours", "Policy ID", "Policy Name"])
+    route = pd.DataFrame(rows)
+    route = route[route["Role"].astype(str).str.strip().ne("")]
+    if route.empty:
+        return route
+    grouped = []
+    for role, part in route.groupby("Role", sort=False):
+        part = part.sort_values(["Sequence", "Policy ID"])
+        grouped.append(
+            {
+                "Role": role,
+                "Sequence": int(part["Sequence"].min()),
+                "Reason": " ".join(dict.fromkeys(part["Reason"].astype(str).tolist())),
+                "SLA Hours": int(part["SLA Hours"].min()),
+                "Policy ID": "; ".join(dict.fromkeys(part["Policy ID"].astype(str).tolist())),
+                "Policy Name": "; ".join(dict.fromkeys(part["Policy Name"].astype(str).tolist())),
+            }
+        )
+    return pd.DataFrame(grouped).sort_values(["Sequence", "Role"])
+
+
+def build_route_header(deal: dict, data: dict[str, pd.DataFrame]) -> dict:
+    customer_name = deal.get("Customer Name")
+    account = customer_lookup(data).get(customer_name, {})
+    health = demo_customer_health(account, str(customer_name)) if account else {}
+    return {
+        "Customer Name": customer_name,
+        "Region": deal.get("Region"),
+        "Segment": deal.get("Segment"),
+        "Account Type": account.get("Account Type", ""),
+        "Channel": deal.get("Channel", account.get("Account Type", "")),
+        "Payment Terms": deal.get("Payment Terms"),
+        "Contract Months": deal.get("Contract Months", 0),
+        "Special Terms Requested": bool(deal.get("Special Terms Requested", False)),
+        "Visibility": deal.get("Visibility", "Confidential"),
+        "Overdue AR": deal.get("Overdue AR", health.get("Overdue AR", 0)),
+        "Customer Risk Flag": deal.get("Customer Risk Flag", health.get("Risk Flag", "")),
+    }
+
+
+def role_persona(role: str) -> str:
+    for persona, persona_role in PERSONAS.items():
+        if persona_role == role:
+            return persona
+    return ""
+
+
+def default_delegate_config(data: dict[str, pd.DataFrame]) -> list[dict]:
+    roster = data.get("approver_roster", pd.DataFrame()).copy()
+    rows = []
+    for role in ACTIONABLE_APPROVAL_ROLES:
+        match = roster[roster.get("Role", pd.Series(dtype=str)).astype(str).eq(role)] if not roster.empty else pd.DataFrame()
+        item = match.iloc[0].to_dict() if not match.empty else {}
+        primary = str(item.get("Primary Approver", item.get("Approver Name", role_persona(role))) or role_persona(role))
+        delegate = str(item.get("Delegate Approver", item.get("Delegate", "")) or "")
+        enabled = str(item.get("Delegation Enabled", "No")).strip().lower() in {"yes", "true", "1", "enabled"}
+        rows.append(
+            {
+                "Role": role,
+                "Primary Approver": primary,
+                "Delegate Approver": delegate,
+                "Delegation Enabled": enabled,
+                "Target Response Hours": int(safe_float(item.get("Target Response Hours", item.get("SLA Hours", 24)), 24)),
+            }
+        )
+    return rows
+
+
+def delegate_config(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    if st.session_state.get("delegate_overrides") is None:
+        st.session_state.delegate_overrides = default_delegate_config(data)
+    config = pd.DataFrame(st.session_state.delegate_overrides)
+    if config.empty:
+        config = pd.DataFrame(default_delegate_config(data))
+    config["Delegation Enabled"] = config["Delegation Enabled"].astype(bool)
+    config["Target Response Hours"] = pd.to_numeric(config["Target Response Hours"], errors="coerce").fillna(24).astype(int)
+    return config
+
+
+def delegate_record(data: dict[str, pd.DataFrame], role: str) -> dict:
+    config = delegate_config(data)
+    match = config[config["Role"].astype(str).eq(str(role))]
+    if match.empty:
+        return {
+            "Role": role,
+            "Primary Approver": role_persona(role),
+            "Delegate Approver": "",
+            "Delegation Enabled": False,
+            "Target Response Hours": 24,
+        }
+    return match.iloc[0].to_dict()
+
+
+def active_approver_for_role(data: dict[str, pd.DataFrame], role: str) -> str:
+    record = delegate_record(data, role)
+    if bool(record.get("Delegation Enabled")) and str(record.get("Delegate Approver", "")).strip():
+        return str(record.get("Delegate Approver"))
+    return str(record.get("Primary Approver", ""))
+
+
+def role_display_label(data: dict[str, pd.DataFrame], role: str) -> str:
+    record = delegate_record(data, role)
+    return f"{role} (Delegated)" if bool(record.get("Delegation Enabled")) else role
+
+
+def user_can_act_for_role(data: dict[str, pd.DataFrame], route_role: str, persona: str, user_role: str) -> bool:
+    if user_role == route_role:
+        return True
+    record = delegate_record(data, route_role)
+    return bool(record.get("Delegation Enabled")) and str(record.get("Delegate Approver", "")) == persona
+
+
+def delegated_roles_for_persona(data: dict[str, pd.DataFrame], persona: str) -> list[str]:
+    config = delegate_config(data)
+    if config.empty:
+        return []
+    delegated = config[
+        config["Delegation Enabled"]
+        & config["Delegate Approver"].astype(str).eq(str(persona))
+    ]
+    return delegated["Role"].astype(str).tolist()
+
+
+def enrich_route_with_approvers(route_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    if route_df.empty:
+        return route_df
+    route = route_df.copy()
+    records = [delegate_record(data, role) for role in route["Role"].astype(str)]
+    route["Primary Approver"] = [record.get("Primary Approver", "") for record in records]
+    route["Delegate Approver"] = [record.get("Delegate Approver", "") for record in records]
+    route["Delegation Enabled"] = ["Yes" if bool(record.get("Delegation Enabled")) else "No" for record in records]
+    route["Active Approver"] = [active_approver_for_role(data, role) for role in route["Role"].astype(str)]
+    route["Approver"] = [role_display_label(data, role) for role in route["Role"].astype(str)]
+    route["SLA Hours"] = [int(record.get("Target Response Hours", row.get("SLA Hours", 24))) for record, (_, row) in zip(records, route.iterrows())]
+    return route
+
+
+def workflow_audit_once(key: str, deal_id: str, action: str, **kwargs) -> None:
+    keys = set(st.session_state.get("workflow_audit_keys", []))
+    if key in keys:
+        return
+    add_audit(deal_id, action, **kwargs)
+    keys.add(key)
+    st.session_state.workflow_audit_keys = sorted(keys)
+
+
+def assignment_key(deal_id: str, role: str) -> str:
+    return f"{deal_id}::{role}"
+
+
+def ensure_approval_assignments(deal_id: str, route_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> None:
+    if route_df.empty:
+        return
+    assignments = st.session_state.setdefault("approval_assignments", {})
+    now = datetime.now()
+    for _, row in route_df.iterrows():
+        role = str(row.get("Role", ""))
+        key = assignment_key(deal_id, role)
+        if key not in assignments:
+            sla_hours = int(safe_float(row.get("SLA Hours"), delegate_record(data, role).get("Target Response Hours", 24)))
+            assigned_at = now
+            due_at = assigned_at + timedelta(hours=sla_hours)
+            assignments[key] = {
+                "Deal ID": deal_id,
+                "Role": role,
+                "Assigned At": assigned_at.isoformat(timespec="seconds"),
+                "Due At": due_at.isoformat(timespec="seconds"),
+                "SLA Hours": sla_hours,
+                "Primary Approver": str(row.get("Primary Approver", "")),
+                "Delegate Approver": str(row.get("Delegate Approver", "")),
+                "Active Approver": str(row.get("Active Approver", "")),
+                "Delegation Enabled": str(row.get("Delegation Enabled", "No")),
+            }
+            workflow_audit_once(
+                f"{key}::assigned",
+                deal_id,
+                "Approval Assigned",
+                entity="Approval Step",
+                details=f"{role_display_label(data, role)} assigned to {row.get('Active Approver', '')}; target response {sla_hours}h.",
+                approval_step=role,
+            )
+
+
+def assignment_status(deal_id: str, role: str) -> dict:
+    assignment = st.session_state.get("approval_assignments", {}).get(assignment_key(deal_id, role), {})
+    if not assignment:
+        return {}
+    due_at = datetime.fromisoformat(assignment["Due At"])
+    assigned_at = datetime.fromisoformat(assignment["Assigned At"])
+    now = datetime.now()
+    remaining = due_at - now
+    elapsed = now - assigned_at
+    return {
+        **assignment,
+        "Hours Elapsed": elapsed.total_seconds() / 3600,
+        "Hours Remaining": remaining.total_seconds() / 3600,
+        "Is Breached": remaining.total_seconds() < 0,
+    }
+
+
+def update_sla_breach_audit(deal_id: str, role: str, data: dict[str, pd.DataFrame]) -> None:
+    status = assignment_status(deal_id, role)
+    if status.get("Is Breached"):
+        workflow_audit_once(
+            f"{assignment_key(deal_id, role)}::breached",
+            deal_id,
+            "SLA Breached",
+            entity="Approval SLA",
+            details=f"{role_display_label(data, role)} exceeded target response time of {status.get('SLA Hours')}h.",
+            approval_step=role,
+        )
+
+
 def visible_deals_for_current_role(deals: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     if deals.empty:
         return deals
     role = current_role()
     persona = current_persona()
-    if role == "Admin":
+    delegated_ids = route_visible_deal_ids_for_roles(deals, data, delegated_roles_for_persona(data, persona))
+    if role == "System Administrator":
         return deals
-    if role == "Sales Representative":
-        return deals[deals.get("Sales Owner", pd.Series(dtype=str)).astype(str).eq(persona)].copy()
+    if is_kam_role(role):
+        own_mask = deals.get("Sales Owner", pd.Series(dtype=str)).astype(str).eq(persona)
+        delegate_mask = deals["Deal ID"].astype(str).isin(delegated_ids)
+        return deals[own_mask | delegate_mask].copy()
     if role == "Sales Manager":
         team = SALES_MANAGER_TEAMS.get(persona, SALES_MANAGER_TEAMS.get("Jordan Blake", []))
         return deals[
             deals.get("Sales Owner", pd.Series(dtype=str)).astype(str).isin(team)
             | deals.get("Sales Manager", pd.Series(dtype=str)).astype(str).eq(persona)
+            | deals["Deal ID"].astype(str).isin(delegated_ids)
         ].copy()
-    if role in {"Pricing Analyst", "Market Access Director", "Finance Approver", "Operations Reviewer", "Legal Reviewer"}:
-        lines = combined_lines(data)
-        visible_ids = []
-        for _, deal in deals.iterrows():
-            calc_lines = normalize_lines(lines[lines["Deal ID"].astype(str).eq(str(deal["Deal ID"]))], data)
-            summary = summarize_lines(calc_lines)
-            header = {
-                "Customer Name": deal.get("Customer Name"),
-                "Region": deal.get("Region"),
-                "Segment": deal.get("Segment"),
-                "Account Type": customer_lookup(data).get(deal.get("Customer Name"), {}).get("Account Type", ""),
-                "Channel": customer_lookup(data).get(deal.get("Customer Name"), {}).get("Account Type", ""),
-                "Payment Terms": deal.get("Payment Terms"),
-                "Contract Months": deal.get("Contract Months", 0),
-                "Special Terms Requested": False,
-            }
-            route = route_preview(header, calc_lines, summary, data)
-            status = str(deal.get("Status", "")).strip()
-            active_status = status in ACTIVE_APPROVAL_STATUSES - {"Changes Requested"}
-            route_roles = set(route.get("Role", pd.Series(dtype=str)).astype(str)) if not route.empty else set()
-            if active_status and role in route_roles:
-                visible_ids.append(str(deal["Deal ID"]))
+    if has_full_visibility(role):
+        return deals
+    if role == "Supply Chain Manager":
+        visible_ids = route_visible_deal_ids_for_roles(deals, data, [role]).union(delegated_ids)
         return deals[deals["Deal ID"].astype(str).isin(visible_ids)].copy()
-    if role == "Commercial Executive":
-        if "Total Proposed" in deals:
-            proposed_values = pd.to_numeric(deals["Total Proposed"], errors="coerce").fillna(0)
-        else:
-            lines = combined_lines(data)
-            proposed_by_deal = lines.groupby("Deal ID")["Extended Proposed"].sum() if "Extended Proposed" in lines else pd.Series(dtype=float)
-            proposed_values = deals["Deal ID"].map(proposed_by_deal).fillna(0)
-        high_value = proposed_values > 1_000_000
-        high_risk = deals.get("Intake Risk", pd.Series(dtype=str)).astype(str).eq("High")
-        escalated = deals.get("Status", pd.Series(dtype=str)).astype(str).isin(["Pending Executive", "Rejected", "Final Approved"])
-        return deals[high_value | high_risk | escalated].copy()
     return deals.iloc[0:0].copy()
 
 
@@ -599,7 +935,7 @@ def current_required_approval_role(deal_id: str, status: str, route_df: pd.DataF
     if clean_status in {"Rejected", "Final Approved"}:
         return ""
     if clean_status == "Changes Requested":
-        return "Sales Representative"
+        return "KAM North"
     if clean_status in STATUS_APPROVAL_STEP:
         return STATUS_APPROVAL_STEP[clean_status]
     roles = actionable_route_roles(route_df)
@@ -612,7 +948,7 @@ def current_required_approval_role(deal_id: str, status: str, route_df: pd.DataF
 
 def next_approval_status(deal_id: str, current_role: str, route_df: pd.DataFrame) -> str:
     roles = actionable_route_roles(route_df)
-    if current_role == "Commercial Executive" and current_role not in roles:
+    if current_role == "General Manager" and current_role not in roles:
         completed = completed_approval_steps(deal_id)
         if current_role not in completed:
             completed.append(current_role)
@@ -632,12 +968,13 @@ def allowed_decisions_for_role(role: str) -> list[str]:
     return ROLE_ALLOWED_DECISIONS.get(role, [])
 
 
-def process_approval_decision(deal_id: str, decision: str, comment: str, route_df: pd.DataFrame, previous_status: str) -> tuple[bool, str]:
+def process_approval_decision(deal_id: str, decision: str, comment: str, route_df: pd.DataFrame, previous_status: str, data: dict[str, pd.DataFrame]) -> tuple[bool, str]:
     current_role = current_required_approval_role(deal_id, previous_status, route_df)
+    persona = st.session_state.get("persona", "Demo User")
     user_role = st.session_state.get("role", "Demo Role")
     allowed = allowed_decisions_for_role(user_role)
-    if user_role != current_role or decision not in allowed:
-        return False, f"{user_role} cannot capture `{decision}` for this step. Current required role is {current_role or 'none'}."
+    if not user_can_act_for_role(data, current_role, persona, user_role) or decision not in allowed:
+        return False, f"{user_role} cannot capture `{decision}` for this step. Current required role is {role_display_label(data, current_role) if current_role else 'none'}."
 
     if decision == "Approve":
         new_status = next_approval_status(deal_id, current_role, route_df)
@@ -646,7 +983,7 @@ def process_approval_decision(deal_id: str, decision: str, comment: str, route_d
     elif decision == "Reject":
         new_status = "Rejected"
     else:
-        new_status = "Pending Executive"
+        new_status = "Pending General Manager"
 
     update_deal_status(deal_id, new_status, decision, comment, approval_step=current_role, previous_status=previous_status)
     add_audit(
@@ -1085,15 +1422,15 @@ def route_with_trigger_reasons(route_df: pd.DataFrame, inventory_df: pd.DataFram
     for _, row in route_df.iterrows():
         trigger = row["Reason"]
         role = row["Role"]
-        if role == "Pricing Analyst" and aggressive_pricing:
+        if role == "Pricing Governance Owner" and aggressive_pricing:
             trigger += " Competitor pricing signals require guardrail review."
         if role == "Market Access Director" and incumbent:
             trigger += " Incumbent competitor or access defense is present."
-        if role == "Finance Approver":
+        if role == "Finance Director":
             trigger += " Gross profit variance requires finance review."
-        if role == "Operations Reviewer" and shortage > 0:
+        if role == "Supply Chain Manager" and shortage > 0:
             trigger += f" Inventory shortage is {shortage:,.0f} units across requested lines."
-        if role == "Commercial Executive":
+        if role == "General Manager":
             trigger += " GM-level visibility is recommended for strategic exposure."
         item = row.to_dict()
         item["Trigger Reason"] = trigger
@@ -1114,23 +1451,23 @@ def approval_route_dashboard(route_df: pd.DataFrame, header: dict, lines: pd.Dat
     for _, row in trigger_df.iterrows():
         role = str(row.get("Role", ""))
         reason = str(row.get("Trigger Reason", row.get("Reason", "")))
-        if role == "Pricing Analyst" and not lines.empty and (lines["Requested Net Price"] < lines["Floor Price"]).any():
+        if role == "Pricing Governance Owner" and not lines.empty and (lines["Requested Net Price"] < lines["Floor Price"]).any():
             reason += " Margin below floor."
-        if role == "Finance Approver" and customer_risk in {"Medium", "High"}:
+        if role == "Finance Director" and customer_risk in {"Medium", "High"}:
             reason += f" {customer_risk} AR exposure."
-        if role in {"Market Access Director", "Commercial Executive"} and purpose == "Strategic account":
+        if role in {"Market Access Director", "General Manager"} and purpose == "Strategic account":
             reason += " Strategic account."
-        if role == "Operations Reviewer" and shortage > 0:
+        if role == "Supply Chain Manager" and shortage > 0:
             reason += " High inventory risk."
-        if role in {"Pricing Analyst", "Commercial Executive"} and visibility == "Public":
+        if role in {"Pricing Governance Owner", "General Manager"} and visibility == "Public":
             reason += " Public pricing exposure."
-        if role == "Pricing Analyst" and aggressive:
+        if role == "Pricing Governance Owner" and aggressive:
             reason += " Aggressive competitor pricing."
         item = row.to_dict()
-        item["Approver"] = role
+        item["Approver"] = row.get("Approver", role)
         item["Trigger Reason"] = reason
         rows.append(item)
-    display_cols = [col for col in ["Sequence", "Approver", "Role", "Trigger Reason", "SLA Hours"] if col in pd.DataFrame(rows)]
+    display_cols = [col for col in ["Sequence", "Approver", "Role", "Active Approver", "Primary Approver", "Delegate Approver", "SLA Hours", "Trigger Reason"] if col in pd.DataFrame(rows)]
     return pd.DataFrame(rows)[display_cols]
 
 
@@ -1155,17 +1492,9 @@ def build_deal_context(data: dict[str, pd.DataFrame], deal_id: str) -> dict | No
     aging_df = enhanced_aging_analysis(data, calc_lines, region)
     competitor_df = enhanced_competitor_intelligence(data, calc_lines, customer, region)
     gp_impact = gross_profit_impact(calc_lines, plan_df, incremental_df, included_in_plan)
-    header = {
-        "Customer Name": customer,
-        "Region": region,
-        "Segment": segment,
-        "Account Type": channel,
-        "Channel": deal.get("Channel", channel),
-        "Payment Terms": deal.get("Payment Terms"),
-        "Contract Months": deal.get("Contract Months", 0),
-        "Special Terms Requested": False,
-    }
+    header = build_route_header(deal, data)
     route_df = route_preview(header, calc_lines, summary, data)
+    ensure_approval_assignments(str(deal_id), route_df, data)
     score_df, total_score, recommendation, rationale = score_deal(
         summary,
         plan_df,
@@ -1247,7 +1576,7 @@ def approval_review_summary(context: dict) -> dict:
     if not aging_df.empty and (aging_df["Near Expiry Inventory"] == "Yes").any():
         required_condition = "Use FEFO and confirm aging or near-expiry stock allocation before approval."
     elif not inventory_df.empty and (inventory_df["Allocation Risk"] == "High").any():
-        required_condition = "Operations must confirm allocation feasibility and supply continuity."
+        required_condition = "Supply chain must confirm allocation feasibility and supply continuity."
     elif context["recommendation"] in {"Request Price Revision", "Approve with Conditions"}:
         required_condition = "Pricing or finance reviewer must document approval guardrails."
 
@@ -1272,7 +1601,7 @@ def render_approval_review_panel(context: dict) -> None:
     top[1].metric("Status", str(deal.get("Status", "")))
     top[2].metric("Proposed Value", money(summary["total_proposed"]))
     top[3].metric("Discount", pct(summary["discount_pct"]))
-    top[4].metric("Est. Margin", sensitive_pct("Gross Margin %", summary["margin_pct"]))
+    top[4].metric("Est. Margin", margin_display(summary))
 
     st.write(f"Customer: **{deal.get('Customer Name', '')}**")
     st.write(f"Deal title: **{deal.get('Deal Title', '')}**")
@@ -1318,6 +1647,11 @@ def validate_deal(header: dict, lines: pd.DataFrame, data: dict[str, pd.DataFram
     if lines.empty:
         errors.append("At least one valid line item is required.")
     else:
+        pricing_rules = approval_rule_rows(data)
+        discount_review_rules = pricing_rules[
+            pricing_rules["Rule Type"].eq("DISC")
+            & ~pricing_rules["Policy ID"].astype(str).eq("POL-DISC-LOW")
+        ]
         for _, line in lines.iterrows():
             if line["Quantity"] <= 0:
                 errors.append(f"{line['SKU']} quantity must be greater than zero.")
@@ -1325,9 +1659,8 @@ def validate_deal(header: dict, lines: pd.DataFrame, data: dict[str, pd.DataFram
                 errors.append(f"{line['SKU']} proposed price cannot be negative.")
             if line["Inventory Tracked"] == "Yes" and pd.isna(line.get("Requested Delivery Date")):
                 warnings.append(f"{line['SKU']} is inventory tracked and should have a requested delivery date.")
-            threshold = 0.18 if line["Product Type"] == "Biosimilar" else 0.12
-            if line["SKU"] != "REB-FORM" and line["Discount %"] > threshold:
-                warnings.append(f"{line['SKU']} discount exceeds policy threshold.")
+            if line["SKU"] != "REB-FORM" and any(discount_trigger_matches(rule.get("Discount Trigger"), safe_float(line["Discount %"])) for _, rule in discount_review_rules.iterrows()):
+                warnings.append(f"{line['SKU']} discount triggers configured approval routing.")
     if not header.get("Business Justification"):
         errors.append("Business justification is required.")
     if header.get("Special Terms Requested") and not header.get("Special Terms Description"):
@@ -1345,29 +1678,29 @@ def validate_deal(header: dict, lines: pd.DataFrame, data: dict[str, pd.DataFram
 
 
 def route_preview(header: dict, lines: pd.DataFrame, summary: dict, data: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    rows = [{"Role": "Sales Manager", "Sequence": 1, "Reason": "Every submitted deal requires baseline sales management review.", "SLA Hours": 24}]
-    customer = customer_lookup(data).get(header.get("Customer Name", ""), {})
-    has_high_discount = False
-    has_supply_risk = False
-    for _, line in lines.iterrows():
-        threshold = 0.18 if line["Product Type"] == "Biosimilar" else 0.12
-        if line["SKU"] != "REB-FORM" and line["Discount %"] > threshold:
-            has_high_discount = True
-        if line["Supply Risk"] in {"Medium", "High"}:
-            has_supply_risk = True
-    if has_high_discount:
-        rows.append({"Role": "Pricing Analyst", "Sequence": 2, "Reason": "Discount exceeds product policy threshold.", "SLA Hours": 24})
-    if header.get("Account Type") in {"Payer", "Group Purchasing Organization"} or header.get("Channel") in {"Payer", "GPO"} or (not lines.empty and "REB-FORM" in set(lines["SKU"])):
-        rows.append({"Role": "Market Access Director", "Sequence": 2, "Reason": "Payer/GPO or formulary rebate concession is present.", "SLA Hours": 24})
-    if summary["total_proposed"] > 1_000_000 or (summary["margin_pct"] is not None and summary["margin_pct"] < summary["weighted_target_margin"]) or customer.get("Credit Status") == "Hold":
-        rows.append({"Role": "Finance Approver", "Sequence": 3, "Reason": "Deal value, margin, or credit risk requires finance review.", "SLA Hours": 36})
-    if has_supply_risk:
-        rows.append({"Role": "Operations Reviewer", "Sequence": 3, "Reason": "Supply risk, cold-chain, or inventory tracking requires operations review.", "SLA Hours": 24})
-    if header.get("Special Terms Requested") or int(header.get("Contract Months", 0) or 0) > 36 or header.get("Payment Terms") in {"Net 75", "Net 90"}:
-        rows.append({"Role": "Legal Reviewer", "Sequence": 4, "Reason": "Non-standard terms, long duration, or extended payment terms.", "SLA Hours": 48})
-    if customer.get("Strategic Account") == "Yes" and summary["total_proposed"] > 2_500_000:
-        rows.append({"Role": "Commercial Executive", "Sequence": 5, "Reason": "Strategic account and deal value exceeds executive threshold.", "SLA Hours": 48})
-    return pd.DataFrame(rows).drop_duplicates(subset=["Role"]).sort_values(["Sequence", "Role"])
+    rules = approval_rule_rows(data)
+    rows: list[dict] = []
+    discount_pct = safe_float(summary.get("discount_pct"))
+    margin_pct = safe_float(summary.get("margin_pct"))
+    visibility = str(header.get("Visibility", "Confidential"))
+    overdue_ar = safe_float(header.get("Overdue AR"))
+    inventory_df = enhanced_inventory_analysis(data, lines, str(header.get("Region", "")))
+    shortage = safe_float(inventory_df["Inventory Shortage"].sum()) if not inventory_df.empty else 0
+
+    for _, rule in rules.iterrows():
+        rule_type = str(rule.get("Rule Type", ""))
+        if rule_type == "DISC" and discount_trigger_matches(rule.get("Discount Trigger"), discount_pct):
+            add_route_rule(rows, rule, f"Weighted discount {pct(discount_pct)} matches configured tier {rule.get('Discount Trigger')}.")
+        elif rule_type == "MARGIN" and comparison_trigger_matches(rule.get("Value / Margin Trigger"), margin_pct):
+            add_route_rule(rows, rule, f"Estimated gross margin {pct(margin_pct)} matches configured threshold {rule.get('Value / Margin Trigger')}.")
+        elif rule_type == "PUBLIC" and visibility == "Public":
+            add_route_rule(rows, rule, "Deal is marked Public and may impact public/list price.")
+        elif rule_type == "CREDIT" and comparison_trigger_matches(rule.get("Value / Margin Trigger"), overdue_ar):
+            add_route_rule(rows, rule, f"Customer overdue receivables are {money(overdue_ar)}.")
+        elif rule_type == "SUPPLY" and comparison_trigger_matches(rule.get("Value / Margin Trigger"), shortage):
+            add_route_rule(rows, rule, f"Inventory shortage is {shortage:,.0f} units across requested lines.")
+
+    return enrich_route_with_approvers(compact_route(rows), data)
 
 
 def breadcrumb_for_current_page() -> str:
@@ -1384,9 +1717,11 @@ def breadcrumb_for_current_page() -> str:
         selected = st.session_state.get("approval_queue_selected_deal_id")
         return f"Review Queue > {selected}" if selected else "Review Queue"
     if page == "Reference Data":
-        return "Admin > Reference Data"
+        return "System Administration > Reference Data"
+    if page == "Delegate Administration":
+        return "System Administration > Delegates"
     if page == "Audit Log":
-        return "Admin > Audit Log"
+        return "System Administration > Audit Log"
     return str(page)
 
 
@@ -1541,8 +1876,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             shelf_life = st.session_state.get("form_shelf_life", 0)
             inventory_value_at_risk = st.session_state.get("form_inventory_value_at_risk", 0.0)
         owner_cols = st.columns(4)
-        sales_owner = owner_cols[0].selectbox("Sales Owner", sorted(PERSONAS.keys()), index=0, key="form_owner")
-        sales_manager = owner_cols[1].selectbox("Sales Manager", ["Jordan Blake", "Lena Torres", "Sarah Morgan"], key="form_manager")
+        kam_users = [name for name, role in PERSONAS.items() if is_kam_role(role)]
+        default_owner = current_persona() if current_persona() in kam_users else kam_users[0]
+        sales_owner = owner_cols[0].selectbox("Sales Owner", kam_users, index=kam_users.index(default_owner), key="form_owner")
+        sales_manager = owner_cols[1].selectbox("Sales Manager", list(SALES_MANAGER_TEAMS.keys()), key="form_manager")
         target_close = owner_cols[2].date_input("Target Close Date", value=date.today() + timedelta(days=45), key="form_close")
         effective_date = owner_cols[3].date_input("Requested Effective Date", value=date.today() + timedelta(days=60), key="form_effective")
         st.divider()
@@ -1611,7 +1948,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         metric_cols[1].metric("Total Gross Value", money(summary["total_gross"]))
         metric_cols[2].metric("Total Requested Net Value", money(summary["total_proposed"]))
         metric_cols[3].metric("Weighted Discount %", pct(summary["discount_pct"]))
-        metric_cols[4].metric("Estimated Gross Margin %", sensitive_pct("Gross Margin %", summary["margin_pct"]))
+        metric_cols[4].metric("Estimated Gross Margin %", margin_display(summary))
         if not calc_lines.empty:
             view_cols = [
                 "SKU",
@@ -1797,8 +2134,8 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             margin_cols = st.columns(4)
             margin_cols[0].metric("Planned Net Price", sensitive_money("Planned Net Price", planned_net))
             margin_cols[1].metric("Proposed Net Price", money(proposed_net))
-            margin_cols[2].metric("Planned Margin %", sensitive_pct("Gross Margin %", planned_margin))
-            margin_cols[3].metric("Proposed Margin %", sensitive_pct("Gross Margin %", proposed_margin))
+            margin_cols[2].metric("Planned Margin %", margin_value_display(planned_margin, summary["weighted_target_margin"]))
+            margin_cols[3].metric("Proposed Margin %", margin_value_display(proposed_margin, summary["weighted_target_margin"]))
 
             st.markdown("**Revenue variance bridge**")
             bridge_df = pd.DataFrame(
@@ -1849,7 +2186,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             kpis = st.columns(4)
             kpis[0].metric("Incremental Revenue", money(incremental_revenue))
             kpis[1].metric("Incremental Gross Profit", sensitive_money("Gross Profit", incremental_gp))
-            kpis[2].metric("Proposed Margin %", sensitive_pct("Gross Margin %", proposed_margin))
+            kpis[2].metric("Proposed Margin %", margin_value_display(proposed_margin, summary["weighted_target_margin"]))
             kpis[3].metric("Historical Average Net Price", money(hist_price))
             benchmark_cols = st.columns(3)
             benchmark_cols[0].metric("Price Difference vs Historical Average %", pct(price_vs_hist))
@@ -2027,7 +2364,7 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Payment Terms": header["Payment Terms"],
             "Contract Months": header["Contract Months"],
             "Strategic Rationale": header["Business Justification"],
-            "Intake Risk": "High" if "Commercial Executive" in set(route_df["Role"]) else "Medium" if len(route_df) > 2 else "Low",
+            "Intake Risk": "High" if "General Manager" in set(route_df["Role"]) else "Medium" if len(route_df) > 2 else "Low",
             "Channel": header["Channel"],
             "Included_In_Latest_Financial_Plan": header.get("Included_In_Latest_Financial_Plan", "Yes"),
             "Expected Route": " + ".join(route_df["Role"].tolist()),
@@ -2042,6 +2379,8 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
         item["Line #"] = i
         st.session_state.runtime_lines.append(item)
     add_audit(deal_id, "Deal draft saved" if status == "Draft" else "Deal created", details=f"Status: {workflow_status}")
+    if status == "Submitted":
+        ensure_approval_assignments(deal_id, route_df, load_demo_data())
     return deal_id
 
 
@@ -2061,23 +2400,14 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     deal_lines = lines[lines["Deal ID"].astype(str).eq(str(selected))]
     calc_lines = normalize_lines(deal_lines, data)
     summary = summarize_lines(calc_lines)
-    header = {
-        "Customer Name": deal.get("Customer Name"),
-        "Region": deal.get("Region"),
-        "Segment": deal.get("Segment"),
-        "Account Type": customer_lookup(data).get(deal.get("Customer Name"), {}).get("Account Type", ""),
-        "Channel": customer_lookup(data).get(deal.get("Customer Name"), {}).get("Account Type", ""),
-        "Payment Terms": deal.get("Payment Terms"),
-        "Contract Months": deal.get("Contract Months", 0),
-        "Special Terms Requested": False,
-    }
+    header = build_route_header(deal, data)
     route_df = route_preview(header, calc_lines, summary, data)
     deal_status = str(deal.get("Status", "")).strip()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Status", deal_status)
     c2.metric("Total Proposed", money(summary["total_proposed"]))
     c3.metric("Discount", pct(summary["discount_pct"]))
-    c4.metric("Est. Margin", sensitive_pct("Gross Margin %", summary["margin_pct"]))
+    c4.metric("Est. Margin", margin_display(summary))
     st.markdown(status_badge(deal_status), unsafe_allow_html=True)
 
     confirmation = st.session_state.get("deal_detail_confirmation", "")
@@ -2090,21 +2420,23 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
         if context:
             st.divider()
             st.subheader("Decision Panel")
-            route_summary = " -> ".join(context["route_triggers"]["Role"].astype(str).tolist()) if not context["route_triggers"].empty else "No route available"
+            route_summary_col = "Approver" if "Approver" in context["route_triggers"] else "Role"
+            route_summary = " -> ".join(context["route_triggers"][route_summary_col].astype(str).tolist()) if not context["route_triggers"].empty else "No route available"
             current_role = current_required_approval_role(selected, deal_status, context["route_df"])
+            current_role_label = role_display_label(data, current_role) if current_role else "None"
             user_role = st.session_state.get("role", "Demo Role")
             allowed_decisions = allowed_decisions_for_role(user_role)
             st.write(f"**Recommendation:** {context['recommendation']}")
             panel_cols = st.columns(4)
             panel_cols[0].metric("Decision Score", f"{context['total_score']}/100")
             panel_cols[1].metric("Approval Route Summary", route_summary)
-            panel_cols[2].metric("Current Required Role", current_role or "None")
+            panel_cols[2].metric("Current Required Role", current_role_label)
             panel_cols[3].metric("Current User Role", user_role)
-            can_act_on_step = bool(current_role) and user_role == current_role and bool(allowed_decisions)
+            can_act_on_step = bool(current_role) and user_can_act_for_role(data, current_role, current_persona(), user_role) and bool(allowed_decisions)
             if can_act_on_step:
                 st.success("Current user can capture a decision for this approval step.")
             else:
-                st.warning(f"{user_role} cannot approve this step. Required role: {current_role or 'none'}.")
+                st.warning(f"{user_role} cannot approve this step. Required role: {current_role_label}.")
             with st.expander("Approval route trigger reasons", expanded=False):
                 st.dataframe(mask_sensitive_dataframe(context["route_triggers"]), use_container_width=True, hide_index=True)
 
@@ -2119,7 +2451,7 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
             if detail_decision not in allowed_decisions:
                 st.warning(f"{user_role} is not permitted to capture `{detail_decision}`.")
             if st.button("Capture Decision", type="primary", key=f"detail_capture_decision_{selected}", disabled=not can_capture):
-                success, message = process_approval_decision(selected, detail_decision, detail_comment, context["route_df"], deal_status)
+                success, message = process_approval_decision(selected, detail_decision, detail_comment, context["route_df"], deal_status, data)
                 st.session_state.selected_deal_id = selected
                 if success:
                     st.session_state.deal_detail_confirmation = message
@@ -2174,16 +2506,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     aging_df = enhanced_aging_analysis(data, lines, region)
     competitor_df = enhanced_competitor_intelligence(data, lines, customer, region)
     gp_impact = gross_profit_impact(lines, plan_df, incremental_df, included_in_plan)
-    header = {
-        "Customer Name": customer,
-        "Region": region,
-        "Segment": segment,
-        "Account Type": channel,
-        "Channel": deal.get("Channel", channel),
-        "Payment Terms": deal.get("Payment Terms"),
-        "Contract Months": deal.get("Contract Months", 0),
-        "Special Terms Requested": False,
-    }
+    header = build_route_header(deal, data)
     route_df = route_preview(header, lines, summary, data)
     score_df, total_score, recommendation, rationale = score_deal(
         summary,
@@ -2251,7 +2574,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     gp_cols[1].metric("Planned Revenue", sensitive_money("Planned Revenue", gp_impact["Planned Revenue"]))
     gp_cols[2].metric("Proposed Revenue", sensitive_money("Proposed Revenue", gp_impact["Proposed Revenue"]))
     gp_cols[3].metric("Net Revenue Variance", sensitive_money("Net Revenue Variance", gp_impact["Net Revenue Variance"]))
-    gp_cols[4].metric("Proposed Margin", sensitive_pct("Gross Margin %", gp_impact["Proposed Margin %"]))
+    gp_cols[4].metric("Proposed Margin", margin_value_display(gp_impact["Proposed Margin %"], summary["weighted_target_margin"]))
 
     st.subheader("Price-Volume Benchmark")
     st.dataframe(mask_sensitive_dataframe(price_volume_summary(data, lines, customer, channel)), use_container_width=True, hide_index=True)
@@ -2290,27 +2613,25 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if submitted.empty:
         st.info("No submitted deals available.")
         return
-    selectable_roles = ROLE_ORDER if current_role() == "Admin" else [current_role()] if current_role() in ROLE_ORDER else ROLE_ORDER
+    delegated_roles = delegated_roles_for_persona(data, current_persona())
+    selectable_roles = ROLE_ORDER if can_configure_system() else list(dict.fromkeys(([current_role()] if current_role() in ROLE_ORDER else []) + delegated_roles))
+    if not selectable_roles:
+        selectable_roles = ROLE_ORDER
     role = st.selectbox("Queue Role", selectable_roles, index=0)
     lines = combined_lines(data)
     rows = []
     for _, deal in submitted.iterrows():
         calc_lines = normalize_lines(lines[lines["Deal ID"].astype(str).eq(str(deal["Deal ID"]))], data)
         summary = summarize_lines(calc_lines)
-        header = {
-            "Customer Name": deal.get("Customer Name"),
-            "Region": deal.get("Region"),
-            "Segment": deal.get("Segment"),
-            "Account Type": customer_lookup(data).get(deal.get("Customer Name"), {}).get("Account Type", ""),
-            "Channel": customer_lookup(data).get(deal.get("Customer Name"), {}).get("Account Type", ""),
-            "Payment Terms": deal.get("Payment Terms"),
-            "Contract Months": deal.get("Contract Months", 0),
-            "Special Terms Requested": False,
-        }
+        header = build_route_header(deal.to_dict(), data)
         route = route_preview(header, calc_lines, summary, data)
+        ensure_approval_assignments(str(deal["Deal ID"]), route, data)
         required_role = current_required_approval_role(str(deal["Deal ID"]), str(deal.get("Status", "")).strip(), route)
         if role == required_role:
+            update_sla_breach_audit(str(deal["Deal ID"]), required_role, data)
+            sla_status = assignment_status(str(deal["Deal ID"]), required_role)
             reason = route[route["Role"].eq(role)].iloc[0]["Reason"] if role in set(route["Role"]) else "Current required approval step."
+            route_row = route[route["Role"].eq(role)].iloc[0].to_dict() if role in set(route["Role"]) else {}
             rows.append(
                 {
                     "Deal ID": deal["Deal ID"],
@@ -2319,7 +2640,11 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
                     "Value": summary["total_proposed"],
                     "Discount %": summary["discount_pct"],
                     "Risk": deal.get("Intake Risk", ""),
-                    "Role": role,
+                    "Role": role_display_label(data, role),
+                    "Route Role": role,
+                    "Active Approver": route_row.get("Active Approver", ""),
+                    "Target Response": f"{int(sla_status.get('SLA Hours', route_row.get('SLA Hours', 0)))}h",
+                    "SLA Status": "Breached" if sla_status.get("Is Breached") else "On Track",
                     "Current Status": deal.get("Status", ""),
                     "Trigger Reason": reason,
                 }
@@ -2328,7 +2653,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if queue.empty:
         st.info(f"No deals currently require {role}.")
         return
-    queue_display = mask_sensitive_dataframe(queue)
+    queue_display = mask_sensitive_dataframe(queue.drop(columns=["Route Role"], errors="ignore"))
     table_event = st.dataframe(
         queue_display,
         use_container_width=True,
@@ -2355,15 +2680,64 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     render_approval_review_panel(context)
     previous_status = str(context["deal"].get("Status", "")).strip()
     required_role = current_required_approval_role(selected, previous_status, context["route_df"])
+    required_role_label = role_display_label(data, required_role) if required_role else "None"
+    update_sla_breach_audit(selected, required_role, data)
+    sla_status = assignment_status(selected, required_role)
     user_role = st.session_state.get("role", "Demo Role")
     allowed_decisions = allowed_decisions_for_role(user_role)
-    can_act_on_step = bool(required_role) and user_role == required_role and bool(allowed_decisions)
+    can_act_on_step = bool(required_role) and user_can_act_for_role(data, required_role, current_persona(), user_role) and bool(allowed_decisions)
     role_cols = st.columns(3)
-    role_cols[0].metric("Current Required Role", required_role or "None")
+    role_cols[0].metric("Current Required Role", required_role_label)
     role_cols[1].metric("Current User Role", user_role)
     role_cols[2].metric("Can Approve", "Yes" if can_act_on_step else "No")
     if not can_act_on_step:
-        st.warning(f"{user_role} cannot capture a decision for this step. Required role: {required_role or 'none'}.")
+        st.warning(f"{user_role} cannot capture a decision for this step. Required role: {required_role_label}.")
+
+    if sla_status:
+        sla_cols = st.columns(4)
+        sla_cols[0].metric("Assigned", str(sla_status.get("Assigned At", "")))
+        sla_cols[1].metric("Due", str(sla_status.get("Due At", "")))
+        sla_cols[2].metric("Target Response", f"{int(sla_status.get('SLA Hours', 0))}h")
+        sla_cols[3].metric("SLA", "Breached" if sla_status.get("Is Breached") else "On Track")
+
+    st.subheader("SLA Actions")
+    action_cols = st.columns(3)
+    if action_cols[0].button("Send Reminder", type="secondary", key=f"reminder_{selected}_{required_role}", disabled=not bool(required_role)):
+        workflow_audit_once(
+            f"{assignment_key(selected, required_role)}::reminder::{len(st.session_state.audit_events)}",
+            selected,
+            "Reminder Sent",
+            entity="Approval SLA",
+            details=f"Reminder recorded for {required_role_label}. No email was sent.",
+            approval_step=required_role,
+        )
+        st.session_state.approval_confirmation = f"Reminder recorded for {required_role_label}."
+        st.rerun()
+    if action_cols[1].button("Mark SLA Breached", type="secondary", key=f"breach_{selected}_{required_role}", disabled=not bool(required_role)):
+        workflow_audit_once(
+            f"{assignment_key(selected, required_role)}::breached",
+            selected,
+            "SLA Breached",
+            entity="Approval SLA",
+            details=f"SLA breach recorded for {required_role_label}.",
+            approval_step=required_role,
+        )
+        st.session_state.approval_confirmation = f"SLA breach recorded for {required_role_label}."
+        st.rerun()
+    if action_cols[2].button("Escalate", type="secondary", key=f"escalate_{selected}_{required_role}", disabled=not bool(required_role)):
+        workflow_audit_once(
+            f"{assignment_key(selected, required_role)}::escalated::{len(st.session_state.audit_events)}",
+            selected,
+            "Escalated",
+            entity="Approval SLA",
+            details=f"{required_role_label} escalated to General Manager.",
+            approval_step=required_role,
+            previous_status=previous_status,
+            new_status="Pending General Manager",
+        )
+        update_deal_status(selected, "Pending General Manager", "Escalate", "SLA escalation", approval_step=required_role, previous_status=previous_status)
+        st.session_state.approval_confirmation = f"{required_role_label} escalated to General Manager."
+        st.rerun()
 
     st.subheader("Decision")
     decision = st.radio("Decision", DECISIONS, horizontal=True, key=f"decision_{selected}")
@@ -2372,7 +2746,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     if decision not in allowed_decisions:
         st.warning(f"{user_role} is not permitted to capture `{decision}`.")
     if st.button("Capture Decision", type="primary", disabled=not can_capture):
-        success, message = process_approval_decision(selected, decision, comment, context["route_df"], previous_status)
+        success, message = process_approval_decision(selected, decision, comment, context["route_df"], previous_status, data)
         if success:
             st.session_state.approval_confirmation = message
             st.rerun()
@@ -2398,6 +2772,9 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
 
 def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
     render_header("Reference Data", "Inspect source datasets powering the MVP.")
+    if not can_configure_system():
+        st.warning("Reference data configuration is available to System Administrator.")
+        return
     sensitive_data_note()
     labels = {
         "customers": "Customers",
@@ -2424,8 +2801,51 @@ def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
     st.dataframe(mask_sensitive_dataframe(view), use_container_width=True, hide_index=True)
 
 
+def page_delegate_administration(data: dict[str, pd.DataFrame]) -> None:
+    render_header("Delegate Administration", "Maintain primary and delegate approvers for each approval role.")
+    if not can_configure_system():
+        st.warning("Delegate administration is available to System Administrator.")
+        return
+    config = delegate_config(data)
+    persona_options = list(PERSONAS.keys())
+    edited = st.data_editor(
+        config,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Role": st.column_config.SelectboxColumn("Role", options=ACTIONABLE_APPROVAL_ROLES, required=True),
+            "Primary Approver": st.column_config.SelectboxColumn("Primary Approver", options=persona_options, required=True),
+            "Delegate Approver": st.column_config.SelectboxColumn("Delegate Approver", options=persona_options, required=False),
+            "Delegation Enabled": st.column_config.CheckboxColumn("Delegation Enabled"),
+            "Target Response Hours": st.column_config.NumberColumn("Target Response Hours", min_value=1, max_value=168, step=1),
+        },
+        key="delegate_admin_editor",
+    )
+    actions = st.columns(2)
+    if actions[0].button("Save Delegate Settings", type="primary"):
+        saved = edited.copy()
+        saved["Delegation Enabled"] = saved["Delegation Enabled"].astype(bool)
+        saved["Target Response Hours"] = pd.to_numeric(saved["Target Response Hours"], errors="coerce").fillna(24).astype(int)
+        st.session_state.delegate_overrides = saved.to_dict("records")
+        add_audit("SYSTEM", "Delegate Settings Updated", entity="Administration", details="Primary/delegate approver settings updated for this session.")
+        st.success("Delegate settings saved for this session.")
+    if actions[1].button("Reset Delegate Settings", type="secondary"):
+        st.session_state.delegate_overrides = default_delegate_config(data)
+        add_audit("SYSTEM", "Delegate Settings Reset", entity="Administration", details="Delegate settings reset from reference data.")
+        st.rerun()
+
+    st.subheader("Current Route Display")
+    preview = delegate_config(data).copy()
+    preview["Route Label"] = preview.apply(lambda row: f"{row['Role']} (Delegated)" if row["Delegation Enabled"] else row["Role"], axis=1)
+    preview["Active Approver"] = preview.apply(lambda row: row["Delegate Approver"] if row["Delegation Enabled"] else row["Primary Approver"], axis=1)
+    st.dataframe(preview[["Role", "Route Label", "Primary Approver", "Delegate Approver", "Delegation Enabled", "Active Approver", "Target Response Hours"]], use_container_width=True, hide_index=True)
+
+
 def page_audit_log() -> None:
     render_header("Audit Log", "Session-level audit events for the Streamlit MVP.")
+    if not can_configure_system():
+        st.warning("Global audit log access is available to System Administrator.")
+        return
     audit = pd.DataFrame(st.session_state.audit_events)
     if audit.empty:
         st.info("No audit events in this session yet.")
@@ -2439,6 +2859,9 @@ def reset_demo_session() -> None:
     st.session_state.audit_events = []
     st.session_state.deal_status_overrides = {}
     st.session_state.deal_approval_steps = {}
+    st.session_state.approval_assignments = {}
+    st.session_state.workflow_audit_keys = []
+    st.session_state.delegate_overrides = None
     st.session_state.approval_confirmation = ""
     st.session_state.deal_detail_confirmation = ""
     st.session_state.deal_list_selected_deal_id = None
@@ -2457,6 +2880,7 @@ def top_navigation() -> str:
         "Approval Queue Preview",
         "Deal Detail",
         "Reference Data",
+        "Delegate Administration",
         "Audit Log",
     }
     if st.session_state.get("current_page") not in valid_pages:
@@ -2484,20 +2908,26 @@ def top_navigation() -> str:
         st.session_state.role = PERSONAS[persona]
         nav_cols[3].caption(st.session_state.role)
 
-        with nav_cols[4].popover("Settings/Admin"):
+        with nav_cols[4].popover("System Settings"):
             st.metric("Session Deals", len(st.session_state.runtime_deals))
             st.metric("Audit Events", len(st.session_state.audit_events))
-            if st.button("Reference Data", key="admin_reference_data", use_container_width=True):
-                st.session_state.current_page = "Reference Data"
-                st.rerun()
-            if st.button("Global Audit Log", key="admin_audit_log", use_container_width=True):
-                st.session_state.current_page = "Audit Log"
-                st.rerun()
-            st.divider()
-            st.warning("Reset clears session-created deals, status overrides, and session audit events.")
-            confirm_reset = st.checkbox("I understand and want to reset this demo session.", key="admin_confirm_reset")
-            if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
-                reset_demo_session()
+            if can_configure_system():
+                if st.button("Reference Data", key="admin_reference_data", use_container_width=True):
+                    st.session_state.current_page = "Reference Data"
+                    st.rerun()
+                if st.button("Delegate Administration", key="admin_delegate_admin", use_container_width=True):
+                    st.session_state.current_page = "Delegate Administration"
+                    st.rerun()
+                if st.button("Global Audit Log", key="admin_audit_log", use_container_width=True):
+                    st.session_state.current_page = "Audit Log"
+                    st.rerun()
+                st.divider()
+                st.warning("Reset clears session-created deals, status overrides, and session audit events.")
+                confirm_reset = st.checkbox("I understand and want to reset this demo session.", key="admin_confirm_reset")
+                if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
+                    reset_demo_session()
+            else:
+                st.caption("Configuration controls are available to System Administrator.")
 
     st.divider()
     return st.session_state.current_page
@@ -2518,6 +2948,8 @@ def main() -> None:
         page_approval_queue(data)
     elif page == "Reference Data":
         page_reference_data(data)
+    elif page == "Delegate Administration":
+        page_delegate_administration(data)
     elif page == "Audit Log":
         page_audit_log()
 
