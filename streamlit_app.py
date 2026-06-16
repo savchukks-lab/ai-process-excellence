@@ -281,6 +281,8 @@ def init_state() -> None:
     st.session_state.setdefault("approval_assignments", {})
     st.session_state.setdefault("workflow_audit_keys", [])
     st.session_state.setdefault("delegate_overrides", None)
+    st.session_state.setdefault("approval_matrix_overrides", None)
+    st.session_state.setdefault("role_permission_overrides", None)
     st.session_state.setdefault("approval_confirmation", "")
     st.session_state.setdefault("deal_detail_confirmation", "")
     st.session_state.setdefault("selected_deal_id", None)
@@ -359,11 +361,51 @@ def current_role() -> str:
     return st.session_state.get("role", PERSONAS.get(current_persona(), "KAM North"))
 
 
+def default_role_permission_config() -> list[dict]:
+    return [
+        {"Role": "KAM North", "Sensitive Visibility": "Restricted", "Margin Visibility": "Hidden", "Configuration Rights": False},
+        {"Role": "KAM South", "Sensitive Visibility": "Restricted", "Margin Visibility": "Hidden", "Configuration Rights": False},
+        {"Role": "Sales Manager", "Sensitive Visibility": "Restricted", "Margin Visibility": "Status Only", "Configuration Rights": False},
+        {"Role": "Pricing Governance Owner", "Sensitive Visibility": "Full", "Margin Visibility": "Exact", "Configuration Rights": False},
+        {"Role": "Market Access Director", "Sensitive Visibility": "Full", "Margin Visibility": "Exact", "Configuration Rights": False},
+        {"Role": "Finance Director", "Sensitive Visibility": "Full", "Margin Visibility": "Exact", "Configuration Rights": False},
+        {"Role": "Supply Chain Manager", "Sensitive Visibility": "Restricted", "Margin Visibility": "Hidden", "Configuration Rights": False},
+        {"Role": "General Manager", "Sensitive Visibility": "Full", "Margin Visibility": "Exact", "Configuration Rights": False},
+        {"Role": "System Administrator", "Sensitive Visibility": "Full", "Margin Visibility": "Exact", "Configuration Rights": True},
+    ]
+
+
+def role_permission_config() -> pd.DataFrame:
+    if st.session_state.get("role_permission_overrides") is None:
+        st.session_state.role_permission_overrides = default_role_permission_config()
+    config = pd.DataFrame(st.session_state.role_permission_overrides)
+    if config.empty:
+        config = pd.DataFrame(default_role_permission_config())
+    config["Configuration Rights"] = config["Configuration Rights"].astype(bool)
+    return config
+
+
+def role_permission_profile(role: str | None = None) -> dict:
+    role_name = role or current_role()
+    config = role_permission_config()
+    match = config[config["Role"].astype(str).eq(str(role_name))]
+    if match.empty:
+        return {}
+    return match.iloc[0].to_dict()
+
+
+def margin_visibility_for_role(role: str | None = None) -> str:
+    return str(role_permission_profile(role).get("Margin Visibility", "Hidden"))
+
+
 def is_kam_role(role: str | None = None) -> bool:
     return (role or current_role()) in {"KAM North", "KAM South"}
 
 
 def has_full_visibility(role: str | None = None) -> bool:
+    profile = role_permission_profile(role)
+    if profile:
+        return profile.get("Sensitive Visibility") == "Full"
     return (role or current_role()) in {
         "Pricing Governance Owner",
         "Market Access Director",
@@ -374,6 +416,9 @@ def has_full_visibility(role: str | None = None) -> bool:
 
 
 def can_configure_system(role: str | None = None) -> bool:
+    profile = role_permission_profile(role)
+    if profile:
+        return bool(profile.get("Configuration Rights"))
     return (role or current_role()) == "System Administrator"
 
 
@@ -385,14 +430,14 @@ def margin_status(margin_value: object, target_value: object) -> str:
 
 def margin_display(summary: dict, role: str | None = None) -> str:
     role_name = role or current_role()
-    if role_name == "Sales Manager":
+    if margin_visibility_for_role(role_name) == "Status Only":
         return margin_status(summary.get("margin_pct"), summary.get("weighted_target_margin"))
     return sensitive_pct("Gross Margin %", summary.get("margin_pct"), role_name)
 
 
 def margin_value_display(value: object, target: object | None = None, role: str | None = None) -> str:
     role_name = role or current_role()
-    if role_name == "Sales Manager":
+    if margin_visibility_for_role(role_name) == "Status Only":
         return margin_status(value, target) if target is not None else "Margin Status Only"
     return sensitive_pct("Gross Margin %", value, role_name)
 
@@ -404,6 +449,11 @@ def is_sensitive_field(field_name: object) -> bool:
 
 def can_view_sensitive_field(role: str, field_name: object) -> bool:
     if not is_sensitive_field(field_name):
+        return True
+    profile = role_permission_profile(role)
+    if profile.get("Sensitive Visibility") == "Full":
+        return True
+    if "margin" in str(field_name).lower() and profile.get("Margin Visibility") == "Exact":
         return True
     allowed = ROLE_VISIBLE_SENSITIVE_PATTERNS.get(str(role), [])
     return any(pattern.lower() in str(field_name).lower() for pattern in allowed)
@@ -419,7 +469,7 @@ def mask_sensitive_dataframe(df: pd.DataFrame, role: str | None = None, replacem
         return df
     role_name = role or current_role()
     masked = df.copy()
-    if role_name == "Sales Manager":
+    if margin_visibility_for_role(role_name) == "Status Only":
         target_col = next((col for col in masked.columns if "target margin" in str(col).lower()), None)
         margin_cols = [
             col
@@ -437,7 +487,7 @@ def mask_sensitive_dataframe(df: pd.DataFrame, role: str | None = None, replacem
             else:
                 masked[col] = "Margin Status Only"
     for col in masked.columns:
-        if role_name == "Sales Manager" and "margin" in str(col).lower() and "target margin" not in str(col).lower():
+        if margin_visibility_for_role(role_name) == "Status Only" and "margin" in str(col).lower() and "target margin" not in str(col).lower():
             continue
         if is_sensitive_field(col) and not can_view_sensitive_field(role_name, col):
             masked[col] = replacement
@@ -529,7 +579,11 @@ def comparison_trigger_matches(trigger: object, value: float) -> bool:
 
 
 def approval_rule_rows(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    rules = data.get("approval_matrix", pd.DataFrame()).copy()
+    if st.session_state.get("approval_matrix_overrides") is None:
+        st.session_state.approval_matrix_overrides = data.get("approval_matrix", pd.DataFrame()).to_dict("records")
+    rules = pd.DataFrame(st.session_state.approval_matrix_overrides).copy()
+    if rules.empty:
+        rules = data.get("approval_matrix", pd.DataFrame()).copy()
     if rules.empty or "Required Role" not in rules:
         return pd.DataFrame()
     rules["Policy ID"] = rules.get("Policy ID", pd.Series(dtype=str)).astype(str)
@@ -1718,6 +1772,12 @@ def breadcrumb_for_current_page() -> str:
         return f"Review Queue > {selected}" if selected else "Review Queue"
     if page == "Reference Data":
         return "System Administration > Reference Data"
+    if page == "Approval Matrix":
+        return "System Administration > Approval Matrix"
+    if page == "Approver Roster":
+        return "System Administration > Approver Roster"
+    if page == "System Administrator Settings":
+        return "System Administration > Settings"
     if page == "Delegate Administration":
         return "System Administration > Delegates"
     if page == "Audit Log":
@@ -2801,11 +2861,143 @@ def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
     st.dataframe(mask_sensitive_dataframe(view), use_container_width=True, hide_index=True)
 
 
-def page_delegate_administration(data: dict[str, pd.DataFrame]) -> None:
-    render_header("Delegate Administration", "Maintain primary and delegate approvers for each approval role.")
+def readable_condition_for_rule(rule: pd.Series) -> str:
+    rule_type = str(rule.get("Rule Type", ""))
+    if rule_type == "DISC":
+        return f"Discount {rule.get('Discount Trigger', '')}"
+    if rule_type == "MARGIN":
+        return f"Margin {rule.get('Value / Margin Trigger', '')}"
+    if rule_type == "PUBLIC":
+        return "Public Price Impact"
+    if rule_type == "CREDIT":
+        return "Overdue Receivables"
+    if rule_type == "SUPPLY":
+        return "Inventory Shortage"
+    return str(rule.get("Policy Name", rule.get("Condition", "")))
+
+
+def approval_matrix_summary(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    rules = approval_rule_rows(data)
+    if rules.empty:
+        return pd.DataFrame(columns=["Rule", "Required Roles"])
+    rows = []
+    rules = rules.copy()
+    rules["Readable Rule"] = rules.apply(readable_condition_for_rule, axis=1)
+    for rule, part in rules.sort_values(["Sequence", "Required Role"]).groupby("Readable Rule", sort=False):
+        roles = part.sort_values(["Sequence", "Required Role"])["Required Role"].astype(str).tolist()
+        rows.append({"Rule": rule, "Required Roles": "\n".join(dict.fromkeys(roles))})
+    return pd.DataFrame(rows)
+
+
+def page_approval_matrix(data: dict[str, pd.DataFrame]) -> None:
+    render_header("Approval Matrix", "Human-readable routing rules used by approval workflow.")
     if not can_configure_system():
-        st.warning("Delegate administration is available to System Administrator.")
+        st.warning("Approval matrix access is available to System Administrator.")
         return
+    summary = approval_matrix_summary(data)
+    if summary.empty:
+        st.info("No approval routing rules are configured.")
+    else:
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    with st.expander("Rule Reference Data", expanded=False):
+        rules = approval_rule_rows(data)
+        display_cols = [
+            "Policy ID",
+            "Policy Name",
+            "Discount Trigger",
+            "Value / Margin Trigger",
+            "Required Role",
+            "Sequence",
+            "SLA Hours",
+            "Notes",
+        ]
+        st.dataframe(rules[[col for col in display_cols if col in rules]], use_container_width=True, hide_index=True)
+
+
+def page_approver_roster(data: dict[str, pd.DataFrame]) -> None:
+    render_header("Approver Roster", "Primary and delegate approver assignments by role.")
+    if not can_configure_system():
+        st.warning("Approver roster access is available to System Administrator.")
+        return
+    roster = delegate_config(data).copy()
+    roster = roster.rename(columns={"Target Response Hours": "Target Response Time (Hours)"})
+    display_cols = ["Role", "Primary Approver", "Delegate Approver", "Target Response Time (Hours)"]
+    st.dataframe(roster[display_cols], use_container_width=True, hide_index=True)
+
+
+def page_system_administrator_settings(data: dict[str, pd.DataFrame]) -> None:
+    render_header("System Administrator Settings", "Configure thresholds, SLA values, delegates, and role permissions.")
+    if not can_configure_system():
+        st.warning("System administrator settings are available to System Administrator.")
+        return
+
+    tabs = st.tabs(["Approval Thresholds", "SLA Values", "Delegates", "Role Permissions"])
+
+    with tabs[0]:
+        rules = approval_rule_rows(data)
+        threshold_cols = ["Policy ID", "Policy Name", "Discount Trigger", "Value / Margin Trigger", "Required Role", "Sequence", "SLA Hours", "Notes"]
+        edited_rules = st.data_editor(
+            rules[[col for col in threshold_cols if col in rules]],
+            use_container_width=True,
+            hide_index=True,
+            num_rows="dynamic",
+            column_config={
+                "Required Role": st.column_config.SelectboxColumn("Required Role", options=ACTIONABLE_APPROVAL_ROLES, required=True),
+                "Sequence": st.column_config.NumberColumn("Sequence", min_value=1, max_value=10, step=1),
+                "SLA Hours": st.column_config.NumberColumn("SLA Hours", min_value=1, max_value=168, step=1),
+            },
+            key="approval_threshold_editor",
+        )
+        if st.button("Save Approval Thresholds", type="primary"):
+            st.session_state.approval_matrix_overrides = edited_rules.to_dict("records")
+            add_audit("SYSTEM", "Approval Thresholds Updated", entity="Administration", details="Approval matrix thresholds updated for this session.")
+            st.success("Approval thresholds saved for this session.")
+
+    with tabs[1]:
+        config = delegate_config(data).copy()
+        sla_edit = st.data_editor(
+            config[["Role", "Target Response Hours"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Role": st.column_config.SelectboxColumn("Role", options=ACTIONABLE_APPROVAL_ROLES, required=True),
+                "Target Response Hours": st.column_config.NumberColumn("Target Response Time (Hours)", min_value=1, max_value=168, step=1),
+            },
+            key="sla_value_editor",
+        )
+        if st.button("Save SLA Values", type="primary"):
+            saved = config.copy()
+            for _, row in sla_edit.iterrows():
+                saved.loc[saved["Role"].astype(str).eq(str(row["Role"])), "Target Response Hours"] = int(row["Target Response Hours"])
+            st.session_state.delegate_overrides = saved.to_dict("records")
+            add_audit("SYSTEM", "SLA Values Updated", entity="Administration", details="Target response times updated for this session.")
+            st.success("SLA values saved for this session.")
+
+    with tabs[2]:
+        render_delegate_editor(data, key_prefix="settings")
+
+    with tabs[3]:
+        permission_config = role_permission_config()
+        edited_permissions = st.data_editor(
+            permission_config,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Role": st.column_config.SelectboxColumn("Role", options=ROLE_ORDER, required=True),
+                "Sensitive Visibility": st.column_config.SelectboxColumn("Sensitive Visibility", options=["Restricted", "Full"], required=True),
+                "Margin Visibility": st.column_config.SelectboxColumn("Margin Visibility", options=["Hidden", "Status Only", "Exact"], required=True),
+                "Configuration Rights": st.column_config.CheckboxColumn("Configuration Rights"),
+            },
+            key="role_permission_editor",
+        )
+        if st.button("Save Role Permissions", type="primary"):
+            st.session_state.role_permission_overrides = edited_permissions.to_dict("records")
+            add_audit("SYSTEM", "Role Permissions Updated", entity="Administration", details="Role permission settings updated for this session.")
+            st.success("Role permissions saved for this session.")
+
+
+def render_delegate_editor(data: dict[str, pd.DataFrame], key_prefix: str = "delegate_admin") -> None:
     config = delegate_config(data)
     persona_options = list(PERSONAS.keys())
     edited = st.data_editor(
@@ -2819,17 +3011,17 @@ def page_delegate_administration(data: dict[str, pd.DataFrame]) -> None:
             "Delegation Enabled": st.column_config.CheckboxColumn("Delegation Enabled"),
             "Target Response Hours": st.column_config.NumberColumn("Target Response Hours", min_value=1, max_value=168, step=1),
         },
-        key="delegate_admin_editor",
+        key=f"{key_prefix}_editor",
     )
     actions = st.columns(2)
-    if actions[0].button("Save Delegate Settings", type="primary"):
+    if actions[0].button("Save Delegate Settings", type="primary", key=f"{key_prefix}_save"):
         saved = edited.copy()
         saved["Delegation Enabled"] = saved["Delegation Enabled"].astype(bool)
         saved["Target Response Hours"] = pd.to_numeric(saved["Target Response Hours"], errors="coerce").fillna(24).astype(int)
         st.session_state.delegate_overrides = saved.to_dict("records")
         add_audit("SYSTEM", "Delegate Settings Updated", entity="Administration", details="Primary/delegate approver settings updated for this session.")
         st.success("Delegate settings saved for this session.")
-    if actions[1].button("Reset Delegate Settings", type="secondary"):
+    if actions[1].button("Reset Delegate Settings", type="secondary", key=f"{key_prefix}_reset"):
         st.session_state.delegate_overrides = default_delegate_config(data)
         add_audit("SYSTEM", "Delegate Settings Reset", entity="Administration", details="Delegate settings reset from reference data.")
         st.rerun()
@@ -2839,6 +3031,14 @@ def page_delegate_administration(data: dict[str, pd.DataFrame]) -> None:
     preview["Route Label"] = preview.apply(lambda row: f"{row['Role']} (Delegated)" if row["Delegation Enabled"] else row["Role"], axis=1)
     preview["Active Approver"] = preview.apply(lambda row: row["Delegate Approver"] if row["Delegation Enabled"] else row["Primary Approver"], axis=1)
     st.dataframe(preview[["Role", "Route Label", "Primary Approver", "Delegate Approver", "Delegation Enabled", "Active Approver", "Target Response Hours"]], use_container_width=True, hide_index=True)
+
+
+def page_delegate_administration(data: dict[str, pd.DataFrame]) -> None:
+    render_header("Delegate Administration", "Maintain primary and delegate approvers for each approval role.")
+    if not can_configure_system():
+        st.warning("Delegate administration is available to System Administrator.")
+        return
+    render_delegate_editor(data)
 
 
 def page_audit_log() -> None:
@@ -2862,6 +3062,8 @@ def reset_demo_session() -> None:
     st.session_state.approval_assignments = {}
     st.session_state.workflow_audit_keys = []
     st.session_state.delegate_overrides = None
+    st.session_state.approval_matrix_overrides = None
+    st.session_state.role_permission_overrides = None
     st.session_state.approval_confirmation = ""
     st.session_state.deal_detail_confirmation = ""
     st.session_state.deal_list_selected_deal_id = None
@@ -2880,6 +3082,9 @@ def top_navigation() -> str:
         "Approval Queue Preview",
         "Deal Detail",
         "Reference Data",
+        "Approval Matrix",
+        "Approver Roster",
+        "System Administrator Settings",
         "Delegate Administration",
         "Audit Log",
     }
@@ -2915,6 +3120,15 @@ def top_navigation() -> str:
                 if st.button("Reference Data", key="admin_reference_data", use_container_width=True):
                     st.session_state.current_page = "Reference Data"
                     st.rerun()
+                if st.button("Approval Matrix", key="admin_approval_matrix", use_container_width=True):
+                    st.session_state.current_page = "Approval Matrix"
+                    st.rerun()
+                if st.button("Approver Roster", key="admin_approver_roster", use_container_width=True):
+                    st.session_state.current_page = "Approver Roster"
+                    st.rerun()
+                if st.button("System Administrator Settings", key="admin_system_settings", use_container_width=True):
+                    st.session_state.current_page = "System Administrator Settings"
+                    st.rerun()
                 if st.button("Delegate Administration", key="admin_delegate_admin", use_container_width=True):
                     st.session_state.current_page = "Delegate Administration"
                     st.rerun()
@@ -2948,6 +3162,12 @@ def main() -> None:
         page_approval_queue(data)
     elif page == "Reference Data":
         page_reference_data(data)
+    elif page == "Approval Matrix":
+        page_approval_matrix(data)
+    elif page == "Approver Roster":
+        page_approver_roster(data)
+    elif page == "System Administrator Settings":
+        page_system_administrator_settings(data)
     elif page == "Delegate Administration":
         page_delegate_administration(data)
     elif page == "Audit Log":
