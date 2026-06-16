@@ -634,14 +634,16 @@ def build_route_header(deal: dict, data: dict[str, pd.DataFrame]) -> dict:
     return {
         "Customer Name": customer_name,
         "Region": deal.get("Region"),
-        "Segment": deal.get("Segment"),
-        "Account Type": account.get("Account Type", ""),
-        "Channel": deal.get("Channel", account.get("Account Type", "")),
+        "Segment": deal_customer_type(deal),
+        "Customer Type": deal_customer_type(deal) or customer_type(account),
+        "Account Type": customer_type(account),
+        "Channel": deal.get("Channel", deal_customer_type(deal) or customer_type(account)),
         "Payment Terms": deal.get("Payment Terms"),
         "Contract Months": deal.get("Contract Months", 0),
         "Special Terms Requested": bool(deal.get("Special Terms Requested", False)),
         "Visibility": deal.get("Visibility", "Confidential"),
         "Overdue AR": deal.get("Overdue AR", health.get("Overdue AR", 0)),
+        "Credit Status": deal.get("Credit Status", account.get("Credit Status", "")),
         "Customer Risk Flag": deal.get("Customer Risk Flag", health.get("Risk Flag", "")),
     }
 
@@ -848,10 +850,11 @@ def visible_deals_for_current_role(deals: pd.DataFrame, data: dict[str, pd.DataF
 
 def demo_commercial_price_defaults(data: dict[str, pd.DataFrame], sku: str) -> dict[str, float]:
     prod = product_lookup(data).get(str(sku), {})
-    list_price = float(prod.get("WAC / List Price", 0) or 0)
+    list_price = product_list_price(prod)
+    gross_price = product_gross_price(prod)
     return {
         "Unit List Price": round(list_price, 2),
-        "Gross Price": round(list_price * 0.98, 2),
+        "Gross Price": round(gross_price, 2),
         "Floor Price": round(list_price * 0.72, 2),
         "Guidance Price": round(list_price * 0.84, 2),
         "Walk-away Price": round(list_price * 0.68, 2),
@@ -1060,10 +1063,47 @@ def product_lookup(data: dict[str, pd.DataFrame]) -> dict[str, dict]:
     return data["products"].set_index("SKU").to_dict("index")
 
 
+def product_value(product: dict, primary: str, fallback: str = "", default: object = None) -> object:
+    value = product.get(primary, None)
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        value = product.get(fallback, default) if fallback else default
+    return default if value is None or (isinstance(value, float) and pd.isna(value)) else value
+
+
+def product_list_price(product: dict) -> float:
+    return safe_float(product_value(product, "List Price", "WAC / List Price", 0))
+
+
+def product_target_margin(product: dict) -> float:
+    return safe_float(product_value(product, "Target Gross Margin %", "Target Margin %", 0))
+
+
+def product_gross_price(product: dict) -> float:
+    list_price = product_list_price(product)
+    base_rebate = safe_float(product.get("Base Rebate %", 0))
+    return safe_float(product.get("Gross Price", list_price * (1 - base_rebate)), list_price)
+
+
+def finance_trigger_margin(target_margin: float) -> float:
+    return max(0, safe_float(target_margin) - 0.10)
+
+
+def gm_trigger_margin(target_margin: float) -> float:
+    return max(0, safe_float(target_margin) - 0.20)
+
+
 def customer_lookup(data: dict[str, pd.DataFrame]) -> dict[str, dict]:
     if data["customers"].empty:
         return {}
     return data["customers"].set_index("Customer Name").to_dict("index")
+
+
+def customer_type(customer: dict) -> str:
+    return str(customer.get("Customer Type", customer.get("Account Type", customer.get("Segment", ""))))
+
+
+def deal_customer_type(deal: dict) -> str:
+    return str(deal.get("Customer Type", deal.get("Segment", deal.get("Channel", ""))))
 
 
 def normalize_lines(line_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -1075,8 +1115,8 @@ def normalize_lines(line_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.
             continue
         prod = products[sku]
         qty = float(row.get("Quantity", 0) or 0)
-        list_price = float(row.get("Unit List Price", prod.get("WAC / List Price", 0)) or 0)
-        gross_price = float(row.get("Gross Price", list_price * 0.98) or 0)
+        list_price = float(row.get("Unit List Price", product_list_price(prod)) or 0)
+        gross_price = float(row.get("Gross Price", product_gross_price(prod)) or 0)
         proposed = float(row.get("Requested Net Price", row.get("Proposed Unit Price", 0)) or 0)
         floor_price = float(row.get("Floor Price", list_price * 0.72) or 0)
         guidance_price = float(row.get("Guidance Price", list_price * 0.84) or 0)
@@ -1091,8 +1131,9 @@ def normalize_lines(line_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.
             {
                 "SKU": sku,
                 "Product Name": prod.get("Product Name", row.get("Product Name", "")),
+                "Product Category": prod.get("Product Category", prod.get("Product Type", "")),
                 "Therapeutic Area": prod.get("Therapeutic Area", ""),
-                "Product Type": prod.get("Product Type", ""),
+                "Product Type": prod.get("Product Type", prod.get("Product Category", "")),
                 "Quantity": qty,
                 "Unit List Price": list_price,
                 "List Price": list_price,
@@ -1111,7 +1152,11 @@ def normalize_lines(line_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.
                 "Requested Discount %": discount,
                 "Margin %": margin,
                 "Estimated Gross Margin %": margin,
-                "Target Margin %": prod.get("Target Margin %", 0),
+                "Base Rebate %": prod.get("Base Rebate %", 0),
+                "Target Margin %": product_target_margin(prod),
+                "Target Gross Margin %": product_target_margin(prod),
+                "Finance Director Trigger Margin": finance_trigger_margin(product_target_margin(prod)),
+                "General Manager Trigger Margin": gm_trigger_margin(product_target_margin(prod)),
                 "Requested Delivery Date": row.get("Requested Delivery Date", None),
                 "Storage": prod.get("Storage", ""),
                 "Supply Risk": prod.get("Supply Risk", ""),
@@ -1535,9 +1580,9 @@ def build_deal_context(data: dict[str, pd.DataFrame], deal_id: str) -> dict | No
     summary = summarize_lines(calc_lines)
     customer = deal.get("Customer Name", "")
     region = deal.get("Region", "")
-    segment = deal.get("Segment", "")
+    segment = deal_customer_type(deal)
     account = customer_lookup(data).get(customer, {})
-    channel = account.get("Account Type", "")
+    channel = customer_type(account)
     included_value = str(deal.get("Included_In_Latest_Financial_Plan", "Yes")).strip() or "Yes"
     included_in_plan = included_value.lower() == "yes"
     plan_df = plan_impact_analysis(data, calc_lines, region, segment)
@@ -1724,10 +1769,13 @@ def validate_deal(header: dict, lines: pd.DataFrame, data: dict[str, pd.DataFram
     if int(header.get("Contract Months", 0) or 0) > 36:
         warnings.append("Contract duration above 36 months will require Legal review.")
     customer = customer_lookup(data).get(header.get("Customer Name", ""), {})
+    overdue_ar = safe_float(header.get("Overdue AR", customer.get("Overdue AR", 0)))
     if customer.get("Credit Status") == "Watch":
         warnings.append("Customer credit status is Watch.")
     if customer.get("Credit Status") == "Hold":
-        warnings.append("Customer credit status is Hold and should trigger Finance review.")
+        warnings.append("Customer credit status is Hold. Finance approval is mandatory before final approval.")
+    if overdue_ar > 0:
+        warnings.append("Customer has overdue receivables. Finance approval is mandatory.")
     return errors, warnings
 
 
@@ -1736,8 +1784,12 @@ def route_preview(header: dict, lines: pd.DataFrame, summary: dict, data: dict[s
     rows: list[dict] = []
     discount_pct = safe_float(summary.get("discount_pct"))
     margin_pct = safe_float(summary.get("margin_pct"))
+    target_margin = safe_float(summary.get("weighted_target_margin"))
+    fd_trigger = finance_trigger_margin(target_margin)
+    gm_trigger = gm_trigger_margin(target_margin)
     visibility = str(header.get("Visibility", "Confidential"))
     overdue_ar = safe_float(header.get("Overdue AR"))
+    credit_status = str(header.get("Credit Status", "Good"))
     inventory_df = enhanced_inventory_analysis(data, lines, str(header.get("Region", "")))
     shortage = safe_float(inventory_df["Inventory Shortage"].sum()) if not inventory_df.empty else 0
 
@@ -1745,12 +1797,19 @@ def route_preview(header: dict, lines: pd.DataFrame, summary: dict, data: dict[s
         rule_type = str(rule.get("Rule Type", ""))
         if rule_type == "DISC" and discount_trigger_matches(rule.get("Discount Trigger"), discount_pct):
             add_route_rule(rows, rule, f"Weighted discount {pct(discount_pct)} matches configured tier {rule.get('Discount Trigger')}.")
-        elif rule_type == "MARGIN" and comparison_trigger_matches(rule.get("Value / Margin Trigger"), margin_pct):
-            add_route_rule(rows, rule, f"Estimated gross margin {pct(margin_pct)} matches configured threshold {rule.get('Value / Margin Trigger')}.")
+        elif rule_type == "MARGIN":
+            role = str(rule.get("Required Role", ""))
+            if role == "Finance Director" and margin_pct < fd_trigger:
+                add_route_rule(rows, rule, f"Estimated gross margin {pct(margin_pct)} is below Finance trigger {pct(fd_trigger)} based on target margin {pct(target_margin)}.")
+            elif role == "General Manager" and margin_pct < gm_trigger:
+                add_route_rule(rows, rule, f"Estimated gross margin {pct(margin_pct)} is below GM trigger {pct(gm_trigger)} based on target margin {pct(target_margin)}.")
         elif rule_type == "PUBLIC" and visibility == "Public":
             add_route_rule(rows, rule, "Deal is marked Public and may impact public/list price.")
-        elif rule_type == "CREDIT" and comparison_trigger_matches(rule.get("Value / Margin Trigger"), overdue_ar):
-            add_route_rule(rows, rule, f"Customer overdue receivables are {money(overdue_ar)}.")
+        elif rule_type == "CREDIT" and (credit_status == "Hold" or comparison_trigger_matches(rule.get("Value / Margin Trigger"), overdue_ar)):
+            if credit_status == "Hold":
+                add_route_rule(rows, rule, "Customer credit status is Hold; Finance approval is mandatory before final approval.")
+            else:
+                add_route_rule(rows, rule, f"Customer overdue receivables are {money(overdue_ar)}.")
         elif rule_type == "SUPPLY" and comparison_trigger_matches(rule.get("Value / Margin Trigger"), shortage):
             add_route_rule(rows, rule, f"Inventory shortage is {shortage:,.0f} units across requested lines.")
 
@@ -1812,13 +1871,14 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     filters = st.columns([1, 1, 1, 1, 1])
     status = filters[0].multiselect("Status", sorted(deals["Status"].dropna().unique()), default=[])
     region = filters[1].multiselect("Region", sorted(deals["Region"].dropna().unique()), default=[])
-    segment = filters[2].multiselect("Segment", sorted(deals["Segment"].dropna().unique()), default=[])
+    customer_type_col = "Customer Type" if "Customer Type" in deals else "Segment"
+    segment = filters[2].multiselect("Customer Type", sorted(deals[customer_type_col].dropna().unique()), default=[])
     owner = filters[3].multiselect("Sales Owner", sorted(deals["Sales Owner"].dropna().unique()), default=[])
     risk_options = sorted(deals.get("Intake Risk", pd.Series(dtype=str)).dropna().unique())
     risk = filters[4].multiselect("Risk", risk_options, default=[])
 
     filtered = deals.copy()
-    for col, selected in [("Status", status), ("Region", region), ("Segment", segment), ("Sales Owner", owner), ("Intake Risk", risk)]:
+    for col, selected in [("Status", status), ("Region", region), (customer_type_col, segment), ("Sales Owner", owner), ("Intake Risk", risk)]:
         if selected and col in filtered:
             filtered = filtered[filtered[col].isin(selected)]
 
@@ -1828,7 +1888,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         st.info("No deals match the current filters.")
         return
 
-    display_cols = [col for col in ["Deal ID", "Deal Title", "Customer Name", "Deal Type", "Region", "Status", "Target Close Date", "Payment Terms", "Intake Risk", "Expected Route"] if col in filtered]
+    display_cols = [col for col in ["Deal ID", "Deal Title", "Customer Name", "Deal Type", "Region", customer_type_col, "Status", "Target Close Date", "Payment Terms", "Intake Risk", "Expected Route"] if col in filtered]
     display_df = mask_sensitive_dataframe(filtered[display_cols].reset_index(drop=True))
     table_event = st.dataframe(
         display_df,
@@ -1860,13 +1920,14 @@ def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) ->
     if products.empty:
         return {}
     prod = products.iloc[0] if not sku else products[products["SKU"].eq(sku)].iloc[0]
-    list_price = float(prod.get("WAC / List Price", 0))
+    prod_dict = prod.to_dict()
+    list_price = product_list_price(prod_dict)
     target = list_price * 0.9
     return {
         "SKU": prod["SKU"],
         "Quantity": 1,
         "Unit List Price": round(list_price, 2),
-        "Gross Price": round(list_price * 0.98, 2),
+        "Gross Price": round(product_gross_price(prod_dict), 2),
         "Requested Net Price": round(target, 2),
         "Requested Discount %": 10.0,
         "Floor Price": round(list_price * 0.72, 2),
@@ -1944,15 +2005,17 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         effective_date = owner_cols[3].date_input("Requested Effective Date", value=date.today() + timedelta(days=60), key="form_effective")
         st.divider()
         cols = st.columns(4)
-        cols[0].metric("Account Type", customer.get("Account Type", ""))
-        cols[1].metric("Segment", customer.get("Segment", ""))
+        cols[0].metric("Customer Type", customer_type(customer))
+        cols[1].metric("Strategic", customer.get("Strategic Account", ""))
         cols[2].metric("Region", st.session_state.get("form_region", customer.get("Region", "")))
         cols[3].metric("Credit", customer.get("Credit Status", ""))
-        st.info(str(customer.get("Commercial Notes", "")))
+        st.info(str(customer.get("Account Notes", "")))
+        if safe_float(customer.get("Overdue AR", 0)) > 0:
+            st.warning(f"Credit warning: overdue receivables are {money(customer.get('Overdue AR'))}. Finance review is mandatory.")
         if customer.get("Credit Status") == "Watch":
             st.warning("Credit status is Watch. Finance review is likely.")
         if customer.get("Credit Status") == "Hold":
-            st.error("Credit status is Hold. Submission should route to Finance before approval.")
+            st.error("Credit status is Hold. Finance review is mandatory before final approval.")
 
     with tabs[1]:
         st.subheader("Commercial Terms")
@@ -2013,17 +2076,20 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             view_cols = [
                 "SKU",
                 "Product Name",
+                "Product Category",
                 "Quantity",
                 "List Price",
                 "Gross Price",
+                "Base Rebate %",
                 "Requested Net Price",
                 "Requested Discount %",
                 "Floor Price",
                 "Guidance Price",
                 "Walk-away Price",
                 "Extended Requested Net",
-                "Storage",
-                "Supply Risk",
+                "Target Gross Margin %",
+                "Finance Director Trigger Margin",
+                "General Manager Trigger Margin",
             ]
             view = calc_lines[[col for col in view_cols if col in calc_lines]].copy()
             if "Requested Discount %" in view:
@@ -2034,11 +2100,11 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         st.subheader("Customer Health")
         health = demo_customer_health(customer, customer_name)
         health_cols = st.columns(5)
-        health_cols[0].metric("Revenue last 12 months", money(health["Revenue last 12 months"]))
-        health_cols[1].metric("Units last 12 months", f"{health['Units last 12 months']:,.0f}")
+        health_cols[0].metric("Last 12M Revenue", money(health["Revenue last 12 months"]))
+        health_cols[1].metric("Oldest Overdue Days", f"{safe_float(customer.get('Oldest Overdue Days', 0)):,.0f}")
         health_cols[2].metric("Average net price last 12 months", money(health["Average net price last 12 months"]))
-        health_cols[3].metric("Gross margin last 12 months", sensitive_money("Gross Profit", health["Gross margin last 12 months"]))
-        health_cols[4].metric("Gross margin %", sensitive_pct("Gross Margin %", health["Gross margin %"]))
+        health_cols[3].metric("Last 12M Gross Margin", sensitive_money("Gross Profit", health["Gross margin last 12 months"]))
+        health_cols[4].metric("Last 12M Gross Margin %", sensitive_pct("Gross Margin %", health["Gross margin %"]))
         ar_cols = st.columns(6)
         ar_cols[0].metric("Total AR", money(health["Total AR"]))
         ar_cols[1].metric("Current AR", money(health["Current AR"]))
@@ -2120,9 +2186,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Remaining Shelf Life": st.session_state.get("form_shelf_life", 0),
         "Inventory Value at Risk": st.session_state.get("form_inventory_value_at_risk", 0.0),
         "Region": st.session_state.get("form_region", customer.get("Region")),
-        "Segment": customer.get("Segment"),
-        "Account Type": customer.get("Account Type"),
-        "Channel": customer.get("Account Type"),
+        "Segment": customer_type(customer),
+        "Customer Type": customer_type(customer),
+        "Account Type": customer_type(customer),
+        "Channel": customer_type(customer),
         "Currency": st.session_state.get("form_currency", "USD"),
         "Target Close Date": st.session_state.get("form_close", target_close),
         "Requested Effective Date": st.session_state.get("form_effective", effective_date),
@@ -2143,7 +2210,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Gross Margin L12M": health.get("Gross margin last 12 months", 0),
         "Gross Margin % L12M": health.get("Gross margin %", 0),
         "Total AR": health.get("Total AR", 0),
+        "Current AR": health.get("Current AR", 0),
         "Overdue AR": health.get("Overdue AR", 0),
+        "Oldest Overdue Days": customer.get("Oldest Overdue Days", 0),
+        "Credit Status": customer.get("Credit Status", ""),
         "Expected Competitors": ", ".join(st.session_state.get("form_expected_competitors", [])),
         "Competitor Type": st.session_state.get("form_competitor_type", ""),
         "Expected Bid Range": st.session_state.get("form_expected_bid_range", ""),
@@ -2409,14 +2479,18 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Tender Mechanism": header.get("Tender Mechanism", ""),
             "Visibility": header.get("Visibility", ""),
             "Customer Risk Flag": header.get("Customer Risk Flag", ""),
+            "Credit Status": header.get("Credit Status", ""),
             "Revenue L12M": header.get("Revenue L12M", 0),
+            "Current AR": header.get("Current AR", 0),
             "Overdue AR": header.get("Overdue AR", 0),
+            "Oldest Overdue Days": header.get("Oldest Overdue Days", 0),
             "Competitor Type": header.get("Competitor Type", ""),
             "Expected Competitors": header.get("Expected Competitors", ""),
             "Reconciliation Type": header.get("Reconciliation Type", "None"),
             "Deal Type": header["Deal Type"],
             "Region": header["Region"],
-            "Segment": header["Segment"],
+            "Customer Type": header.get("Customer Type", header["Segment"]),
+            "Segment": header.get("Customer Type", header["Segment"]),
             "Sales Owner": header["Sales Owner"],
             "Sales Manager": header["Sales Manager"],
             "Status": workflow_status,
@@ -2554,9 +2628,9 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
 def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.DataFrame) -> None:
     region = deal.get("Region", "")
     customer = deal.get("Customer Name", "")
-    segment = deal.get("Segment", "")
+    segment = deal_customer_type(deal)
     account = customer_lookup(data).get(customer, {})
-    channel = account.get("Account Type", "")
+    channel = deal.get("Channel", customer_type(account))
     summary = summarize_lines(lines)
     included_value = str(deal.get("Included_In_Latest_Financial_Plan", "Yes")).strip() or "Yes"
     included_in_plan = included_value.lower() == "yes"
@@ -2866,7 +2940,12 @@ def readable_condition_for_rule(rule: pd.Series) -> str:
     if rule_type == "DISC":
         return f"Discount {rule.get('Discount Trigger', '')}"
     if rule_type == "MARGIN":
-        return f"Margin {rule.get('Value / Margin Trigger', '')}"
+        role = str(rule.get("Required Role", ""))
+        if role == "Finance Director":
+            return "Margin < Product Target - 10%"
+        if role == "General Manager":
+            return "Margin < Product Target - 20%"
+        return "Product Target Margin Trigger"
     if rule_type == "PUBLIC":
         return "Public Price Impact"
     if rule_type == "CREDIT":
@@ -2889,6 +2968,31 @@ def approval_matrix_summary(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def product_margin_thresholds(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    products = data.get("products", pd.DataFrame())
+    if products.empty:
+        return pd.DataFrame()
+    rows = []
+    for _, product in products.iterrows():
+        item = product.to_dict()
+        target = product_target_margin(item)
+        rows.append(
+            {
+                "SKU": item.get("SKU", ""),
+                "Product Name": item.get("Product Name", ""),
+                "Product Category": item.get("Product Category", item.get("Product Type", "")),
+                "List Price": product_list_price(item),
+                "Gross Price": product_gross_price(item),
+                "Base Rebate %": safe_float(item.get("Base Rebate %", 0)),
+                "Standard Cost": safe_float(item.get("Standard Cost", 0)),
+                "Target Margin": target,
+                "FD Trigger Margin": finance_trigger_margin(target),
+                "GM Trigger Margin": gm_trigger_margin(target),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def page_approval_matrix(data: dict[str, pd.DataFrame]) -> None:
     render_header("Approval Matrix", "Human-readable routing rules used by approval workflow.")
     if not can_configure_system():
@@ -2899,6 +3003,13 @@ def page_approval_matrix(data: dict[str, pd.DataFrame]) -> None:
         st.info("No approval routing rules are configured.")
     else:
         st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    st.subheader("Product Margin Trigger Reference")
+    product_thresholds = product_margin_thresholds(data)
+    if product_thresholds.empty:
+        st.info("No product margin targets are configured.")
+    else:
+        st.dataframe(mask_sensitive_dataframe(product_thresholds), use_container_width=True, hide_index=True)
 
     with st.expander("Rule Reference Data", expanded=False):
         rules = approval_rule_rows(data)

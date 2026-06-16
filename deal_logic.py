@@ -80,17 +80,17 @@ def calculate_customer_risk(credit_status: str, total_ar: float, overdue_ar: flo
 
 def demo_customer_health(customer: dict, customer_name: str) -> dict[str, float | str]:
     seed = sum(ord(char) for char in str(customer.get("Customer ID", customer_name)))
-    revenue = 1_400_000 + (seed % 85) * 52_000
+    revenue = safe_float(customer.get("Last 12M Revenue"), 1_400_000 + (seed % 85) * 52_000)
     units = 7_500 + (seed % 60) * 260
-    gross_margin_pct = 0.24 + ((seed % 18) / 100)
+    gross_margin_pct = safe_float(customer.get("Last 12M Gross Margin %"), 0.24 + ((seed % 18) / 100))
     gross_margin = revenue * gross_margin_pct
+    current_ar = safe_float(customer.get("Current AR"), revenue * 0.035)
+    overdue_ar = safe_float(customer.get("Overdue AR"), 0)
     avg_net_price = revenue / units if units else 0
-    total_ar = revenue * (0.035 + ((seed % 8) / 1000))
-    ar_90 = total_ar * ((seed % 7) / 100)
-    ar_60 = total_ar * (0.05 + ((seed % 5) / 100))
-    ar_30 = total_ar * (0.11 + ((seed % 4) / 100))
-    current_ar = max(total_ar - ar_30 - ar_60 - ar_90, 0)
-    overdue_ar = ar_30 + ar_60 + ar_90
+    total_ar = current_ar + overdue_ar
+    ar_90 = overdue_ar if safe_float(customer.get("Oldest Overdue Days")) >= 90 else 0
+    ar_60 = overdue_ar if 60 <= safe_float(customer.get("Oldest Overdue Days")) < 90 else 0
+    ar_30 = overdue_ar if 0 < safe_float(customer.get("Oldest Overdue Days")) < 60 else 0
     risk = calculate_customer_risk(str(customer.get("Credit Status", "Good")), total_ar, overdue_ar)
     return {
         "Revenue last 12 months": revenue,
