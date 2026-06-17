@@ -1384,17 +1384,25 @@ def price_volume_summary(data: dict[str, pd.DataFrame], lines: pd.DataFrame, cus
         subset = history[history["SKU"].astype(str).eq(str(line["SKU"]))]
         if subset.empty:
             continue
-        customer_subset = subset[subset["Customer"].astype(str).eq(customer)]
-        if customer_subset.empty:
-            customer_subset = subset[subset["Channel"].astype(str).eq(channel)]
+        customer_subset = subset[
+            subset.get("Sold-To Customer Name", pd.Series(dtype=str)).astype(str).eq(customer)
+            | subset.get("End Account Name", pd.Series(dtype=str)).astype(str).eq(customer)
+        ]
         if customer_subset.empty:
             customer_subset = subset
+        customer_avg = safe_float(customer_subset.get("Customer Avg Net Price 12M", customer_subset.get("Net Price", pd.Series(dtype=float))).dropna().astype(float).mean())
+        product_avg = safe_float(subset.get("Product Avg Net Price 12M", subset.get("Net Price", pd.Series(dtype=float))).dropna().astype(float).mean())
+        plan_subset = customer_subset[customer_subset.get("Included In Latest Financial Plan", pd.Series(dtype=str)).astype(str).eq("Yes")]
+        planned_net = safe_float(plan_subset.get("Planned Net Price", pd.Series(dtype=float)).dropna().astype(float).mean()) if not plan_subset.empty else None
         rows.append(
             {
                 "SKU": line["SKU"],
-                "Requested Discount": line["Discount %"],
-                "Historical Approved Discount": customer_subset["Approved Discount %"].astype(float).mean(),
-                "Historical Approved Net": customer_subset["Approved Net Price"].astype(float).mean(),
+                "Product": line.get("Product Name", ""),
+                "Requested Net Price": line.get("Requested Net Price", line.get("Proposed Unit Price")),
+                "Customer Avg Net Price 12M": customer_avg,
+                "Product Avg Net Price 12M": product_avg,
+                "Planned Net Price": planned_net,
+                "Included In Latest Financial Plan": "Yes" if planned_net is not None else "No",
                 "Comparable Rows": len(customer_subset),
             }
         )
@@ -1447,37 +1455,77 @@ def tender_competitor_summary(data: dict[str, pd.DataFrame], lines: pd.DataFrame
     return pd.DataFrame(tender_rows), pd.DataFrame(intel_rows)
 
 
-def plan_impact_analysis(data: dict[str, pd.DataFrame], lines: pd.DataFrame, region: str, segment: str) -> pd.DataFrame:
+def historical_plan_match(data: dict[str, pd.DataFrame], line: pd.Series, customer: str = "") -> pd.DataFrame:
+    history = data.get("price_volume", pd.DataFrame())
+    if history.empty or "SKU" not in history:
+        return pd.DataFrame()
+    subset = history[
+        history["SKU"].astype(str).eq(str(line["SKU"]))
+        & history.get("Included In Latest Financial Plan", pd.Series(dtype=str)).astype(str).eq("Yes")
+    ]
+    if customer and not subset.empty:
+        customer_subset = subset[
+            subset.get("Sold-To Customer Name", pd.Series(dtype=str)).astype(str).eq(customer)
+            | subset.get("End Account Name", pd.Series(dtype=str)).astype(str).eq(customer)
+        ]
+        if not customer_subset.empty:
+            subset = customer_subset
+    return subset
+
+
+def weighted_average(values: pd.Series, weights: pd.Series) -> float:
+    value_series = pd.to_numeric(values, errors="coerce").fillna(0)
+    weight_series = pd.to_numeric(weights, errors="coerce").fillna(0)
+    total_weight = safe_float(weight_series.sum())
+    if total_weight <= 0:
+        return safe_float(value_series.mean())
+    return safe_float((value_series * weight_series).sum() / total_weight)
+
+
+def plan_impact_analysis(data: dict[str, pd.DataFrame], lines: pd.DataFrame, region: str, segment: str, customer: str = "") -> pd.DataFrame:
     rows = []
     for _, line in lines.iterrows():
-        match = find_plan_match(data, line, region, segment)
-        if match is None:
+        hist_match = historical_plan_match(data, line, customer)
+        legacy_match = find_plan_match(data, line, region, segment) if hist_match.empty else None
+        if hist_match.empty and legacy_match is None:
             continue
-        planned_price = safe_float(match.get("Planned Net Price"))
-        planned_qty = safe_float(match.get("Plan Units"))
+        if not hist_match.empty:
+            planned_qty = safe_float(hist_match["Planned Volume"].sum())
+            planned_price = weighted_average(hist_match["Planned Net Price"], hist_match["Planned Volume"])
+            customer_avg = safe_float(hist_match.get("Customer Avg Net Price 12M", hist_match.get("Net Price", pd.Series(dtype=float))).dropna().astype(float).mean())
+            product_avg = safe_float(hist_match.get("Product Avg Net Price 12M", hist_match.get("Net Price", pd.Series(dtype=float))).dropna().astype(float).mean())
+        else:
+            planned_price = safe_float(legacy_match.get("Planned Net Price"))
+            planned_qty = safe_float(legacy_match.get("Plan Units"))
+            customer_avg = None
+            product_avg = None
         new_price = safe_float(line.get("Proposed Unit Price"))
         new_qty = safe_float(line.get("Quantity"))
-        standard_cost = safe_float(match.get("Standard Cost"), safe_float(line.get("Unit Cost")))
+        standard_cost = safe_float(line.get("Unit Cost"))
         planned_revenue = planned_price * planned_qty
         proposed_revenue = new_price * new_qty
         planned_gp = calculate_gross_profit(planned_price, standard_cost, planned_qty)
         proposed_gp = calculate_gross_profit(new_price, standard_cost, new_qty)
-        price_variance = calculate_price_variance(new_price, planned_price, new_qty)
+        price_variance = calculate_price_variance(new_price, planned_price, planned_qty)
         volume_variance = calculate_volume_variance(new_qty, planned_qty, new_price)
         revenue_variance = calculate_revenue_variance(price_variance, volume_variance)
         rows.append(
             {
                 "SKU": line["SKU"],
                 "Product": line["Product Name"],
+                "Requested Net Price": new_price,
                 "Planned Price": planned_price,
                 "New Price": new_price,
                 "Planned Net Price": planned_price,
                 "Proposed Net Price": new_price,
+                "Customer Avg Net Price 12M": customer_avg,
+                "Product Avg Net Price 12M": product_avg,
                 "Planned Quantity": planned_qty,
                 "New Quantity": new_qty,
                 "Planned Revenue": planned_revenue,
                 "Proposed Revenue": proposed_revenue,
                 "Price Variance": price_variance,
+                "Price Variance vs Plan": price_variance,
                 "Volume Variance": volume_variance,
                 "Revenue Variance": revenue_variance,
                 "Net Revenue Variance": revenue_variance,
@@ -1500,13 +1548,16 @@ def incremental_opportunity_analysis(data: dict[str, pd.DataFrame], lines: pd.Da
         proposed_qty = safe_float(line.get("Quantity"))
         unit_cost = safe_float(line.get("Unit Cost"))
         hist = history[history["SKU"].astype(str).eq(sku)] if not history.empty else pd.DataFrame()
+        product_avg = 0
         if not hist.empty:
-            customer_hist = hist[hist["Customer"].astype(str).eq(customer)]
-            if customer_hist.empty:
-                customer_hist = hist[hist["Channel"].astype(str).eq(channel)]
+            customer_hist = hist[
+                hist.get("Sold-To Customer Name", pd.Series(dtype=str)).astype(str).eq(customer)
+                | hist.get("End Account Name", pd.Series(dtype=str)).astype(str).eq(customer)
+            ]
             if customer_hist.empty:
                 customer_hist = hist
-            avg_price = safe_float(customer_hist["Approved Net Price"].astype(float).mean())
+            avg_price = safe_float(customer_hist.get("Customer Avg Net Price 12M", customer_hist.get("Net Price", pd.Series(dtype=float))).dropna().astype(float).mean())
+            product_avg = safe_float(hist.get("Product Avg Net Price 12M", hist.get("Net Price", pd.Series(dtype=float))).dropna().astype(float).mean())
         else:
             avg_price = 0
         hist_margin = calculate_margin_pct(avg_price, calculate_gross_profit(avg_price, unit_cost, 1))
@@ -1519,9 +1570,14 @@ def incremental_opportunity_analysis(data: dict[str, pd.DataFrame], lines: pd.Da
                 "Product": line["Product Name"],
                 "Incremental Revenue": incremental_revenue,
                 "Incremental Gross Profit": incremental_gp,
+                "Requested Net Price": proposed_price,
+                "Customer Avg Net Price 12M": avg_price,
+                "Product Avg Net Price 12M": product_avg,
                 "Average Historical Price": avg_price,
                 "Historical Average Net Price": avg_price,
                 "Price vs Historical Price %": None if avg_price <= 0 else (proposed_price - avg_price) / avg_price,
+                "Price vs Customer Avg Net Price 12M %": None if avg_price <= 0 else (proposed_price - avg_price) / avg_price,
+                "Price vs Product Avg Net Price 12M %": None if product_avg <= 0 else (proposed_price - product_avg) / product_avg,
                 "Historical Average Margin %": hist_margin,
                 "Historical Margin %": hist_margin,
                 "Proposed Margin %": proposed_margin,
@@ -1745,7 +1801,7 @@ def build_deal_context(data: dict[str, pd.DataFrame], deal_id: str) -> dict | No
     channel = customer_type(account)
     included_value = str(deal.get("Included In Latest Financial Plan", deal.get("Included_In_Latest_Financial_Plan", "Yes"))).strip() or "Yes"
     included_in_plan = included_value.lower() == "yes"
-    plan_df = plan_impact_analysis(data, calc_lines, region, segment)
+    plan_df = plan_impact_analysis(data, calc_lines, region, segment, customer)
     incremental_df = incremental_opportunity_analysis(data, calc_lines, customer, channel)
     inventory_df = enhanced_inventory_analysis(data, calc_lines, region)
     aging_df = enhanced_aging_analysis(data, calc_lines, region)
@@ -2586,11 +2642,12 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         sensitive_data_note()
         included_value = st.selectbox("Included In Latest Financial Plan", ["Yes", "No"], key="form_included_plan")
         included_in_plan = included_value == "Yes"
-        plan_df = plan_impact_analysis(data, calc_lines, header["Region"], header["Segment"])
+        plan_df = plan_impact_analysis(data, calc_lines, header["Region"], header["Segment"], customer_name)
         incremental_df = incremental_opportunity_analysis(data, calc_lines, customer_name, header["Channel"])
         proposed_revenue = safe_float(summary["total_proposed"])
         proposed_gp = safe_float(((calc_lines["Proposed Unit Price"] - calc_lines["Unit Cost"]) * calc_lines["Quantity"]).sum()) if not calc_lines.empty else 0
         proposed_margin = None if proposed_revenue <= 0 else proposed_gp / proposed_revenue
+        proposed_net = 0 if calc_lines.empty or safe_float(calc_lines["Quantity"].sum()) <= 0 else safe_float((calc_lines["Proposed Unit Price"] * calc_lines["Quantity"]).sum()) / safe_float(calc_lines["Quantity"].sum())
 
         if included_in_plan:
             planned_revenue = safe_float(plan_df["Planned Revenue"].sum()) if not plan_df.empty else 0
@@ -2600,21 +2657,23 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             revenue_variance = price_variance + volume_variance
             gp_variance = proposed_gp - planned_gp
             planned_net = 0 if plan_df.empty or safe_float(plan_df["Planned Quantity"].sum()) <= 0 else safe_float((plan_df["Planned Net Price"] * plan_df["Planned Quantity"]).sum()) / safe_float(plan_df["Planned Quantity"].sum())
-            proposed_net = 0 if calc_lines.empty or safe_float(calc_lines["Quantity"].sum()) <= 0 else safe_float((calc_lines["Proposed Unit Price"] * calc_lines["Quantity"]).sum()) / safe_float(calc_lines["Quantity"].sum())
+            customer_avg_net = safe_float(plan_df["Customer Avg Net Price 12M"].dropna().mean()) if not plan_df.empty and "Customer Avg Net Price 12M" in plan_df else 0
+            product_avg_net = safe_float(plan_df["Product Avg Net Price 12M"].dropna().mean()) if not plan_df.empty and "Product Avg Net Price 12M" in plan_df else 0
             planned_margin = None if planned_revenue <= 0 else planned_gp / planned_revenue
 
-            st.info("Plan logic uses only Price Variance and Volume Variance.")
+            st.info("Included in the latest financial plan: price variance is calculated as (Requested Net Price - Planned Net Price) x Planned Volume.")
             kpis = st.columns(5)
             kpis[0].metric("Planned Revenue", sensitive_money("Planned Revenue", planned_revenue))
             kpis[1].metric("Proposed Revenue", sensitive_money("Proposed Revenue", proposed_revenue), delta=sensitive_money("Revenue Variance", revenue_variance))
             kpis[2].metric("Planned Gross Profit", sensitive_money("Planned Gross Profit", planned_gp))
             kpis[3].metric("Proposed Gross Profit", sensitive_money("Proposed Gross Profit", proposed_gp))
             kpis[4].metric("Gross Profit Variance", sensitive_money("Gross Profit Variance", gp_variance))
-            margin_cols = st.columns(4)
-            margin_cols[0].metric("Planned Net Price", sensitive_money("Planned Net Price", planned_net))
-            margin_cols[1].metric("Proposed Net Price", money(proposed_net))
-            margin_cols[2].metric("Planned Margin %", margin_value_display(planned_margin, summary["weighted_target_margin"]))
-            margin_cols[3].metric("Proposed Margin %", margin_value_display(proposed_margin, summary["weighted_target_margin"]))
+            margin_cols = st.columns(5)
+            margin_cols[0].metric("Requested Net Price", money(proposed_net))
+            margin_cols[1].metric("Customer Avg Net Price 12M", money(customer_avg_net))
+            margin_cols[2].metric("Product Avg Net Price 12M", money(product_avg_net))
+            margin_cols[3].metric("Planned Net Price", sensitive_money("Planned Net Price", planned_net))
+            margin_cols[4].metric("Price Variance vs Plan", sensitive_money("Price Variance", price_variance))
 
             st.markdown("**Revenue variance bridge**")
             bridge_df = pd.DataFrame(
@@ -2634,13 +2693,16 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                     [
                         "SKU",
                         "Product",
+                        "Requested Net Price",
+                        "Customer Avg Net Price 12M",
+                        "Product Avg Net Price 12M",
                         "Planned Net Price",
                         "Proposed Net Price",
                         "Planned Quantity",
                         "New Quantity",
                         "Planned Revenue",
                         "Proposed Revenue",
-                        "Price Variance",
+                        "Price Variance vs Plan",
                         "Volume Variance",
                         "Revenue Variance",
                         "Planned Gross Profit",
@@ -2661,15 +2723,17 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             hist_margin = safe_float(incremental_df["Historical Margin %"].dropna().mean()) if not incremental_df.empty else None
             margin_difference = None if hist_margin is None or proposed_margin is None else proposed_margin - hist_margin
 
-            st.info("Classified as Incremental Opportunity because it is not included in the latest financial plan.")
-            kpis = st.columns(4)
+            st.info("Incremental volume not included in the latest financial plan: no plan price variance is applied.")
+            kpis = st.columns(5)
             kpis[0].metric("Incremental Revenue", money(incremental_revenue))
             kpis[1].metric("Incremental Gross Profit", sensitive_money("Gross Profit", incremental_gp))
             kpis[2].metric("Proposed Margin %", margin_value_display(proposed_margin, summary["weighted_target_margin"]))
-            kpis[3].metric("Historical Average Net Price", money(hist_price))
+            kpis[3].metric("Requested Net Price", money(proposed_net))
+            kpis[4].metric("Customer Avg Net Price 12M", money(hist_price))
             benchmark_cols = st.columns(3)
             benchmark_cols[0].metric("Price Difference vs Historical Average %", pct(price_vs_hist))
-            benchmark_cols[1].metric("Historical Margin %", sensitive_pct("Historical Margin %", hist_margin))
+            product_avg_net = safe_float(incremental_df["Product Avg Net Price 12M"].dropna().mean()) if not incremental_df.empty and "Product Avg Net Price 12M" in incremental_df else 0
+            benchmark_cols[1].metric("Product Avg Net Price 12M", money(product_avg_net))
             benchmark_cols[2].metric("Margin Difference vs Historical Margin %", sensitive_pct("Margin Difference vs Historical Margin %", margin_difference))
 
             st.markdown("**Incremental economics bridge**")
@@ -2686,10 +2750,13 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             display_cols = [
                 "SKU",
                 "Product",
+                "Requested Net Price",
+                "Customer Avg Net Price 12M",
+                "Product Avg Net Price 12M",
                 "Incremental Revenue",
                 "Incremental Gross Profit",
-                "Historical Average Net Price",
-                "Price vs Historical Price %",
+                "Price vs Customer Avg Net Price 12M %",
+                "Price vs Product Avg Net Price 12M %",
                 "Historical Margin %",
                 "Proposed Margin %",
                 "Margin Difference vs Historical Margin %",
@@ -2712,7 +2779,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         st.subheader("Approval Recommendation")
         included_value = st.session_state.get("form_included_plan", "Yes")
         included_in_plan = included_value == "Yes"
-        plan_df = plan_impact_analysis(data, calc_lines, header["Region"], header["Segment"])
+        plan_df = plan_impact_analysis(data, calc_lines, header["Region"], header["Segment"], customer_name)
         incremental_df = incremental_opportunity_analysis(data, calc_lines, customer_name, header["Channel"])
         inventory_df = enhanced_inventory_analysis(data, calc_lines, header["Region"])
         aging_df = enhanced_aging_analysis(data, calc_lines, header["Region"])
@@ -3002,7 +3069,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     summary = summarize_lines(lines)
     included_value = str(deal.get("Included In Latest Financial Plan", deal.get("Included_In_Latest_Financial_Plan", "Yes"))).strip() or "Yes"
     included_in_plan = included_value.lower() == "yes"
-    plan_df = plan_impact_analysis(data, lines, region, segment)
+    plan_df = plan_impact_analysis(data, lines, region, segment, customer)
     incremental_df = incremental_opportunity_analysis(data, lines, customer, channel)
     inventory_df = enhanced_inventory_analysis(data, lines, region)
     aging_df = enhanced_aging_analysis(data, lines, region)
