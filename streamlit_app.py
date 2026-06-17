@@ -442,6 +442,39 @@ def margin_value_display(value: object, target: object | None = None, role: str 
     return sensitive_pct("Gross Margin %", value, role_name)
 
 
+def customer_margin_display(customer: dict, role: str | None = None) -> str:
+    role_name = role or current_role()
+    margin = safe_float(customer.get("Last 12M Gross Margin %"))
+    if margin_visibility_for_role(role_name) == "Exact" or has_full_visibility(role_name):
+        return pct(margin)
+    return "Above target" if margin >= 0.35 else "Below target"
+
+
+def render_credit_warning_banner(customer: dict) -> None:
+    credit_status = str(customer.get("Credit Status", ""))
+    overdue_ar = safe_float(customer.get("Overdue AR"))
+    if credit_status == "Hold":
+        st.error("Credit status is Hold. Finance Director approval is mandatory before final approval.")
+    elif overdue_ar > 0:
+        st.warning(f"Overdue receivables are {money(overdue_ar)}. Finance Director approval is mandatory.")
+
+
+def render_customer_information_panel(customer: dict) -> None:
+    st.subheader("Customer Information")
+    render_credit_warning_banner(customer)
+    row1 = st.columns(3)
+    row1[0].metric("Customer Type", customer_type(customer))
+    row1[1].metric("Strategic Account", str(customer.get("Strategic Account", "")))
+    row1[2].metric("Credit Status", str(customer.get("Credit Status", "")))
+    row2 = st.columns(3)
+    row2[0].metric("Current AR", money(customer.get("Current AR")))
+    row2[1].metric("Overdue AR", money(customer.get("Overdue AR")))
+    row2[2].metric("Oldest Overdue Days", f"{safe_float(customer.get('Oldest Overdue Days')):,.0f}")
+    row3 = st.columns(2)
+    row3[0].metric("Last 12M Revenue", money(customer.get("Last 12M Revenue")))
+    row3[1].metric("Last 12M Gross Margin %", customer_margin_display(customer))
+
+
 def is_sensitive_field(field_name: object) -> bool:
     name = str(field_name)
     return any(pattern.lower() in name.lower() for pattern in SENSITIVE_FIELD_PATTERNS)
@@ -1018,6 +1051,8 @@ def next_approval_status(deal_id: str, current_role: str, route_df: pd.DataFrame
     for role in roles:
         if role not in completed:
             return APPROVAL_STEP_STATUS[role]
+    if "Finance Director" in roles and "Finance Director" not in completed:
+        return APPROVAL_STEP_STATUS["Finance Director"]
     return "Final Approved"
 
 
@@ -1607,6 +1642,7 @@ def build_deal_context(data: dict[str, pd.DataFrame], deal_id: str) -> dict | No
     route_triggers = route_with_trigger_reasons(route_df, inventory_df, competitor_df, gp_impact)
     return {
         "deal": deal,
+        "customer": account,
         "lines": calc_lines,
         "summary": summary,
         "included_value": included_value,
@@ -1692,6 +1728,7 @@ def approval_review_summary(context: dict) -> dict:
 def render_approval_review_panel(context: dict) -> None:
     deal = context["deal"]
     summary = context["summary"]
+    customer = context.get("customer", {})
     review = approval_review_summary(context)
 
     st.subheader("Selected Deal Review")
@@ -1704,6 +1741,8 @@ def render_approval_review_panel(context: dict) -> None:
 
     st.write(f"Customer: **{deal.get('Customer Name', '')}**")
     st.write(f"Deal title: **{deal.get('Deal Title', '')}**")
+    if customer:
+        render_customer_information_panel(customer)
 
     decision_cols = st.columns(2)
     decision_cols[0].metric("Decision Score", f"{context['total_score']}/100")
@@ -2543,6 +2582,9 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     c3.metric("Discount", pct(summary["discount_pct"]))
     c4.metric("Est. Margin", margin_display(summary))
     st.markdown(status_badge(deal_status), unsafe_allow_html=True)
+    customer_record = customer_lookup(data).get(deal.get("Customer Name", ""), {})
+    if customer_record:
+        render_customer_information_panel(customer_record)
 
     confirmation = st.session_state.get("deal_detail_confirmation", "")
     if confirmation:
