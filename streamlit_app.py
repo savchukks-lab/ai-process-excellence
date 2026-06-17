@@ -86,6 +86,22 @@ ACTIVE_APPROVAL_STATUSES = {
 
 DECISIONS = ["Approve", "Request Changes", "Escalate", "Reject"]
 
+KAM_RISK_LEVELS = ["Low", "Medium", "High", "Critical"]
+
+RISK_REASON_VALUES = [
+    "Competitor price pressure",
+    "Public tender",
+    "Incumbent defense",
+    "Customer consolidation",
+    "New account acquisition",
+    "Budget constraints",
+    "Volume commitment requirement",
+    "Inventory / expiry mitigation",
+]
+
+RISK_LEVEL_SCORE = {"Low": 1, "Medium": 3, "High": 5, "Critical": 7}
+LARGE_DEAL_VALUE_THRESHOLD = 1_000_000
+
 ROLE_ALLOWED_DECISIONS = {
     "KAM North": [],
     "KAM South": [],
@@ -251,7 +267,7 @@ def read_sheet(filename: str, sheet_name: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_demo_data() -> dict[str, pd.DataFrame]:
-    return {
+    data = {
         "customers": read_sheet("Customer_Master.xlsx", "Customers"),
         "opportunities": read_sheet("Customer_Master.xlsx", "Opportunities"),
         "products": read_sheet("Product_Master.xlsx", "Products"),
@@ -270,6 +286,9 @@ def load_demo_data() -> dict[str, pd.DataFrame]:
         "tender_history": read_sheet("Tender_History.xlsx", "Tender History"),
         "competitor_intel": read_sheet("Competitor_Intelligence.xlsx", "Competitor Intelligence"),
     }
+    data["deal_summary_source"] = data["deal_summary"]
+    data["deal_summary"] = calculated_deal_summary(data)
+    return data
 
 
 def init_state() -> None:
@@ -661,7 +680,7 @@ def compact_route(rows: list[dict]) -> pd.DataFrame:
 
 
 def build_route_header(deal: dict, data: dict[str, pd.DataFrame]) -> dict:
-    customer_name = deal.get("Customer Name")
+    customer_name = deal.get("Sold-To Customer Name", deal.get("Customer Name"))
     account = customer_lookup(data).get(customer_name, {})
     health = demo_customer_health(account, str(customer_name)) if account else {}
     return {
@@ -887,6 +906,7 @@ def demo_commercial_price_defaults(data: dict[str, pd.DataFrame], sku: str) -> d
     gross_price = product_gross_price(prod)
     return {
         "Unit List Price": round(list_price, 2),
+        "Unit Gross Price": round(gross_price, 2),
         "Gross Price": round(gross_price, 2),
         "Floor Price": round(list_price * 0.72, 2),
         "Guidance Price": round(list_price * 0.84, 2),
@@ -898,6 +918,8 @@ def ensure_commercial_line_columns(lines: pd.DataFrame, data: dict[str, pd.DataF
     enriched = lines.copy()
     if enriched.empty or "SKU" not in enriched:
         return enriched
+    if "Line Commercial Rationale" not in enriched.columns:
+        enriched["Line Commercial Rationale"] = enriched["Notes"] if "Notes" in enriched.columns else ""
     for idx, row in enriched.iterrows():
         defaults = demo_commercial_price_defaults(data, row.get("SKU", ""))
         for col, value in defaults.items():
@@ -906,14 +928,21 @@ def ensure_commercial_line_columns(lines: pd.DataFrame, data: dict[str, pd.DataF
             enriched.at[idx, col] = value
         if "Requested Net Price" not in enriched.columns:
             enriched["Requested Net Price"] = None
+        gross_price = safe_float(defaults["Unit Gross Price"])
+        requested_discount = row.get("Requested Discount %", row.get("Discount %", None))
+        requested_discount = safe_float(requested_discount) if requested_discount is not None and not pd.isna(requested_discount) else None
+        if requested_discount is not None and abs(requested_discount) > 1:
+            requested_discount = requested_discount / 100
         requested = row.get("Requested Net Price", row.get("Proposed Unit Price", None))
         if pd.isna(requested) or requested == "":
-            requested = float(defaults["Unit List Price"]) * 0.9
+            requested = gross_price * (1 - (requested_discount if requested_discount is not None else 0.10))
         enriched.at[idx, "Requested Net Price"] = round(float(requested), 2)
         enriched.at[idx, "Proposed Unit Price"] = round(float(requested), 2)
-        list_price = float(enriched.at[idx, "Unit List Price"] or 0)
-        discount = 0 if list_price == 0 else (list_price - float(requested)) / list_price
-        enriched.at[idx, "Requested Discount %"] = discount * 100
+        discount = 0 if gross_price == 0 else (gross_price - float(requested)) / gross_price
+        enriched.at[idx, "Requested Discount %"] = discount
+        quantity = safe_float(row.get("Quantity", 0))
+        enriched.at[idx, "Gross Revenue"] = round(quantity * gross_price, 2)
+        enriched.at[idx, "Proposed Net Revenue"] = round(quantity * float(requested), 2)
     return enriched
 
 
@@ -930,6 +959,7 @@ def combined_deals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     runtime = get_runtime_deals_df()
     if not runtime.empty:
         seed = pd.concat([seed, runtime], ignore_index=True, sort=False)
+    seed = normalize_deal_headers(seed)
     overrides = st.session_state.get("deal_status_overrides", {})
     if overrides and not seed.empty:
         for deal_id, values in overrides.items():
@@ -937,6 +967,31 @@ def combined_deals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
             for key, value in values.items():
                 seed.loc[mask, key] = value
     return seed
+
+
+def normalize_deal_headers(deals: pd.DataFrame) -> pd.DataFrame:
+    if deals.empty:
+        return deals
+    normalized = deals.copy()
+    alias_pairs = {
+        "Customer ID": "Sold-To Customer ID",
+        "Customer Name": "Sold-To Customer Name",
+        "Target Close Date": "Expected Award / Decision Date",
+        "Requested Effective Date": "Requested Delivery Start",
+        "Intake Risk": "KAM Risk Assessment",
+        "Included_In_Latest_Financial_Plan": "Included In Latest Financial Plan",
+        "Segment": "Customer Type",
+    }
+    for legacy, canonical in alias_pairs.items():
+        if legacy not in normalized and canonical in normalized:
+            normalized[legacy] = normalized[canonical]
+        if canonical not in normalized and legacy in normalized:
+            normalized[canonical] = normalized[legacy]
+    if "End Account ID" not in normalized and "Sold-To Customer ID" in normalized:
+        normalized["End Account ID"] = normalized["Sold-To Customer ID"]
+    if "End Account Name" not in normalized and "Sold-To Customer Name" in normalized:
+        normalized["End Account Name"] = normalized["Sold-To Customer Name"]
+    return normalized
 
 
 def combined_lines(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -1119,6 +1174,44 @@ def product_gross_price(product: dict) -> float:
     return safe_float(product.get("Gross Price", list_price * (1 - base_rebate)), list_price)
 
 
+def commercial_product_name(sku: str, fallback: str = "") -> str:
+    skus = [
+        "RX-ONC-100",
+        "RX-ONC-500",
+        "BIO-RA-200",
+        "RX-CARD-50",
+        "RX-RARE-10",
+        "DX-COMP-01",
+        "RX-HOSP-20",
+        "BIO-DERM-80",
+        "RX-ONC-ORAL",
+        "RX-RARE-INF",
+        "DX-GENE-02",
+        "SVC-PAT-01",
+        "SVC-START",
+        "REB-FORM",
+    ]
+    names = [
+        "Alpha",
+        "Beta",
+        "Gamma",
+        "Delta",
+        "Epsilon",
+        "Zeta",
+        "Eta",
+        "Theta",
+        "Iota",
+        "Kappa",
+        "Lambda",
+        "Mu",
+        "Nu",
+        "Xi",
+    ]
+    if sku in skus:
+        return f"Product {names[skus.index(sku)]}"
+    return fallback or sku
+
+
 def finance_trigger_margin(target_margin: float) -> float:
     return max(0, safe_float(target_margin) - 0.10)
 
@@ -1151,28 +1244,36 @@ def normalize_lines(line_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.
         prod = products[sku]
         qty = float(row.get("Quantity", 0) or 0)
         list_price = float(row.get("Unit List Price", product_list_price(prod)) or 0)
-        gross_price = float(row.get("Gross Price", product_gross_price(prod)) or 0)
+        gross_price = float(row.get("Unit Gross Price", row.get("Gross Price", product_gross_price(prod))) or 0)
+        requested_discount = row.get("Requested Discount %", row.get("Discount %", None))
+        requested_discount = safe_float(requested_discount) if requested_discount is not None and not pd.isna(requested_discount) else None
+        if requested_discount is not None and abs(requested_discount) > 1:
+            requested_discount = requested_discount / 100
         proposed = float(row.get("Requested Net Price", row.get("Proposed Unit Price", 0)) or 0)
+        if requested_discount is not None and gross_price:
+            proposed = gross_price * (1 - requested_discount)
         floor_price = float(row.get("Floor Price", list_price * 0.72) or 0)
         guidance_price = float(row.get("Guidance Price", list_price * 0.84) or 0)
         walkaway_price = float(row.get("Walk-away Price", list_price * 0.68) or 0)
         unit_cost = float(row.get("Unit Cost", prod.get("Standard Cost", 0)) or 0)
         extended_list = qty * list_price
-        extended_gross = qty * gross_price
-        extended_proposed = qty * proposed
-        discount = 0 if list_price == 0 else (list_price - proposed) / list_price
+        extended_gross = safe_float(row.get("Gross Revenue"), qty * gross_price)
+        extended_proposed = safe_float(row.get("Proposed Net Revenue"), qty * proposed)
+        discount = 0 if gross_price == 0 else (gross_price - proposed) / gross_price
         margin = calculate_margin_pct(extended_proposed, calculate_gross_profit(proposed, unit_cost, qty))
         rows.append(
             {
+                "Deal ID": row.get("Deal ID", ""),
+                "Line #": row.get("Line #", ""),
                 "SKU": sku,
-                "Product Name": prod.get("Product Name", row.get("Product Name", "")),
+                "Product Name": row.get("Product Name", commercial_product_name(sku, prod.get("Product Name", ""))) or commercial_product_name(sku, prod.get("Product Name", "")),
                 "Product Category": prod.get("Product Category", prod.get("Product Type", "")),
-                "Therapeutic Area": prod.get("Therapeutic Area", ""),
                 "Product Type": prod.get("Product Type", prod.get("Product Category", "")),
                 "Quantity": qty,
                 "Unit List Price": list_price,
                 "List Price": list_price,
                 "Gross Price": gross_price,
+                "Unit Gross Price": gross_price,
                 "Unit Cost": unit_cost,
                 "Proposed Unit Price": proposed,
                 "Requested Net Price": proposed,
@@ -1182,6 +1283,8 @@ def normalize_lines(line_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.
                 "Extended List": extended_list,
                 "Extended Gross": extended_gross,
                 "Extended Proposed": extended_proposed,
+                "Gross Revenue": extended_gross,
+                "Proposed Net Revenue": extended_proposed,
                 "Extended Requested Net": extended_proposed,
                 "Discount %": discount,
                 "Requested Discount %": discount,
@@ -1193,13 +1296,35 @@ def normalize_lines(line_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.
                 "Finance Director Trigger Margin": finance_trigger_margin(product_target_margin(prod)),
                 "General Manager Trigger Margin": gm_trigger_margin(product_target_margin(prod)),
                 "Requested Delivery Date": row.get("Requested Delivery Date", None),
-                "Storage": prod.get("Storage", ""),
-                "Supply Risk": prod.get("Supply Risk", ""),
                 "Inventory Tracked": prod.get("Inventory Tracked", ""),
-                "Notes": row.get("Notes", ""),
+                "Line Commercial Rationale": row.get("Line Commercial Rationale", row.get("Notes", "")),
+                "Notes": row.get("Line Commercial Rationale", row.get("Notes", "")),
             }
         )
     return pd.DataFrame(rows)
+
+
+def commercial_line_items_view(lines: pd.DataFrame) -> pd.DataFrame:
+    cols = [
+        "Deal ID",
+        "Line #",
+        "SKU",
+        "Product Name",
+        "Quantity",
+        "Unit List Price",
+        "Unit Gross Price",
+        "Base Rebate %",
+        "Requested Discount %",
+        "Requested Net Price",
+        "Unit Cost",
+        "Gross Revenue",
+        "Proposed Net Revenue",
+        "Requested Delivery Date",
+        "Line Commercial Rationale",
+    ]
+    available = [col for col in cols if col in lines.columns]
+    view = lines[available].copy() if available else lines.copy()
+    return mask_sensitive_dataframe(view)
 
 
 def find_inventory(data: dict[str, pd.DataFrame], sku: str, region: str) -> pd.Series | None:
@@ -1613,12 +1738,12 @@ def build_deal_context(data: dict[str, pd.DataFrame], deal_id: str) -> dict | No
     lines = combined_lines(data)
     calc_lines = normalize_lines(lines[lines["Deal ID"].astype(str).eq(str(deal_id))], data)
     summary = summarize_lines(calc_lines)
-    customer = deal.get("Customer Name", "")
+    customer = deal.get("Sold-To Customer Name", deal.get("Customer Name", ""))
     region = deal.get("Region", "")
     segment = deal_customer_type(deal)
     account = customer_lookup(data).get(customer, {})
     channel = customer_type(account)
-    included_value = str(deal.get("Included_In_Latest_Financial_Plan", "Yes")).strip() or "Yes"
+    included_value = str(deal.get("Included In Latest Financial Plan", deal.get("Included_In_Latest_Financial_Plan", "Yes"))).strip() or "Yes"
     included_in_plan = included_value.lower() == "yes"
     plan_df = plan_impact_analysis(data, calc_lines, region, segment)
     incremental_df = incremental_opportunity_analysis(data, calc_lines, customer, channel)
@@ -1855,6 +1980,141 @@ def route_preview(header: dict, lines: pd.DataFrame, summary: dict, data: dict[s
     return enrich_route_with_approvers(compact_route(rows), data)
 
 
+def approval_route_text(route_df: pd.DataFrame, data: dict[str, pd.DataFrame] | None = None) -> str:
+    if route_df.empty or "Role" not in route_df:
+        return ""
+    roles = [str(role) for role in route_df.sort_values("Sequence")["Role"].tolist()]
+    if data is not None:
+        roles = [role_display_label(data, role) for role in roles]
+    return " \u2192 ".join(dict.fromkeys(roles))
+
+
+def customer_record_for_deal(deal: dict, data: dict[str, pd.DataFrame]) -> dict:
+    customers = customer_lookup(data)
+    for key in ["Sold-To Customer Name", "Customer Name", "End Account Name"]:
+        name = str(deal.get(key, "")).strip()
+        if name and name in customers:
+            return customers[name]
+    return {}
+
+
+def system_risk_score(deal: dict, summary: dict, data: dict[str, pd.DataFrame], lines: pd.DataFrame | None = None) -> int:
+    risk_reason = str(deal.get("Risk Reason", ""))
+    deal_type = str(deal.get("Deal Type", ""))
+    visibility = str(deal.get("Visibility", ""))
+    score = 0
+    if risk_reason == "Public tender" or deal_type == "Tender":
+        score += 2
+    if risk_reason == "Competitor price pressure":
+        score += 2
+    customer = customer_record_for_deal(deal, data)
+    if str(customer.get("Strategic Account", deal.get("Strategic Account", ""))).strip().lower() in {"yes", "true", "1"}:
+        score += 1
+    if safe_float(summary.get("total_proposed")) >= LARGE_DEAL_VALUE_THRESHOLD:
+        score += 1
+    if visibility == "Public" or risk_reason == "Public tender":
+        score += 2
+    overdue_ar = safe_float(deal.get("Overdue AR", customer.get("Overdue AR", 0)))
+    credit_status = str(deal.get("Credit Status", customer.get("Credit Status", "")))
+    if credit_status == "Hold" or overdue_ar > 0:
+        score += 2
+    if lines is not None and not lines.empty:
+        inventory_df = enhanced_inventory_analysis(data, lines, str(deal.get("Region", "")))
+        if not inventory_df.empty and safe_float(inventory_df["Inventory Shortage"].sum()) > 0:
+            score += 1
+    return score
+
+
+def system_risk_level(score: int) -> str:
+    if score >= 6:
+        return "Critical"
+    if score >= 4:
+        return "High"
+    if score >= 2:
+        return "Medium"
+    return "Low"
+
+
+def kam_risk_exceeds_system_score(kam_risk: object, system_score: int) -> bool:
+    kam_level = str(kam_risk or "Low")
+    return RISK_LEVEL_SCORE.get(kam_level, 0) > RISK_LEVEL_SCORE.get(system_risk_level(system_score), 0)
+
+
+def business_recommendation(summary: dict, lines: pd.DataFrame, route_df: pd.DataFrame, deal: dict, system_score: int) -> str:
+    roles = set(route_df.get("Role", pd.Series(dtype=str)).astype(str)) if not route_df.empty else set()
+    if not lines.empty and "Floor Price" in lines and (lines["Requested Net Price"] < lines["Floor Price"]).any():
+        return "Reject - Below Margin Floor"
+    if kam_risk_exceeds_system_score(deal.get("KAM Risk Assessment"), system_score):
+        return "Request Revision"
+    if "General Manager" in roles:
+        return "Escalate to General Manager"
+    if roles.intersection({"Pricing Governance Owner", "Market Access Director"}):
+        return "Approve with Pricing Governance Review"
+    if "Finance Director" in roles:
+        return "Approve with Finance Review"
+    return "Approve"
+
+
+def calculated_deal_summary(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    deals = normalize_deal_headers(data.get("deals", pd.DataFrame()))
+    line_items = data.get("line_items", pd.DataFrame())
+    rows = []
+    for _, deal_row in deals.iterrows():
+        deal = deal_row.to_dict()
+        deal_id = str(deal.get("Deal ID", ""))
+        calc_lines = normalize_lines(line_items[line_items["Deal ID"].astype(str).eq(deal_id)], data) if not line_items.empty else pd.DataFrame()
+        summary = summarize_lines(calc_lines)
+        route_df = route_preview(build_route_header(deal, data), calc_lines, summary, data)
+        system_score = system_risk_score(deal, summary, data, calc_lines)
+        gross_profit = summary["total_proposed"] - safe_float((calc_lines["Quantity"] * calc_lines["Unit Cost"]).sum()) if not calc_lines.empty else 0
+        rows.append(
+            {
+                "Deal ID": deal_id,
+                "Deal Title": deal.get("Deal Title", ""),
+                "Sold-To Customer": deal.get("Sold-To Customer Name", deal.get("Customer Name", "")),
+                "End Account": deal.get("End Account Name", deal.get("Customer Name", "")),
+                "Gross Revenue": summary["total_gross"],
+                "Proposed Net Revenue": summary["total_proposed"],
+                "Discount Amount": summary["discount_amount"],
+                "Discount %": summary["discount_pct"],
+                "Gross Profit": gross_profit,
+                "Gross Margin %": summary["margin_pct"],
+                "KAM Risk Assessment": deal.get("KAM Risk Assessment", deal.get("Intake Risk", "")),
+                "Risk Reason": deal.get("Risk Reason", ""),
+                "System Risk Score": system_score,
+                "Approval Route": approval_route_text(route_df),
+                "Business Recommendation": business_recommendation(summary, calc_lines, route_df, deal, system_score),
+                "Status": deal.get("Status", ""),
+                "Included In Latest Financial Plan": deal.get("Included In Latest Financial Plan", deal.get("Included_In_Latest_Financial_Plan", "")),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def executive_summary_record(deal: dict, lines: pd.DataFrame, summary: dict, route_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> dict:
+    system_score = system_risk_score(deal, summary, data, lines)
+    gross_profit = summary["total_proposed"] - safe_float((lines["Quantity"] * lines["Unit Cost"]).sum()) if not lines.empty else 0
+    return {
+        "Deal ID": deal.get("Deal ID", ""),
+        "Deal Title": deal.get("Deal Title", ""),
+        "Sold-To Customer": deal.get("Sold-To Customer Name", deal.get("Customer Name", "")),
+        "End Account": deal.get("End Account Name", deal.get("Customer Name", "")),
+        "Gross Revenue": summary["total_gross"],
+        "Proposed Net Revenue": summary["total_proposed"],
+        "Discount Amount": summary["discount_amount"],
+        "Discount %": summary["discount_pct"],
+        "Gross Profit": gross_profit,
+        "Gross Margin %": summary["margin_pct"],
+        "KAM Risk Assessment": deal.get("KAM Risk Assessment", deal.get("Intake Risk", "")),
+        "Risk Reason": deal.get("Risk Reason", ""),
+        "System Risk Score": system_score,
+        "Approval Route": approval_route_text(route_df),
+        "Business Recommendation": business_recommendation(summary, lines, route_df, deal, system_score),
+        "Status": deal.get("Status", ""),
+        "Included In Latest Financial Plan": deal.get("Included In Latest Financial Plan", deal.get("Included_In_Latest_Financial_Plan", "")),
+    }
+
+
 def breadcrumb_for_current_page() -> str:
     page = st.session_state.get("current_page", "Deal Request List")
     if page == "Deal Request List":
@@ -1893,7 +2153,7 @@ def render_header(title: str, subtitle: str = "") -> None:
 
 
 def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
-    render_header("Deal Requests", "Seeded and session-created commercial deal requests.")
+    render_header("Deal Requests", "Deal header and commercial context for submitted requests.")
     deals = visible_deals_for_current_role(combined_deals(data), data)
     sensitive_data_note()
     if deals.empty:
@@ -1905,7 +2165,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     c2.metric("Draft", int((deals["Status"] == "Draft").sum()) if "Status" in deals else 0)
     c3.metric("Submitted", int((deals["Status"] == "Submitted").sum()) if "Status" in deals else 0)
     c4.metric("Changes Requested", int((deals["Status"] == "Changes Requested").sum()) if "Status" in deals else 0)
-    c5.metric("High Risk", int((deals.get("Intake Risk", pd.Series(dtype=str)) == "High").sum()))
+    c5.metric("High Risk", int((deals.get("KAM Risk Assessment", deals.get("Intake Risk", pd.Series(dtype=str))) == "High").sum()))
 
     filters = st.columns([1, 1, 1, 1, 1])
     status = filters[0].multiselect("Status", sorted(deals["Status"].dropna().unique()), default=[])
@@ -1913,11 +2173,12 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     customer_type_col = "Customer Type" if "Customer Type" in deals else "Segment"
     segment = filters[2].multiselect("Customer Type", sorted(deals[customer_type_col].dropna().unique()), default=[])
     owner = filters[3].multiselect("Sales Owner", sorted(deals["Sales Owner"].dropna().unique()), default=[])
-    risk_options = sorted(deals.get("Intake Risk", pd.Series(dtype=str)).dropna().unique())
+    risk_col = "KAM Risk Assessment" if "KAM Risk Assessment" in deals else "Intake Risk"
+    risk_options = sorted(deals.get(risk_col, pd.Series(dtype=str)).dropna().unique())
     risk = filters[4].multiselect("Risk", risk_options, default=[])
 
     filtered = deals.copy()
-    for col, selected in [("Status", status), ("Region", region), (customer_type_col, segment), ("Sales Owner", owner), ("Intake Risk", risk)]:
+    for col, selected in [("Status", status), ("Region", region), (customer_type_col, segment), ("Sales Owner", owner), (risk_col, risk)]:
         if selected and col in filtered:
             filtered = filtered[filtered[col].isin(selected)]
 
@@ -1927,7 +2188,33 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         st.info("No deals match the current filters.")
         return
 
-    display_cols = [col for col in ["Deal ID", "Deal Title", "Customer Name", "Deal Type", "Region", customer_type_col, "Status", "Target Close Date", "Payment Terms", "Intake Risk", "Expected Route"] if col in filtered]
+    display_cols = [
+        col
+        for col in [
+            "Deal ID",
+            "Deal Title",
+            "Sold-To Customer ID",
+            "Sold-To Customer Name",
+            "End Account ID",
+            "End Account Name",
+            "Deal Type",
+            "Customer Type",
+            "Region",
+            "Sales Owner",
+            "Sales Manager",
+            "Status",
+            "Expected Award / Decision Date",
+            "Requested Delivery Start",
+            "Requested Delivery End",
+            "Payment Terms",
+            "KAM Risk Assessment",
+            "Risk Reason",
+            "Channel",
+            "Included In Latest Financial Plan",
+            "Expected Route",
+        ]
+        if col in filtered
+    ]
     display_df = mask_sensitive_dataframe(filtered[display_cols].reset_index(drop=True))
     table_event = st.dataframe(
         display_df,
@@ -1961,27 +2248,31 @@ def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) ->
     prod = products.iloc[0] if not sku else products[products["SKU"].eq(sku)].iloc[0]
     prod_dict = prod.to_dict()
     list_price = product_list_price(prod_dict)
-    target = list_price * 0.9
+    gross_price = product_gross_price(prod_dict)
+    target = gross_price * 0.9
     return {
         "SKU": prod["SKU"],
+        "Product Name": commercial_product_name(str(prod["SKU"]), str(prod.get("Product Name", ""))),
         "Quantity": 1,
         "Unit List Price": round(list_price, 2),
-        "Gross Price": round(product_gross_price(prod_dict), 2),
+        "Unit Gross Price": round(gross_price, 2),
+        "Gross Price": round(gross_price, 2),
         "Requested Net Price": round(target, 2),
-        "Requested Discount %": 10.0,
+        "Requested Discount %": 0.10,
         "Floor Price": round(list_price * 0.72, 2),
         "Guidance Price": round(list_price * 0.84, 2),
         "Walk-away Price": round(list_price * 0.68, 2),
         "Proposed Unit Price": round(target, 2),
         "Requested Delivery Date": date.today() + timedelta(days=int(prod.get("Lead Time Days", 14) or 14)),
-        "Notes": "",
+        "Gross Revenue": round(gross_price, 2),
+        "Proposed Net Revenue": round(target, 2),
+        "Line Commercial Rationale": "",
     }
 
 
 def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
-    render_header("New Deal Intake", "Create a draft or submit a pharmaceutical commercial deal request.")
+    render_header("New Deal Intake", "Create a draft or submit a commercial deal request.")
     customers = data["customers"]
-    opportunities = data["opportunities"]
     products = data["products"]
     if customers.empty or products.empty:
         st.error("Customer and product reference data are required.")
@@ -1996,17 +2287,14 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         st.subheader("Deal Context")
         customer_name = st.selectbox("Customer", customers["Customer Name"].tolist(), key="form_customer")
         customer = customers[customers["Customer Name"].eq(customer_name)].iloc[0].to_dict()
-        opps = opportunities[opportunities["Customer ID"].eq(customer["Customer ID"])]
-        opp_options = [""] + opps["Opportunity Name"].tolist()
-        opportunity_name = st.selectbox("Opportunity", opp_options, key="form_opportunity")
         account_cols = st.columns(3)
-        ship_to_account = account_cols[0].text_input("Ship-to account", value=str(customer.get("Customer Name", customer_name)), key="form_ship_to")
-        bill_to_account = account_cols[1].text_input("Bill-to account", value=str(customer.get("Customer Name", customer_name)), key="form_bill_to")
+        ship_to_account = account_cols[0].text_input("End Account Name", value=str(customer.get("Customer Name", customer_name)), key="form_ship_to")
+        bill_to_account = account_cols[1].text_input("Sold-To Customer Name", value=str(customer.get("Customer Name", customer_name)), key="form_bill_to")
         country = account_cols[2].text_input("Country", value=str(customer.get("Country", "United States")), key="form_country")
         deal_cols = st.columns(2)
         deal_title = deal_cols[0].text_input("Deal Title", value=f"{customer_name} Commercial Deal", key="form_title")
-        deal_type = deal_cols[0].selectbox("Deal Type", ["New Sale", "Renewal", "Expansion", "Competitive replacement", "Strategic exception"], key="form_type")
-        region = deal_cols[1].selectbox("Region", sorted(data["commercial_plan"]["Region"].dropna().unique()), index=0, key="form_region")
+        deal_type = deal_cols[0].selectbox("Deal Type", ["Tender", "Contract Renewal", "Competitive Defense", "New Account / Launch", "Inventory / Expiry Mitigation"], key="form_type")
+        region = deal_cols[1].selectbox("Region", ["Region A", "Region B", "Region C"], index=0, key="form_region")
         currency = deal_cols[1].selectbox("Currency", ["USD", "EUR"], key="form_currency")
         purpose = st.selectbox(
             "Purpose",
@@ -2040,8 +2328,9 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         default_owner = current_persona() if current_persona() in kam_users else kam_users[0]
         sales_owner = owner_cols[0].selectbox("Sales Owner", kam_users, index=kam_users.index(default_owner), key="form_owner")
         sales_manager = owner_cols[1].selectbox("Sales Manager", list(SALES_MANAGER_TEAMS.keys()), key="form_manager")
-        target_close = owner_cols[2].date_input("Target Close Date", value=date.today() + timedelta(days=45), key="form_close")
-        effective_date = owner_cols[3].date_input("Requested Effective Date", value=date.today() + timedelta(days=60), key="form_effective")
+        target_close = owner_cols[2].date_input("Expected Award / Decision Date", value=date.today() + timedelta(days=45), key="form_close")
+        effective_date = owner_cols[3].date_input("Requested Delivery Start", value=date.today() + timedelta(days=60), key="form_effective")
+        requested_delivery_end = st.date_input("Requested Delivery End", value=date.today() + timedelta(days=120), key="form_delivery_end")
         st.divider()
         cols = st.columns(4)
         cols[0].metric("Customer Type", customer_type(customer))
@@ -2078,21 +2367,21 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             access_description = st.session_state.get("form_access_description", "")
         st.divider()
         st.subheader("Products, Volume, and Requested Pricing")
-        st.caption("Edit SKU, quantity, proposed price, delivery date, and notes. Product metadata and calculations appear below.")
+        st.caption("Edit SKU, quantity, requested net price, delivery date, and line rationale. Product metadata and calculations appear below.")
         st.session_state.draft_lines = ensure_commercial_line_columns(st.session_state.draft_lines, data)
         editor_config = {
             "SKU": st.column_config.SelectboxColumn("SKU", options=products["SKU"].tolist(), required=True),
             "Quantity": st.column_config.NumberColumn("Quantity", min_value=1, step=1),
             "Requested Net Price": st.column_config.NumberColumn("Requested Net Price", min_value=-1_000_000.0, step=1.0, format="$%.2f"),
             "Requested Delivery Date": st.column_config.DateColumn("Requested Delivery Date"),
-            "Notes": st.column_config.TextColumn("Notes"),
+            "Line Commercial Rationale": st.column_config.TextColumn("Line Commercial Rationale"),
         }
         editable_line_cols = [
             "SKU",
             "Quantity",
             "Requested Net Price",
             "Requested Delivery Date",
-            "Notes",
+            "Line Commercial Rationale",
         ]
         st.session_state.draft_lines = st.data_editor(
             st.session_state.draft_lines[[col for col in editable_line_cols if col in st.session_state.draft_lines]],
@@ -2117,18 +2406,20 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 "Product Name",
                 "Product Category",
                 "Quantity",
-                "List Price",
-                "Gross Price",
+                "Unit List Price",
+                "Unit Gross Price",
                 "Base Rebate %",
                 "Requested Net Price",
                 "Requested Discount %",
+                "Gross Revenue",
+                "Proposed Net Revenue",
                 "Floor Price",
                 "Guidance Price",
                 "Walk-away Price",
-                "Extended Requested Net",
                 "Target Gross Margin %",
                 "Finance Director Trigger Margin",
                 "General Manager Trigger Margin",
+                "Line Commercial Rationale",
             ]
             view = calc_lines[[col for col in view_cols if col in calc_lines]].copy()
             if "Requested Discount %" in view:
@@ -2195,6 +2486,12 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         summary_cols[2].info(f"Margin retention: {margin_retention * 100:.0f}%")
 
         st.divider()
+        st.subheader("KAM Risk Assessment")
+        risk_cols = st.columns(2)
+        kam_risk_assessment = risk_cols[0].selectbox("KAM Risk Assessment", KAM_RISK_LEVELS, index=1, key="form_kam_risk_assessment")
+        risk_reason = risk_cols[1].selectbox("Risk Reason", RISK_REASON_VALUES, key="form_risk_reason")
+
+        st.divider()
         st.subheader("Reconciliation")
         reconciliation_type = st.radio("Reconciliation type", ["None", "Credit Note", "Chargeback", "Rebate", "Other"], horizontal=True, key="form_reconciliation_type")
         reconciliation_description = st.text_area(
@@ -2211,10 +2508,13 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Deal Type": st.session_state.get("form_type", ""),
         "Customer Name": customer_name,
         "Customer ID": customer.get("Customer ID"),
+        "Sold-To Customer ID": customer.get("Customer ID"),
+        "Sold-To Customer Name": st.session_state.get("form_bill_to", customer_name),
+        "End Account ID": customer.get("Customer ID"),
+        "End Account Name": st.session_state.get("form_ship_to", customer_name),
         "Ship-to Account": st.session_state.get("form_ship_to", ""),
         "Bill-to Account": st.session_state.get("form_bill_to", ""),
         "Country": st.session_state.get("form_country", "United States"),
-        "Opportunity Name": opportunity_name,
         "Purpose": st.session_state.get("form_purpose", ""),
         "Tender Name": st.session_state.get("form_tender_name", ""),
         "Tender ID": st.session_state.get("form_tender_id", ""),
@@ -2232,6 +2532,9 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Currency": st.session_state.get("form_currency", "USD"),
         "Target Close Date": st.session_state.get("form_close", target_close),
         "Requested Effective Date": st.session_state.get("form_effective", effective_date),
+        "Expected Award / Decision Date": st.session_state.get("form_close", target_close),
+        "Requested Delivery Start": st.session_state.get("form_effective", effective_date),
+        "Requested Delivery End": st.session_state.get("form_delivery_end", requested_delivery_end),
         "Payment Terms": st.session_state.get("form_terms", payment_terms),
         "Contract Months": st.session_state.get("form_contract", contract_months),
         "Billing Frequency": st.session_state.get("form_billing", billing),
@@ -2242,6 +2545,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Publication URL": st.session_state.get("form_publication_url", ""),
         "Access Description": st.session_state.get("form_access_description", ""),
         "Included_In_Latest_Financial_Plan": st.session_state.get("form_included_plan", "Yes"),
+        "Included In Latest Financial Plan": st.session_state.get("form_included_plan", "Yes"),
         "Customer Risk Flag": health.get("Risk Flag", ""),
         "Revenue L12M": health.get("Revenue last 12 months", 0),
         "Units L12M": health.get("Units last 12 months", 0),
@@ -2261,6 +2565,9 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Reconciliation Type": st.session_state.get("form_reconciliation_type", "None"),
         "Reconciliation Description": st.session_state.get("form_reconciliation_description", ""),
         "Business Justification": st.session_state.get("form_justification", ""),
+        "Strategic Rationale": st.session_state.get("form_justification", ""),
+        "KAM Risk Assessment": st.session_state.get("form_kam_risk_assessment", "Medium"),
+        "Risk Reason": st.session_state.get("form_risk_reason", "Competitor price pressure"),
         "Competitive Situation": st.session_state.get("form_competitive", ""),
         "Known Competitor": st.session_state.get("form_competitor", ""),
         "Sales Owner": st.session_state.get("form_owner", sales_owner),
@@ -2270,11 +2577,14 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
     summary = summarize_lines(calc_lines)
     errors, warnings = validate_deal(header, calc_lines, data)
     route_df = route_preview(header, calc_lines, summary, data)
+    system_score = system_risk_score(header, summary, data, calc_lines)
+    if kam_risk_exceeds_system_score(header.get("KAM Risk Assessment"), system_score):
+        warnings.append("KAM risk assessment exceeds system score; additional rationale required.")
 
     with tabs[3]:
         st.subheader("Financial Impact")
         sensitive_data_note()
-        included_value = st.selectbox("Included_In_Latest_Financial_Plan", ["Yes", "No"], key="form_included_plan")
+        included_value = st.selectbox("Included In Latest Financial Plan", ["Yes", "No"], key="form_included_plan")
         included_in_plan = included_value == "Yes"
         plan_df = plan_impact_analysis(data, calc_lines, header["Region"], header["Segment"])
         incremental_df = incremental_opportunity_analysis(data, calc_lines, customer_name, header["Channel"])
@@ -2477,7 +2787,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             st.write(f"Plan inclusion: **{included_value}**")
             st.write(f"Rationale: {header['Business Justification'] or 'Not provided'}")
             st.caption(score_rationale)
-            st.dataframe(mask_sensitive_dataframe(calc_lines), use_container_width=True, hide_index=True)
+            st.dataframe(commercial_line_items_view(calc_lines), use_container_width=True, hide_index=True)
 
         if errors:
             st.error("Blocking issues")
@@ -2500,18 +2810,21 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
 def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df: pd.DataFrame, status: str, recommendation: str) -> str:
     deal_id = f"DEAL-S-{len(st.session_state.runtime_deals) + 1:04d}"
-    opportunity_id = ""
     workflow_status = "Pending Sales Manager" if status == "Submitted" else status
+    risk_assessment = header.get("KAM Risk Assessment", "Medium")
     st.session_state.runtime_deals.append(
         {
             "Deal ID": deal_id,
             "Deal Title": header["Deal Title"],
+            "Sold-To Customer ID": header.get("Sold-To Customer ID", header["Customer ID"]),
+            "Sold-To Customer Name": header.get("Sold-To Customer Name", header["Customer Name"]),
+            "End Account ID": header.get("End Account ID", header["Customer ID"]),
+            "End Account Name": header.get("End Account Name", header["Customer Name"]),
             "Customer ID": header["Customer ID"],
             "Customer Name": header["Customer Name"],
             "Ship-to Account": header.get("Ship-to Account", ""),
             "Bill-to Account": header.get("Bill-to Account", ""),
             "Country": header.get("Country", ""),
-            "Opportunity ID": opportunity_id,
             "Purpose": header.get("Purpose", ""),
             "Tender Name": header.get("Tender Name", ""),
             "Tender ID": header.get("Tender ID", ""),
@@ -2534,13 +2847,19 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Sales Manager": header["Sales Manager"],
             "Status": workflow_status,
             "Target Close Date": str(header["Target Close Date"]),
+            "Expected Award / Decision Date": str(header.get("Expected Award / Decision Date", header["Target Close Date"])),
+            "Requested Delivery Start": str(header.get("Requested Delivery Start", header.get("Requested Effective Date", ""))),
+            "Requested Delivery End": str(header.get("Requested Delivery End", "")),
             "Payment Terms": header["Payment Terms"],
             "Contract Months": header["Contract Months"],
             "Strategic Rationale": header["Business Justification"],
-            "Intake Risk": "High" if "General Manager" in set(route_df["Role"]) else "Medium" if len(route_df) > 2 else "Low",
+            "KAM Risk Assessment": risk_assessment,
+            "Risk Reason": header.get("Risk Reason", "Generated from configured approval route and commercial risk signals."),
+            "Intake Risk": risk_assessment,
             "Channel": header["Channel"],
             "Included_In_Latest_Financial_Plan": header.get("Included_In_Latest_Financial_Plan", "Yes"),
-            "Expected Route": " + ".join(route_df["Role"].tolist()),
+            "Included In Latest Financial Plan": header.get("Included In Latest Financial Plan", header.get("Included_In_Latest_Financial_Plan", "Yes")),
+            "Expected Route": approval_route_text(route_df),
             "Total Proposed": summary["total_proposed"],
             "Discount %": summary["discount_pct"],
             "Recommendation": recommendation,
@@ -2575,6 +2894,7 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     summary = summarize_lines(calc_lines)
     header = build_route_header(deal, data)
     route_df = route_preview(header, calc_lines, summary, data)
+    executive_summary = executive_summary_record(deal, calc_lines, summary, route_df, data)
     deal_status = str(deal.get("Status", "")).strip()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Status", deal_status)
@@ -2648,19 +2968,25 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
                 st.session_state.deal_detail_confirmation = f"Comment added for {selected}. Status remains {deal_status}."
                 st.rerun()
 
-    tabs = st.tabs(["Overview", "Line Items", "Analysis", "Route Preview", "Audit"])
+    tabs = st.tabs(["Overview", "Deal Summary", "Line Items", "Analysis", "Route Preview", "Audit"])
     with tabs[0]:
         st.write(f"**{deal.get('Deal Title')}**")
         st.write(f"Customer: {deal.get('Customer Name')}")
         st.write(f"Strategic rationale: {deal.get('Strategic Rationale', '')}")
+        st.write(f"KAM Risk Assessment: **{executive_summary['KAM Risk Assessment']}**")
+        st.write(f"System Risk Score: **{executive_summary['System Risk Score']}**")
+        if kam_risk_exceeds_system_score(executive_summary["KAM Risk Assessment"], int(executive_summary["System Risk Score"])):
+            st.warning("KAM risk assessment exceeds system score; additional rationale required.")
         st.dataframe(mask_sensitive_dataframe(pd.DataFrame([deal])), use_container_width=True, hide_index=True)
     with tabs[1]:
-        st.dataframe(mask_sensitive_dataframe(calc_lines), use_container_width=True, hide_index=True)
+        st.dataframe(mask_sensitive_dataframe(pd.DataFrame([executive_summary])), use_container_width=True, hide_index=True)
     with tabs[2]:
-        render_analysis_blocks(data, deal, calc_lines)
+        st.dataframe(commercial_line_items_view(calc_lines), use_container_width=True, hide_index=True)
     with tabs[3]:
-        st.dataframe(mask_sensitive_dataframe(route_df), use_container_width=True, hide_index=True)
+        render_analysis_blocks(data, deal, calc_lines)
     with tabs[4]:
+        st.dataframe(mask_sensitive_dataframe(route_df), use_container_width=True, hide_index=True)
+    with tabs[5]:
         audit = pd.DataFrame(st.session_state.audit_events)
         if not audit.empty:
             audit = audit[audit["Deal ID"].astype(str).eq(str(selected))]
@@ -2674,7 +3000,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     account = customer_lookup(data).get(customer, {})
     channel = deal.get("Channel", customer_type(account))
     summary = summarize_lines(lines)
-    included_value = str(deal.get("Included_In_Latest_Financial_Plan", "Yes")).strip() or "Yes"
+    included_value = str(deal.get("Included In Latest Financial Plan", deal.get("Included_In_Latest_Financial_Plan", "Yes"))).strip() or "Yes"
     included_in_plan = included_value.lower() == "yes"
     plan_df = plan_impact_analysis(data, lines, region, segment)
     incremental_df = incremental_opportunity_analysis(data, lines, customer, channel)
@@ -2722,7 +3048,7 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
         if included_in_plan
         else "Deal is evaluated as incremental revenue using historical price and margin benchmarks."
     )
-    st.info(f"Included_In_Latest_Financial_Plan = {included_value}. {flag_message}")
+    st.info(f"Included In Latest Financial Plan = {included_value}. {flag_message}")
 
     st.subheader("Planned vs Unplanned Logic")
     if included_in_plan:
@@ -2811,11 +3137,11 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
             rows.append(
                 {
                     "Deal ID": deal["Deal ID"],
-                    "Customer": deal["Customer Name"],
+                    "Customer": deal.get("Sold-To Customer Name", deal.get("Customer Name", "")),
                     "Deal Title": deal["Deal Title"],
                     "Value": summary["total_proposed"],
                     "Discount %": summary["discount_pct"],
-                    "Risk": deal.get("Intake Risk", ""),
+                    "Risk": deal.get("KAM Risk Assessment", deal.get("Intake Risk", "")),
                     "Role": role_display_label(data, role),
                     "Route Role": role,
                     "Active Approver": route_row.get("Active Approver", ""),
@@ -2957,6 +3283,7 @@ def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
         "opportunities": "Opportunities",
         "products": "Products",
         "price_book": "Price Book",
+        "deal_summary": "Deal Summary",
         "commercial_plan": "Commercial Plan",
         "price_volume": "Price-Volume History",
         "inventory_coverage": "Inventory Coverage",

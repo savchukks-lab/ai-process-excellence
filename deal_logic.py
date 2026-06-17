@@ -57,12 +57,13 @@ def summarize_lines(lines: pd.DataFrame) -> dict:
     positive = lines[lines["Extended Proposed"] > 0].copy()
     if not positive.empty:
         target = float((positive["Extended Proposed"] * positive["Target Margin %"].fillna(0)).sum() / positive["Extended Proposed"].sum())
+    discount_amount = total_gross - total_proposed
     return {
         "total_list": total_list,
         "total_gross": total_gross,
         "total_proposed": total_proposed,
-        "discount_amount": total_list - total_proposed,
-        "discount_pct": 0 if total_list == 0 else (total_list - total_proposed) / total_list,
+        "discount_amount": discount_amount,
+        "discount_pct": 0 if total_gross == 0 else discount_amount / total_gross,
         "margin_pct": margin,
         "weighted_target_margin": target,
         "line_count": len(lines),
