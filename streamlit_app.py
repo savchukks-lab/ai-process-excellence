@@ -269,7 +269,6 @@ def read_sheet(filename: str, sheet_name: str) -> pd.DataFrame:
 def load_demo_data() -> dict[str, pd.DataFrame]:
     data = {
         "customers": read_sheet("Customer_Master.xlsx", "Customers"),
-        "opportunities": read_sheet("Customer_Master.xlsx", "Opportunities"),
         "products": read_sheet("Product_Master.xlsx", "Products"),
         "price_book": read_sheet("Product_Master.xlsx", "Price Book"),
         "inventory_basic": read_sheet("Product_Master.xlsx", "Inventory"),
@@ -284,7 +283,7 @@ def load_demo_data() -> dict[str, pd.DataFrame]:
         "inventory_coverage": read_sheet("Inventory_Coverage.xlsx", "Inventory Coverage"),
         "expiry_aging": read_sheet("Expiry_Aging.xlsx", "Expiry Aging"),
         "tender_history": read_sheet("Tender_History.xlsx", "Tender History"),
-        "competitor_intel": read_sheet("Competitor_Intelligence.xlsx", "Competitor Intelligence"),
+        "competitor_intel": read_sheet("Competitor_Intelligence.xlsx", "External Market Signals"),
     }
     data["deal_summary_source"] = data["deal_summary"]
     data["deal_summary"] = calculated_deal_summary(data)
@@ -722,7 +721,15 @@ def default_delegate_config(data: dict[str, pd.DataFrame]) -> list[dict]:
                 "Primary Approver": primary,
                 "Delegate Approver": delegate,
                 "Delegation Enabled": enabled,
-                "Target Response Hours": int(safe_float(item.get("Target Response Hours", item.get("SLA Hours", 24)), 24)),
+                "Target Response Hours": int(
+                    safe_float(
+                        item.get(
+                            "Target Response Time (Hours)",
+                            item.get("Target Response Hours", item.get("SLA Hours", 24)),
+                        ),
+                        24,
+                    )
+                ),
             }
         )
     return rows
@@ -929,15 +936,27 @@ def ensure_commercial_line_columns(lines: pd.DataFrame, data: dict[str, pd.DataF
         if "Requested Net Price" not in enriched.columns:
             enriched["Requested Net Price"] = None
         gross_price = safe_float(defaults["Unit Gross Price"])
+        product = product_lookup(data).get(str(row.get("SKU", "")), {})
+        base_discount = safe_float(product.get("Base Rebate %", 0))
+        current_net_price = gross_price * (1 - base_discount)
+        enriched.at[idx, "Base Discount %"] = base_discount
+        enriched.at[idx, "Current Net Price"] = round(current_net_price, 2)
+        additional_discount = row.get("Requested Additional Discount %", None)
+        additional_discount = safe_float(additional_discount) if additional_discount is not None and not pd.isna(additional_discount) else None
+        if additional_discount is not None and abs(additional_discount) > 1:
+            additional_discount = additional_discount / 100
         requested_discount = row.get("Requested Discount %", row.get("Discount %", None))
         requested_discount = safe_float(requested_discount) if requested_discount is not None and not pd.isna(requested_discount) else None
         if requested_discount is not None and abs(requested_discount) > 1:
             requested_discount = requested_discount / 100
         requested = row.get("Requested Net Price", row.get("Proposed Unit Price", None))
-        if pd.isna(requested) or requested == "":
+        if additional_discount is not None:
+            requested = current_net_price * (1 - additional_discount)
+        elif pd.isna(requested) or requested == "":
             requested = gross_price * (1 - (requested_discount if requested_discount is not None else 0.10))
         enriched.at[idx, "Requested Net Price"] = round(float(requested), 2)
         enriched.at[idx, "Proposed Unit Price"] = round(float(requested), 2)
+        enriched.at[idx, "Requested Additional Discount %"] = 0 if current_net_price == 0 else (current_net_price - float(requested)) / current_net_price
         discount = 0 if gross_price == 0 else (gross_price - float(requested)) / gross_price
         enriched.at[idx, "Requested Discount %"] = discount
         quantity = safe_float(row.get("Quantity", 0))
@@ -1334,10 +1353,7 @@ def find_inventory(data: dict[str, pd.DataFrame], sku: str, region: str) -> pd.S
     subset = inv[inv["SKU"].astype(str).eq(sku)]
     if subset.empty:
         return None
-    regional = subset[subset["Region"].astype(str).eq(region)]
-    if regional.empty:
-        regional = subset
-    return regional.sort_values("Coverage Days").iloc[0]
+    return subset.sort_values("Coverage Days").iloc[0]
 
 
 def find_expiry(data: dict[str, pd.DataFrame], sku: str, region: str) -> pd.Series | None:
@@ -1347,16 +1363,13 @@ def find_expiry(data: dict[str, pd.DataFrame], sku: str, region: str) -> pd.Seri
     subset = aging[aging["SKU"].astype(str).eq(sku)]
     if subset.empty:
         return None
-    regional = subset[subset["Region"].astype(str).eq(region)]
-    if regional.empty:
-        regional = subset
-    eligible = regional[
-        (pd.to_numeric(regional["Days To Expiry"], errors="coerce") > 0)
-        & (regional["Quality Status"].astype(str).str.lower().ne("expired"))
+    eligible = subset[
+        (pd.to_numeric(subset["Days To Expiry"], errors="coerce") > 0)
+        & ~subset["Quality Control Status"].astype(str).isin(["Rejected", "Under Investigation"])
     ]
     if not eligible.empty:
-        regional = eligible
-    return regional.sort_values("Days To Expiry").iloc[0]
+        subset = eligible
+    return subset.sort_values("Days To Expiry").iloc[0]
 
 
 def find_plan_match(data: dict[str, pd.DataFrame], line: pd.Series, region: str, segment: str) -> pd.Series | None:
@@ -1369,10 +1382,10 @@ def find_plan_match(data: dict[str, pd.DataFrame], line: pd.Series, region: str,
     regional = subset[subset["Region"].astype(str).eq(region)]
     if regional.empty:
         regional = subset
-    segmented = regional[regional["Segment"].astype(str).eq(segment)]
-    if not segmented.empty:
-        regional = segmented
-    return regional.iloc[0]
+    active = regional[regional["Version Status"].astype(str).eq("Active")]
+    if not active.empty:
+        regional = active
+    return regional.sort_values("Period", ascending=False).iloc[0]
 
 
 def price_volume_summary(data: dict[str, pd.DataFrame], lines: pd.DataFrame, customer: str, channel: str) -> pd.DataFrame:
@@ -1416,11 +1429,10 @@ def tender_competitor_summary(data: dict[str, pd.DataFrame], lines: pd.DataFrame
     intel_rows = []
     for _, line in lines.iterrows():
         sku = str(line["SKU"])
+        product_name = str(line.get("Product Name", ""))
         if not tender.empty:
             t = tender[tender["SKU"].astype(str).eq(sku)]
-            exact = t[t["Tendering Account"].astype(str).eq(customer)]
-            if exact.empty:
-                exact = t[t["Region"].astype(str).eq(region)]
+            exact = t[t["End Account"].astype(str).eq(customer)]
             if exact.empty:
                 exact = t
             if not exact.empty:
@@ -1428,28 +1440,29 @@ def tender_competitor_summary(data: dict[str, pd.DataFrame], lines: pd.DataFrame
                 tender_rows.append(
                     {
                         "SKU": sku,
-                        "Tender ID": r.get("Tender ID"),
-                        "Tendering Account": r.get("Tendering Account"),
-                        "Outcome": r.get("Outcome"),
+                        "End Account": r.get("End Account"),
+                        "Result": r.get("Result"),
                         "Winning Discount %": r.get("Winning Discount %"),
-                        "Primary Competitor": r.get("Primary Competitor"),
-                        "Driver": r.get("Loss / Win Driver"),
+                        "Winning Net Price": r.get("Winning Net Price"),
+                        "Tender Net Value": r.get("Tender Net Value"),
+                        "Driver": r.get("Win / Loss Driver"),
+                        "Contract Term": r.get("Contract Term"),
                     }
                 )
         if not intel.empty:
-            c = intel[(intel["SKU"].astype(str).eq(sku)) | (intel["Customer"].astype(str).eq(customer))]
-            if c.empty:
-                c = intel[intel["Region"].astype(str).eq(region)]
+            context_match = intel["Customer / Market Context"].astype(str).str.contains(customer, case=False, regex=False, na=False)
+            c = intel[intel["Product Name"].astype(str).eq(product_name) | context_match]
             if not c.empty:
                 r = c.sort_values("Observed Date", ascending=False).iloc[0]
                 intel_rows.append(
                     {
-                        "SKU": sku,
+                        "Product Name": product_name,
                         "Competitor": r.get("Competitor"),
                         "Signal": r.get("Signal Type"),
-                        "Confidence": r.get("Confidence"),
-                        "Freshness": r.get("Freshness"),
-                        "Response": r.get("Recommended Response"),
+                        "Confidence Level": r.get("Confidence Level"),
+                        "Market Context": r.get("Customer / Market Context"),
+                        "Potential Business Impact": r.get("Potential Business Impact"),
+                        "Response": r.get("Suggested Commercial Response"),
                     }
                 )
     return pd.DataFrame(tender_rows), pd.DataFrame(intel_rows)
@@ -1496,7 +1509,7 @@ def plan_impact_analysis(data: dict[str, pd.DataFrame], lines: pd.DataFrame, reg
             product_avg = safe_float(hist_match.get("Product Avg Net Price 12M", hist_match.get("Net Price", pd.Series(dtype=float))).dropna().astype(float).mean())
         else:
             planned_price = safe_float(legacy_match.get("Planned Net Price"))
-            planned_qty = safe_float(legacy_match.get("Plan Units"))
+            planned_qty = safe_float(legacy_match.get("Planned Volume"))
             customer_avg = None
             product_avg = None
         new_price = safe_float(line.get("Proposed Unit Price"))
@@ -1595,21 +1608,21 @@ def enhanced_inventory_analysis(data: dict[str, pd.DataFrame], lines: pd.DataFra
         if inv is None:
             continue
         requested = safe_float(line.get("Quantity"))
-        available = safe_float(inv.get("Available Qty"))
-        avg_monthly = safe_float(inv.get("Avg Monthly Demand"))
+        available = safe_float(inv.get("Available Inventory"))
+        avg_monthly = safe_float(inv.get("Average Monthly Demand 6M"))
         coverage_days = safe_float(inv.get("Coverage Days"))
         lead_time = safe_float(inv.get("Lead Time Days"))
         shortage = max(requested - available, 0)
         excess = max(available - requested, 0)
-        allocation_note = str(inv.get("Allocation Note", ""))
+        supply_recommendation = str(inv.get("Supply Recommendation", ""))
         coverage_status = str(inv.get("Coverage Status", ""))
-        allocation_risk = "High" if shortage > 0 or coverage_days < lead_time else "Medium" if "Watch" in allocation_note or coverage_days < 45 else "Low"
+        allocation_risk = "High" if shortage > 0 or coverage_status == "Critical" else "Medium" if coverage_status in {"At Risk", "Tight"} else "Low"
         cannibalization_risk = "High" if shortage > 0 else "Medium" if avg_monthly > 0 and requested > avg_monthly * 0.5 else "Low"
         rows.append(
             {
                 "SKU": line["SKU"],
                 "Requested Qty": requested,
-                "Available Qty": available,
+                "Available Inventory": available,
                 "Excess Inventory": excess,
                 "Inventory Shortage": shortage,
                 "Demand Forecast": avg_monthly,
@@ -1618,7 +1631,7 @@ def enhanced_inventory_analysis(data: dict[str, pd.DataFrame], lines: pd.DataFra
                 "Coverage Status": coverage_status,
                 "Allocation Risk": allocation_risk,
                 "Cannibalization Risk": cannibalization_risk,
-                "Finding": f"{allocation_risk} allocation risk; {cannibalization_risk.lower()} cannibalization risk; {coverage_status}; {allocation_note}".strip("; "),
+                "Finding": f"{allocation_risk} allocation risk; {cannibalization_risk.lower()} cannibalization risk; {coverage_status}; {supply_recommendation}".strip("; "),
             }
         )
     return pd.DataFrame(rows)
@@ -1631,19 +1644,21 @@ def enhanced_aging_analysis(data: dict[str, pd.DataFrame], lines: pd.DataFrame, 
         if exp is None:
             continue
         days = safe_float(exp.get("Days To Expiry"))
-        near_expiry = "Yes" if 0 < days <= 180 else "No"
-        aging_inventory = "Yes" if 0 < days <= 365 else "No"
+        months = safe_float(exp.get("Months To Expiry"))
+        near_expiry = "Yes" if 0 < months < 6 else "No"
+        aging_inventory = "Yes" if 0 < months <= 12 else "No"
         rows.append(
             {
                 "SKU": line["SKU"],
-                "Lot ID": exp.get("Lot ID"),
+                "Warehouse Location": exp.get("Warehouse Location"),
                 "Days To Expiry": days,
+                "Months To Expiry": months,
                 "Expiry Bucket": exp.get("Expiry Bucket"),
                 "Near Expiry Inventory": near_expiry,
                 "Aging Inventory": aging_inventory,
                 "Quantity On Hand": exp.get("Quantity On Hand"),
-                "Quality Status": exp.get("Quality Status"),
-                "Disposition": exp.get("Disposition Recommendation"),
+                "Quality Control Status": exp.get("Quality Control Status"),
+                "Recommended Action": exp.get("Recommended Action"),
             }
         )
     return pd.DataFrame(rows)
@@ -1654,22 +1669,23 @@ def enhanced_competitor_intelligence(data: dict[str, pd.DataFrame], lines: pd.Da
     rows = []
     for _, line in lines.iterrows():
         sku = str(line["SKU"])
-        tender_row = tender_df[tender_df["SKU"].astype(str).eq(sku)]
-        intel_row = intel_df[intel_df["SKU"].astype(str).eq(sku)]
+        tender_row = tender_df[tender_df["SKU"].astype(str).eq(sku)] if "SKU" in tender_df else pd.DataFrame()
+        product_name = str(line.get("Product Name", ""))
+        intel_row = intel_df[intel_df["Product Name"].astype(str).eq(product_name)] if "Product Name" in intel_df else pd.DataFrame()
         tender = tender_row.iloc[0] if not tender_row.empty else pd.Series(dtype=object)
         intel = intel_row.iloc[0] if not intel_row.empty else pd.Series(dtype=object)
         signal = str(intel.get("Signal", ""))
         driver = str(tender.get("Driver", ""))
         response = str(intel.get("Response", ""))
-        competitor = str(intel.get("Competitor", tender.get("Primary Competitor", "")))
-        aggressive_price = "Yes" if "price" in signal.lower() or "price" in driver.lower() else "No"
-        incumbent = "Yes" if "incumbent" in signal.lower() or "incumb" in driver.lower() else "No"
+        competitor = str(intel.get("Competitor", ""))
+        aggressive_price = "Yes" if signal in {"Pricing Change", "Aggressive Contracting"} or driver == "Lowest Price" else "No"
+        incumbent = "Yes" if driver in {"Incumbent Supplier", "Relationship Advantage"} else "No"
         supply_issue = "Yes" if "supply" in signal.lower() or "supply" in response.lower() or "supply" in driver.lower() else "No"
-        nearby_behavior = "Current regional signal" if not intel_row.empty else "Historical tender proxy"
+        nearby_behavior = "External market signal" if not intel_row.empty else "Internal tender precedent"
         rows.append(
             {
                 "SKU": sku,
-                "Historical Tender Outcome": tender.get("Outcome", "n/a"),
+                "Historical Tender Result": tender.get("Result", "n/a"),
                 "Historical Tender Discount": tender.get("Winning Discount %", None),
                 "Incumbent Competitor": incumbent,
                 "Aggressive Competitor Pricing": aggressive_price,
@@ -1698,17 +1714,17 @@ def inventory_aging_recommendation(inventory_df: pd.DataFrame, aging_df: pd.Data
         near_expiry = int((aging_df["Near Expiry Inventory"] == "Yes").sum())
         aging = int((aging_df["Aging Inventory"] == "Yes").sum())
         if near_expiry:
-            findings.append(f"Use FEFO allocation and prioritize {near_expiry} near-expiry line(s) where quality status permits.")
+            findings.append(f"Use earliest-expiry-first allocation and prioritize {near_expiry} near-expiry line(s) where quality control status permits.")
         elif aging:
             findings.append(f"Aging inventory exists on {aging} line(s); allocate older released lots first.")
         else:
-            findings.append("No near-expiry inventory condition is required beyond standard FEFO controls.")
+            findings.append("No near-expiry inventory condition is required beyond standard earliest-expiry-first controls.")
     return " ".join(findings) if findings else "Inventory and aging data is not available for this deal."
 
 
 def competitor_summary(competitor_df: pd.DataFrame) -> str:
     if competitor_df.empty:
-        return "No competitor intelligence was found for the selected deal lines."
+        return "No external market signals or tender precedents were found for the selected deal lines."
     aggressive = int((competitor_df["Aggressive Competitor Pricing"] == "Yes").sum())
     incumbent = int((competitor_df["Incumbent Competitor"] == "Yes").sum())
     supply = int((competitor_df["Supply Issues"] == "Yes").sum())
@@ -1721,7 +1737,7 @@ def competitor_summary(competitor_df: pd.DataFrame) -> str:
     if supply:
         summary.append(f"{supply} line(s) indicate competitor supply issues that may create a reliability opening.")
     if not summary:
-        summary.append("Historical tender and nearby-market signals are manageable.")
+        summary.append("Internal tender precedent and external market signals are manageable.")
     if not responses.empty:
         summary.append(f"Recommended response: {responses.iloc[0]}.")
     return " ".join(summary)
@@ -1890,7 +1906,7 @@ def approval_review_summary(context: dict) -> dict:
 
     required_condition = "No special condition required."
     if not aging_df.empty and (aging_df["Near Expiry Inventory"] == "Yes").any():
-        required_condition = "Use FEFO and confirm aging or near-expiry stock allocation before approval."
+        required_condition = "Use earliest-expiry-first rotation and confirm aging or near-expiry stock allocation before approval."
     elif not inventory_df.empty and (inventory_df["Allocation Risk"] == "High").any():
         required_condition = "Supply chain must confirm allocation feasibility and supply continuity."
     elif context["recommendation"] in {"Request Price Revision", "Approve with Conditions"}:
@@ -1901,7 +1917,7 @@ def approval_review_summary(context: dict) -> dict:
         "Key Risk": key_risk,
         "Required Condition": required_condition,
         "Inventory Summary": inventory_aging_recommendation(inventory_df, aging_df),
-        "Aging Summary": aging_df[["SKU", "Days To Expiry", "Near Expiry Inventory", "Aging Inventory", "Disposition"]].copy() if not aging_df.empty else pd.DataFrame(),
+        "Aging Summary": aging_df[["SKU", "Days To Expiry", "Months To Expiry", "Expiry Bucket", "Near Expiry Inventory", "Recommended Action"]].copy() if not aging_df.empty else pd.DataFrame(),
         "Competitor Summary": competitor_summary(competitor_df),
     }
 
@@ -1957,7 +1973,7 @@ def render_approval_review_panel(context: dict) -> None:
 def validate_deal(header: dict, lines: pd.DataFrame, data: dict[str, pd.DataFrame]) -> tuple[list[str], list[str]]:
     errors = []
     warnings = []
-    required = ["Deal Title", "Customer Name", "Deal Type", "Region", "Currency", "Target Close Date", "Requested Effective Date", "Payment Terms"]
+    required = ["Deal Title", "Customer Name", "Deal Type", "Region", "Target Close Date", "Payment Terms"]
     for field in required:
         if not header.get(field):
             errors.append(f"{field} is required.")
@@ -1982,8 +1998,6 @@ def validate_deal(header: dict, lines: pd.DataFrame, data: dict[str, pd.DataFram
                 warnings.append(f"{line['SKU']} discount triggers configured approval routing.")
     if not header.get("Business Justification"):
         errors.append("Business justification is required.")
-    if header.get("Special Terms Requested") and not header.get("Special Terms Description"):
-        errors.append("Special terms description is required.")
     if header.get("Payment Terms") in {"Net 75", "Net 90"}:
         warnings.append("Extended payment terms will require Finance and Legal review.")
     if int(header.get("Contract Months", 0) or 0) > 36:
@@ -2343,15 +2357,14 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         st.subheader("Deal Context")
         customer_name = st.selectbox("Customer", customers["Customer Name"].tolist(), key="form_customer")
         customer = customers[customers["Customer Name"].eq(customer_name)].iloc[0].to_dict()
-        account_cols = st.columns(3)
+        account_cols = st.columns(2)
         ship_to_account = account_cols[0].text_input("End Account Name", value=str(customer.get("Customer Name", customer_name)), key="form_ship_to")
         bill_to_account = account_cols[1].text_input("Sold-To Customer Name", value=str(customer.get("Customer Name", customer_name)), key="form_bill_to")
-        country = account_cols[2].text_input("Country", value=str(customer.get("Country", "United States")), key="form_country")
         deal_cols = st.columns(2)
         deal_title = deal_cols[0].text_input("Deal Title", value=f"{customer_name} Commercial Deal", key="form_title")
-        deal_type = deal_cols[0].selectbox("Deal Type", ["Tender", "Contract Renewal", "Competitive Defense", "New Account / Launch", "Inventory / Expiry Mitigation"], key="form_type")
-        region = deal_cols[1].selectbox("Region", ["Region A", "Region B", "Region C"], index=0, key="form_region")
-        currency = deal_cols[1].selectbox("Currency", ["USD", "EUR"], key="form_currency")
+        deal_type = deal_cols[0].selectbox("Deal Type", ["New Account / Launch", "Contract Renewal", "Tender", "Competitive Defense", "Strategic Exception"], key="form_type")
+        region = str(customer.get("Region", "Region A"))
+        deal_cols[1].text_input("Region", value=region, disabled=True)
         purpose = st.selectbox(
             "Purpose",
             ["Tender", "Competitive defense", "New listing", "Contract renewal", "Inventory liquidation", "Expiry mitigation", "Strategic account", "Other"],
@@ -2384,7 +2397,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         default_owner = current_persona() if current_persona() in kam_users else kam_users[0]
         sales_owner = owner_cols[0].selectbox("Sales Owner", kam_users, index=kam_users.index(default_owner), key="form_owner")
         sales_manager = owner_cols[1].selectbox("Sales Manager", list(SALES_MANAGER_TEAMS.keys()), key="form_manager")
-        target_close = owner_cols[2].date_input("Expected Award / Decision Date", value=date.today() + timedelta(days=45), key="form_close")
+        target_close = owner_cols[2].date_input("Commercial Decision Deadline", value=date.today() + timedelta(days=45), key="form_close")
         effective_date = owner_cols[3].date_input("Requested Delivery Start", value=date.today() + timedelta(days=60), key="form_effective")
         requested_delivery_end = st.date_input("Requested Delivery End", value=date.today() + timedelta(days=120), key="form_delivery_end")
         st.divider()
@@ -2404,8 +2417,8 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
     with tabs[1]:
         st.subheader("Commercial Terms")
         c1, c2, c3 = st.columns(3)
-        payment_terms = c1.selectbox("Payment Terms", ["Net 30", "Net 45", "Net 60", "Net 75", "Net 90"], key="form_terms")
-        contract_months = c2.number_input("Contract Months", min_value=1, max_value=72, value=24, step=1, key="form_contract")
+        payment_terms = c1.selectbox("Payment Terms", ["Net 30", "Net 45", "Net 60", "Net 90", "Custom"], key="form_terms")
+        contract_months = c2.number_input("Contract Duration Months", min_value=1, max_value=72, value=24, step=1, key="form_contract")
         billing = c3.selectbox("Billing Frequency", ["Annual", "Quarterly", "Monthly", "Milestone"], key="form_billing")
         special_terms = st.checkbox("Special terms requested", key="form_special")
         special_desc = st.text_area("Special Terms Description", value="", key="form_special_desc")
@@ -2423,20 +2436,18 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             access_description = st.session_state.get("form_access_description", "")
         st.divider()
         st.subheader("Products, Volume, and Requested Pricing")
-        st.caption("Edit SKU, quantity, requested net price, delivery date, and line rationale. Product metadata and calculations appear below.")
+        st.caption("Edit SKU, quantity, requested additional discount, and line justification. Reference-driven pricing and calculations appear below.")
         st.session_state.draft_lines = ensure_commercial_line_columns(st.session_state.draft_lines, data)
         editor_config = {
             "SKU": st.column_config.SelectboxColumn("SKU", options=products["SKU"].tolist(), required=True),
             "Quantity": st.column_config.NumberColumn("Quantity", min_value=1, step=1),
-            "Requested Net Price": st.column_config.NumberColumn("Requested Net Price", min_value=-1_000_000.0, step=1.0, format="$%.2f"),
-            "Requested Delivery Date": st.column_config.DateColumn("Requested Delivery Date"),
-            "Line Commercial Rationale": st.column_config.TextColumn("Line Commercial Rationale"),
+            "Requested Additional Discount %": st.column_config.NumberColumn("Requested Additional Discount %", min_value=0.0, max_value=1.0, step=0.01, format="%.1f%%"),
+            "Line Commercial Rationale": st.column_config.TextColumn("Line Commercial Justification"),
         }
         editable_line_cols = [
             "SKU",
             "Quantity",
-            "Requested Net Price",
-            "Requested Delivery Date",
+            "Requested Additional Discount %",
             "Line Commercial Rationale",
         ]
         st.session_state.draft_lines = st.data_editor(
@@ -2462,9 +2473,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 "Product Name",
                 "Product Category",
                 "Quantity",
-                "Unit List Price",
                 "Unit Gross Price",
-                "Base Rebate %",
+                "Base Discount %",
+                "Current Net Price",
+                "Requested Additional Discount %",
                 "Requested Net Price",
                 "Requested Discount %",
                 "Gross Revenue",
@@ -2570,7 +2582,6 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "End Account Name": st.session_state.get("form_ship_to", customer_name),
         "Ship-to Account": st.session_state.get("form_ship_to", ""),
         "Bill-to Account": st.session_state.get("form_bill_to", ""),
-        "Country": st.session_state.get("form_country", "United States"),
         "Purpose": st.session_state.get("form_purpose", ""),
         "Tender Name": st.session_state.get("form_tender_name", ""),
         "Tender ID": st.session_state.get("form_tender_id", ""),
@@ -2580,13 +2591,13 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Quantity at Risk": st.session_state.get("form_quantity_at_risk", 0),
         "Remaining Shelf Life": st.session_state.get("form_shelf_life", 0),
         "Inventory Value at Risk": st.session_state.get("form_inventory_value_at_risk", 0.0),
-        "Region": st.session_state.get("form_region", customer.get("Region")),
+        "Region": region,
         "Segment": customer_type(customer),
         "Customer Type": customer_type(customer),
         "Account Type": customer_type(customer),
         "Channel": customer_type(customer),
-        "Currency": st.session_state.get("form_currency", "USD"),
         "Target Close Date": st.session_state.get("form_close", target_close),
+        "Commercial Decision Deadline": st.session_state.get("form_close", target_close),
         "Requested Effective Date": st.session_state.get("form_effective", effective_date),
         "Expected Award / Decision Date": st.session_state.get("form_close", target_close),
         "Requested Delivery Start": st.session_state.get("form_effective", effective_date),
@@ -2891,7 +2902,6 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Customer Name": header["Customer Name"],
             "Ship-to Account": header.get("Ship-to Account", ""),
             "Bill-to Account": header.get("Bill-to Account", ""),
-            "Country": header.get("Country", ""),
             "Purpose": header.get("Purpose", ""),
             "Tender Name": header.get("Tender Name", ""),
             "Tender ID": header.get("Tender ID", ""),
@@ -3159,10 +3169,10 @@ def render_analysis_blocks(data: dict[str, pd.DataFrame], deal: dict, lines: pd.
     st.subheader("Tender History")
     st.dataframe(mask_sensitive_dataframe(tender_df), use_container_width=True, hide_index=True)
 
-    st.subheader("Competitor Intelligence")
+    st.subheader("External Market Signals")
     st.info(competitor_summary(competitor_df))
     st.dataframe(mask_sensitive_dataframe(competitor_df), use_container_width=True, hide_index=True)
-    with st.expander("Raw competitor signals"):
+    with st.expander("Raw external market signals"):
         st.dataframe(mask_sensitive_dataframe(intel_df), use_container_width=True, hide_index=True)
 
     st.subheader("Approval Route with Trigger Reasons")
@@ -3347,7 +3357,6 @@ def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
     sensitive_data_note()
     labels = {
         "customers": "Customers",
-        "opportunities": "Opportunities",
         "products": "Products",
         "price_book": "Price Book",
         "deal_summary": "Deal Summary",
@@ -3356,7 +3365,7 @@ def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
         "inventory_coverage": "Inventory Coverage",
         "expiry_aging": "Expiry Aging",
         "tender_history": "Tender History",
-        "competitor_intel": "Competitor Intelligence",
+        "competitor_intel": "External Market Signals",
         "approval_matrix": "Approval Matrix",
         "approver_roster": "Approver Roster",
     }
