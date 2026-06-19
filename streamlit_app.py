@@ -3827,7 +3827,7 @@ def top_navigation() -> str:
         st.session_state.current_page = "Deal Request List"
 
     with st.container():
-        nav_cols = st.columns([2.7, 0.85, 2.1, 1.25], vertical_alignment="center")
+        nav_cols = st.columns([2.7, 0.85, 2.1, 1.25])
         nav_cols[0].markdown("### Deal Desk Copilot")
         persona = nav_cols[2].selectbox(
             "Current User",
