@@ -166,7 +166,7 @@ def inject_css() -> None:
         """
         <style>
         .block-container {
-            padding-top: 2.25rem;
+            padding-top: 100px;
             padding-bottom: 1.25rem;
             max-width: 100%;
         }
@@ -251,7 +251,6 @@ def inject_css() -> None:
             .block-container {
                 padding-left: 0.65rem;
                 padding-right: 0.65rem;
-                padding-top: 0.45rem;
             }
             h1 {
                 font-size: 1.32rem !important;
