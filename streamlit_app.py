@@ -247,10 +247,38 @@ def inject_css() -> None:
             font-size: 0.76rem;
             margin: 0 0 0.05rem;
         }
+        .nav-marker {
+            display: none;
+        }
         @media (max-width: 760px) {
             .block-container {
                 padding-left: 0.65rem;
                 padding-right: 0.65rem;
+            }
+            [data-testid="stHorizontalBlock"] {
+                flex-direction: column !important;
+                gap: 0.45rem !important;
+            }
+            [data-testid="stColumn"],
+            [data-testid="column"] {
+                width: 100% !important;
+                flex: 1 1 auto !important;
+            }
+            [data-testid="stColumn"]:has(.nav-title-marker),
+            [data-testid="column"]:has(.nav-title-marker) {
+                order: 1;
+            }
+            [data-testid="stColumn"]:has(.nav-user-marker),
+            [data-testid="column"]:has(.nav-user-marker) {
+                order: 2;
+            }
+            [data-testid="stColumn"]:has(.nav-new-marker),
+            [data-testid="column"]:has(.nav-new-marker) {
+                order: 3;
+            }
+            [data-testid="stColumn"]:has(.nav-governance-marker),
+            [data-testid="column"]:has(.nav-governance-marker) {
+                order: 4;
             }
             h1 {
                 font-size: 1.32rem !important;
@@ -910,31 +938,40 @@ def update_sla_breach_audit(deal_id: str, role: str, data: dict[str, pd.DataFram
         )
 
 
+def pending_approval_role_for_deal(deal: pd.Series | dict, data: dict[str, pd.DataFrame], lines: pd.DataFrame | None = None) -> str:
+    item = deal.to_dict() if isinstance(deal, pd.Series) else dict(deal)
+    deal_id = str(item.get("Deal ID", ""))
+    all_lines = combined_lines(data) if lines is None else lines
+    calc_lines = normalize_lines(all_lines[all_lines["Deal ID"].astype(str).eq(deal_id)], data)
+    summary = summarize_lines(calc_lines)
+    route = route_preview(build_route_header(item, data), calc_lines, summary, data)
+    return current_required_approval_role(deal_id, str(item.get("Status", "")).strip(), route)
+
+
 def visible_deals_for_current_role(deals: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     if deals.empty:
         return deals
     role = current_role()
     persona = current_persona()
-    delegated_ids = route_visible_deal_ids_for_roles(deals, data, delegated_roles_for_persona(data, persona))
     if role == "System Administrator":
         return deals
     if is_kam_role(role):
         own_mask = deals.get("Sales Owner", pd.Series(dtype=str)).astype(str).eq(persona)
-        delegate_mask = deals["Deal ID"].astype(str).isin(delegated_ids)
-        return deals[own_mask | delegate_mask].copy()
+        return deals[own_mask].copy()
+
+    delegated_roles = set(delegated_roles_for_persona(data, persona))
+    actionable_roles = {role, *delegated_roles}
+    all_lines = combined_lines(data)
+    pending_roles = deals.apply(lambda deal: pending_approval_role_for_deal(deal, data, all_lines), axis=1)
+    pending_mask = pending_roles.isin(actionable_roles)
     if role == "Sales Manager":
         team = SALES_MANAGER_TEAMS.get(persona, SALES_MANAGER_TEAMS.get("Jordan Blake", []))
-        return deals[
-            deals.get("Sales Owner", pd.Series(dtype=str)).astype(str).isin(team)
-            | deals.get("Sales Manager", pd.Series(dtype=str)).astype(str).eq(persona)
-            | deals["Deal ID"].astype(str).isin(delegated_ids)
-        ].copy()
-    if has_full_visibility(role):
-        return deals
-    if role == "Supply Chain Manager":
-        visible_ids = route_visible_deal_ids_for_roles(deals, data, [role]).union(delegated_ids)
-        return deals[deals["Deal ID"].astype(str).isin(visible_ids)].copy()
-    return deals.iloc[0:0].copy()
+        assigned_mask = (
+            deals.get("Sales Owner", pd.Series(index=deals.index, dtype=str)).astype(str).isin(team)
+            | deals.get("Sales Manager", pd.Series(index=deals.index, dtype=str)).astype(str).eq(persona)
+        )
+        pending_mask &= assigned_mask | pending_roles.isin(delegated_roles)
+    return deals[pending_mask].copy()
 
 
 def demo_commercial_price_defaults(data: dict[str, pd.DataFrame], sku: str) -> dict[str, float]:
@@ -1126,7 +1163,7 @@ def completed_approval_steps(deal_id: str) -> list[str]:
 
 def current_required_approval_role(deal_id: str, status: str, route_df: pd.DataFrame) -> str:
     clean_status = str(status or "").strip()
-    if clean_status in {"Rejected", "Final Approved"}:
+    if clean_status in {"Draft", "Rejected", "Approved", "Final Approved"}:
         return ""
     if clean_status == "Changes Requested":
         return "KAM North"
@@ -2306,12 +2343,44 @@ def render_header(title: str, subtitle: str = "") -> None:
         st.markdown(f"<div class='section-note'>{subtitle}</div>", unsafe_allow_html=True)
 
 
+def render_landing_kpis(cockpit: pd.DataFrame, role: str) -> None:
+    kpis = st.columns(5)
+    status = cockpit.get("Status", pd.Series(dtype=str)).astype(str)
+    risk = cockpit.get("Risk", pd.Series(dtype=str)).astype(str)
+    pending = cockpit.get("Pending Role", pd.Series(dtype=str)).astype(str)
+    values = pd.to_numeric(cockpit.get("Requested Value", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    due_dates = pd.to_datetime(cockpit.get("Decision Due Date", pd.Series(dtype="datetime64[ns]")), errors="coerce")
+    active = status.isin(ACTIVE_APPROVAL_STATUSES)
+    today = pd.Timestamp(date.today())
+    due_today = due_dates.dt.normalize().eq(today) & active
+    overdue = due_dates.dt.normalize().lt(today) & active
+    if is_kam_role(role):
+        kpis[0].metric("Draft", int(status.eq("Draft").sum()))
+        kpis[1].metric("Submitted", int(status.eq("Submitted").sum()))
+        kpis[2].metric("Changes Requested", int(status.eq("Changes Requested").sum()))
+        kpis[3].metric("Approved", int(status.isin(["Approved", "Final Approved"]).sum()))
+        kpis[4].metric("Rejected", int(status.eq("Rejected").sum()))
+    elif role == "General Manager":
+        strategic = cockpit.get("Strategic Account", pd.Series(dtype=bool)).fillna(False).astype(bool)
+        kpis[0].metric("Pending GM Review", int(pending.eq("General Manager").sum()))
+        kpis[1].metric("Strategic Accounts", int(strategic.sum()))
+        kpis[2].metric("High Value Requests", int(values.ge(LARGE_DEAL_VALUE_THRESHOLD).sum()))
+        kpis[3].metric("Due Today", int(due_today.sum()))
+        kpis[4].metric("Total Exposure", money(values.sum()))
+    else:
+        pending_mask = pending.eq(role)
+        if role == "System Administrator":
+            pending_mask = pending.ne("")
+        kpis[0].metric("Pending My Review", int(pending_mask.sum()))
+        kpis[1].metric("High Risk", int(risk.isin(["High", "Critical"]).sum()))
+        kpis[2].metric("Due Today", int(due_today.sum()))
+        kpis[3].metric("Overdue", int(overdue.sum()))
+        kpis[4].metric("Total Requested Value", money(values.sum()))
+
+
 def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     render_header("Deal Requests")
     deals = visible_deals_for_current_role(combined_deals(data), data)
-    if deals.empty:
-        st.info("No deal requests are visible for the current user.")
-        return
 
     records = []
     contexts: dict[str, dict] = {}
@@ -2355,38 +2424,13 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
             }
         )
     cockpit = pd.DataFrame(records)
+    role = current_role()
     if cockpit.empty:
-        st.info("No deal requests could be prepared for review.")
+        render_landing_kpis(cockpit, role)
+        st.info("No deals are currently awaiting this user's review.")
         return
 
-    today = pd.Timestamp(date.today())
-    active = cockpit["Status"].astype(str).isin(ACTIVE_APPROVAL_STATUSES)
-    due_today = cockpit["Decision Due Date"].dt.normalize().eq(today) & active
-    overdue = cockpit["Decision Due Date"].dt.normalize().lt(today) & active
-    role = current_role()
-    kpis = st.columns(5)
-    if is_kam_role(role):
-        status = cockpit["Status"].astype(str)
-        kpis[0].metric("Draft", int(status.eq("Draft").sum()))
-        kpis[1].metric("Submitted", int(status.eq("Submitted").sum()))
-        kpis[2].metric("Changes Requested", int(status.eq("Changes Requested").sum()))
-        kpis[3].metric("Approved", int(status.isin(["Approved", "Final Approved"]).sum()))
-        kpis[4].metric("Rejected", int(status.eq("Rejected").sum()))
-    elif role == "General Manager":
-        kpis[0].metric("Pending GM Review", int(cockpit["Pending Role"].eq("General Manager").sum()))
-        kpis[1].metric("Strategic Accounts", int(cockpit["Strategic Account"].sum()))
-        kpis[2].metric("High Value Requests", int(cockpit["Requested Value"].ge(LARGE_DEAL_VALUE_THRESHOLD).sum()))
-        kpis[3].metric("Due Today", int(due_today.sum()))
-        kpis[4].metric("Total Exposure", money(cockpit["Requested Value"].sum()))
-    else:
-        pending_mask = cockpit["Pending Role"].eq(role)
-        if role == "System Administrator":
-            pending_mask = cockpit["Pending Role"].astype(str).ne("")
-        kpis[0].metric("Pending My Review", int(pending_mask.sum()))
-        kpis[1].metric("High Risk", int(cockpit["Risk"].isin(["High", "Critical"]).sum()))
-        kpis[2].metric("Due Today", int(due_today.sum()))
-        kpis[3].metric("Overdue", int(overdue.sum()))
-        kpis[4].metric("Total Requested Value", money(cockpit["Requested Value"].sum()))
+    render_landing_kpis(cockpit, role)
 
     filters = st.columns([1.25, 1.15, 0.8, 1, 1.15])
     product_options = sorted({product for values in cockpit["All Products"] for product in values})
@@ -3352,7 +3396,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
         st.info("No submitted deals available.")
         return
     delegated_roles = delegated_roles_for_persona(data, current_persona())
-    selectable_roles = ROLE_ORDER if can_configure_system() else list(dict.fromkeys(([current_role()] if current_role() in ROLE_ORDER else []) + delegated_roles))
+    selectable_roles = ACTIONABLE_APPROVAL_ROLES if can_configure_system() else list(dict.fromkeys(([current_role()] if current_role() in ACTIONABLE_APPROVAL_ROLES else []) + delegated_roles))
     if not selectable_roles:
         selectable_roles = ROLE_ORDER
     role = st.selectbox("Queue Role", selectable_roles, index=0)
@@ -3827,7 +3871,8 @@ def top_navigation() -> str:
 
     with st.container():
         nav_cols = st.columns([2.7, 0.85, 2.1, 1.25])
-        nav_cols[0].markdown("### Deal Desk Copilot")
+        nav_cols[0].markdown("<span class='nav-marker nav-title-marker'></span><h3>Deal Desk Copilot</h3>", unsafe_allow_html=True)
+        nav_cols[2].markdown("<span class='nav-marker nav-user-marker'></span>", unsafe_allow_html=True)
         persona = nav_cols[2].selectbox(
             "Current User",
             list(PERSONAS.keys()),
@@ -3837,10 +3882,12 @@ def top_navigation() -> str:
         st.session_state.role = PERSONAS[persona]
 
         new_disabled = not can_create_request(st.session_state.role)
+        nav_cols[1].markdown("<span class='nav-marker nav-new-marker'></span>", unsafe_allow_html=True)
         if nav_cols[1].button("+ New Request", type="primary", disabled=new_disabled, use_container_width=True):
             st.session_state.current_page = "New Deal Intake"
             st.rerun()
 
+        nav_cols[3].markdown("<span class='nav-marker nav-governance-marker'></span>", unsafe_allow_html=True)
         with nav_cols[3].popover("Reference & Governance", use_container_width=True):
             st.markdown("**Work**")
             if st.button("Deal Requests", key="nav_deal_requests", use_container_width=True):
