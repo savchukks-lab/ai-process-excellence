@@ -194,7 +194,44 @@ def inject_css() -> None:
             margin-top: 0.35rem;
         }
         div[data-testid="stTabs"] {
-            margin-top: 0.15rem;
+            margin-top: 0.65rem;
+        }
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+            gap: 0.35rem;
+            border-bottom: 1px solid #cbd5e1;
+            overflow-x: auto;
+            scrollbar-width: thin;
+        }
+        div[data-testid="stTabs"] button[data-baseweb="tab"] {
+            flex: 0 0 auto;
+            min-height: 2.55rem;
+            padding: 0.55rem 0.9rem;
+            color: #334155;
+            background: #f8fafc;
+            border: 1px solid #d7dee8;
+            border-bottom: 0;
+            border-radius: 7px 7px 0 0;
+            font-weight: 600;
+        }
+        div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+            color: #0f513f;
+            background: #ffffff;
+            border-color: #16805d;
+            box-shadow: inset 0 -3px 0 #16805d;
+        }
+        div[data-testid="stTabs"] button[data-baseweb="tab"] p {
+            color: inherit !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.ai-support-marker) {
+            border-left: 4px solid #16805d;
+            background: #f8fbfa;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.approval-action-marker) {
+            position: sticky;
+            top: 0.75rem;
+            z-index: 20;
+            background: #ffffff;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
         }
         hr {
             margin: 0.55rem 0 !important;
@@ -253,6 +290,9 @@ def inject_css() -> None:
             display: none;
         }
         @media (max-width: 760px) {
+            html, body, [data-testid="stAppViewContainer"] {
+                overflow-x: hidden;
+            }
             .block-container {
                 padding-left: 0.65rem;
                 padding-right: 0.65rem;
@@ -287,6 +327,18 @@ def inject_css() -> None:
             }
             [data-testid="stMetric"] {
                 padding: 6px 8px;
+            }
+            div[data-testid="stTabs"] {
+                max-width: 100%;
+                overflow: hidden;
+            }
+            div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+                flex-wrap: nowrap;
+                width: 100%;
+            }
+            div[data-testid="stVerticalBlockBorderWrapper"]:has(.approval-action-marker) {
+                position: static;
+                box-shadow: none;
             }
         }
         </style>
@@ -1003,7 +1055,13 @@ def archived_deals_for_current_role(deals: pd.DataFrame) -> pd.DataFrame:
 
 def deal_detail_visible_deals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     all_deals = combined_deals(data)
-    active = visible_deals_for_current_role(all_deals, data)
+    role = current_role()
+    if role in ACTIONABLE_APPROVAL_ROLES:
+        review_roles = [role, *delegated_roles_for_persona(data, current_persona())]
+        visible_ids = route_visible_deal_ids_for_roles(all_deals, data, review_roles)
+        active = all_deals[all_deals["Deal ID"].astype(str).isin(visible_ids)].copy()
+    else:
+        active = visible_deals_for_current_role(all_deals, data)
     archived = archived_deals_for_current_role(all_deals)
     return pd.concat([active, archived], ignore_index=True).drop_duplicates(subset=["Deal ID"])
 
@@ -2007,8 +2065,8 @@ def render_inline_deal_preview(context: dict, compact: bool = False) -> None:
     metrics[1].metric("Requested Discount %", pct(summary["discount_pct"]))
     margin_label = "Resulting Gross Margin %" if margin_visibility_for_role(role) == "Exact" else "Margin Status"
     metrics[2].metric(margin_label, landing_margin_display(summary, role))
-    metrics[3].metric("Margin vs Threshold", margin_threshold_display(summary, role))
-    metrics[4].metric("Revenue at Risk", money(revenue_at_risk(context)))
+    metrics[3].metric("Margin vs Approval Threshold", margin_threshold_display(summary, role))
+    metrics[4].metric("Revenue Impact", money(revenue_at_risk(context)))
 
     context_cols = st.columns(3)
     with context_cols[0].container(border=True):
@@ -2543,14 +2601,9 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         if context:
             render_inline_deal_preview(context, compact=True)
             pending_role = current_required_approval_role(table_selected, str(context["deal"].get("Status", "")), context["route_df"])
-            actions = st.columns([1, 1, 4])
+            actions = st.columns([1, 5])
             if actions[0].button("Open Deal Detail", type="primary"):
                 navigate_to_deal_detail(table_selected, "deal request list row selection")
-            if pending_role == role and role in ACTIONABLE_APPROVAL_ROLES:
-                if actions[1].button("Open My Review", type="secondary"):
-                    st.session_state.approval_queue_selected_deal_id = table_selected
-                    st.session_state.current_page = "Approval Queue Preview"
-                    st.rerun()
     else:
         st.caption("Use the selection control at the left of a row to open its preview.")
 
@@ -3237,22 +3290,179 @@ def render_customer_risk_strip(customer: dict, data: dict[str, pd.DataFrame]) ->
     st.caption(f"Strategic Account: {strategic}.{strategic_context}")
 
 
-def decision_support_reasons(context: dict) -> list[str]:
-    reasons = []
+def deal_decision_support(context: dict, data: dict[str, pd.DataFrame]) -> tuple[str, list[tuple[str, str]]]:
+    reasons: list[tuple[str, str]] = []
     summary = context["summary"]
     deal = context["deal"]
     customer = context.get("customer", {})
-    if safe_float(summary.get("margin_pct")) < safe_float(summary.get("weighted_target_margin")):
-        reasons.append("Resulting margin is below the product threshold.")
-    if safe_float(summary.get("discount_pct")) > 0.07:
-        reasons.append("Requested discount exceeds the standard governance tier.")
-    if not context["inventory_df"].empty and safe_float(context["inventory_df"]["Inventory Shortage"].sum()) > 0:
-        reasons.append("Supply review is required for the requested volume.")
-    if str(deal.get("Visibility", "")) == "Public" or str(deal.get("Risk Reason", "")) == "Public tender":
-        reasons.append("Public price visibility risk requires governance review.")
-    if str(customer.get("Credit Status", "")) == "Hold" or safe_float(customer.get("Overdue AR")) > 0:
-        reasons.append("Customer credit risk requires Finance review.")
-    return reasons[:3] or ["No material exception is identified beyond the configured approval route."]
+    margin = safe_float(summary.get("margin_pct"))
+    target = safe_float(summary.get("weighted_target_margin"))
+    gm_floor = gm_trigger_margin(target)
+    discount = safe_float(summary.get("discount_pct"))
+    shortage = safe_float(context["inventory_df"].get("Inventory Shortage", pd.Series(dtype=float)).sum())
+    credit_hold = str(customer.get("Credit Status", "")).strip() == "Hold"
+    overdue_ar = safe_float(customer.get("Overdue AR"))
+
+    if margin >= target:
+        reasons.append(("positive", "Margin remains above the product approval threshold."))
+    elif margin >= gm_floor:
+        reasons.append(("attention", "Margin is below the product target and requires the configured finance review."))
+    else:
+        reasons.append(("critical", "Margin is below the General Manager approval threshold."))
+
+    if discount <= 0.07:
+        reasons.append(("positive", "Requested discount remains within the standard pricing tier."))
+    else:
+        reasons.append(("attention", "Requested discount exceeds the standard pricing tier and requires governance approval."))
+
+    if shortage > 0:
+        reasons.append(("attention", f"Available supply is short by {shortage:,.0f} units for the requested volume."))
+    else:
+        reasons.append(("positive", "Supply is available with no projected shortage."))
+
+    if credit_hold:
+        reasons.append(("critical", "Customer credit status is Hold and Finance approval is mandatory."))
+    elif overdue_ar > 0:
+        reasons.append(("attention", "Customer has overdue receivables and Finance approval is mandatory."))
+    else:
+        reasons.append(("positive", "No customer credit warning is currently identified."))
+
+    end_account = str(deal.get("End Account Name", deal.get("Customer Name", "")))
+    tender_df, signal_df = tender_competitor_summary(data, context["lines"], end_account, str(deal.get("Region", "")))
+    if not tender_df.empty:
+        wins = int(tender_df.get("Result", pd.Series(dtype=str)).astype(str).eq("Won").sum())
+        precedent = "supports" if wins > 0 else "provides"
+        reasons.append(("positive" if wins > 0 else "attention", f"Historical tender precedent {precedent} comparison with the requested price level."))
+    elif not signal_df.empty:
+        reasons.append(("attention", "External market signals should be considered in the commercial decision."))
+    else:
+        reasons.append(("attention", "No directly comparable tender precedent is available."))
+
+    if margin <= 0:
+        recommendation = "Reject"
+    elif margin < gm_floor or credit_hold or shortage > 0:
+        recommendation = "Request Changes"
+    else:
+        recommendation = "Approve"
+    return recommendation, reasons
+
+
+def approval_actor_for_role(deal_id: str, role: str, data: dict[str, pd.DataFrame]) -> str:
+    for event in reversed(st.session_state.get("audit_events", [])):
+        if (
+            str(event.get("Deal ID", "")) == str(deal_id)
+            and str(event.get("Approval Step", "")) == role
+            and str(event.get("Decision", "")) == "Approve"
+        ):
+            return str(event.get("Actor", "")) or active_approver_for_role(data, role)
+    return active_approver_for_role(data, role)
+
+
+def business_approval_status(deal_status: str, pending_role: str) -> str:
+    if pending_role:
+        return f"Awaiting {pending_role} Review"
+    if deal_status == "Changes Requested":
+        return "Awaiting KAM Revision"
+    if deal_status in {"Approved", "Final Approved"}:
+        return "Approved"
+    if deal_status == "Rejected":
+        return "Rejected"
+    return deal_status or "Not Submitted"
+
+
+def business_deal_status(deal_status: str) -> str:
+    if deal_status in ACTIVE_APPROVAL_STATUSES - {"Changes Requested"}:
+        return "In Review"
+    if deal_status == "Changes Requested":
+        return "Changes Requested"
+    if deal_status in {"Approved", "Final Approved"}:
+        return "Approved"
+    return deal_status or "Draft"
+
+
+def render_approval_handoff(
+    deal: dict,
+    data: dict[str, pd.DataFrame],
+    deal_id: str,
+    deal_status: str,
+    route_df: pd.DataFrame,
+) -> None:
+    roles = actionable_route_roles(route_df)
+    completed = completed_approval_steps(deal_id)
+    current = current_required_approval_role(deal_id, deal_status, route_df)
+    approved_by = ", ".join(approval_actor_for_role(deal_id, role, data) for role in completed if role in roles)
+    current_reviewer = active_approver_for_role(data, current) if current else ""
+    remaining = [role for role in roles if role not in completed and role != current]
+    submitted_by = str(deal.get("Sales Owner", deal.get("Submitted By", ""))) or "Submitting KAM"
+
+    handoff = st.columns(4)
+    handoff[0].metric("Submitted by", submitted_by)
+    handoff[1].metric("Approved by", approved_by or "Not yet approved")
+    handoff[2].metric("Current reviewer", current_reviewer or "Review complete")
+    handoff[3].metric("Remaining approvals", " → ".join(remaining) if remaining else "None")
+
+
+def render_ai_decision_support(context: dict, data: dict[str, pd.DataFrame]) -> None:
+    recommendation, reasons = deal_decision_support(context, data)
+    with st.container(border=True):
+        st.markdown("<span class='ai-support-marker'></span>", unsafe_allow_html=True)
+        st.subheader("AI Decision Support")
+        st.markdown(f"**Recommended action: {recommendation}**")
+        st.markdown("**Why**")
+        for tone, reason in reasons:
+            prefix = "Positive" if tone == "positive" else "Attention" if tone == "attention" else "Critical"
+            st.write(f"**{prefix}:** {reason}")
+
+
+def render_deal_approval_action(
+    selected: str,
+    deal_status: str,
+    pending_role: str,
+    pending_label: str,
+    route_df: pd.DataFrame,
+    data: dict[str, pd.DataFrame],
+) -> None:
+    if deal_status in ARCHIVE_STATUSES:
+        return
+    user_role = current_role()
+    allowed = allowed_decisions_for_role(user_role)
+    can_act = bool(pending_role) and user_can_act_for_role(data, pending_role, current_persona(), user_role) and bool(allowed)
+    with st.container(border=True):
+        st.markdown("<span class='approval-action-marker'></span>", unsafe_allow_html=True)
+        st.subheader("Your Decision")
+        if can_act:
+            st.success(f"This deal is awaiting your review as {pending_label}.")
+        else:
+            st.info(f"This deal is awaiting {pending_label}. You can review the case, but only the current reviewer can decide.")
+        controls = st.columns([2.2, 3.2, 1.3])
+        decision = controls[0].radio(
+            "Decision",
+            DECISIONS,
+            horizontal=True,
+            key=f"detail_decision_{selected}",
+            disabled=not can_act,
+        )
+        comment = controls[1].text_input(
+            "Decision comment",
+            key=f"detail_decision_comment_{selected}",
+            placeholder="Required for Request Changes and Reject.",
+            disabled=not can_act,
+        )
+        comment_required = decision in {"Request Changes", "Reject"}
+        capture_disabled = not can_act or decision not in allowed or (comment_required and not comment.strip())
+        controls[2].markdown("<div style='height:1.65rem'></div>", unsafe_allow_html=True)
+        if controls[2].button(
+            "Capture Decision",
+            type="primary",
+            key=f"detail_capture_decision_{selected}",
+            disabled=capture_disabled,
+            use_container_width=True,
+        ):
+            success, message = process_approval_decision(selected, decision, comment, route_df, deal_status, data)
+            if success:
+                st.session_state.deal_detail_confirmation = message
+                st.rerun()
+            st.error(message)
 
 
 def human_route_reason(row: pd.Series) -> str:
@@ -3282,7 +3492,7 @@ def render_approval_timeline(deal_id: str, deal_status: str, route_df: pd.DataFr
         if role in completed:
             timeline.append(f"Approved by {role}")
         elif role == current:
-            timeline.append(f"Pending: {role}")
+            timeline.append(f"Awaiting {role} Review")
         else:
             timeline.append(f"Next: {role}")
     if deal_status in {"Approved", "Final Approved"}:
@@ -3293,7 +3503,7 @@ def render_approval_timeline(deal_id: str, deal_status: str, route_df: pd.DataFr
 
 
 def render_technical_route_details(context: dict) -> None:
-    with st.expander("Technical route details", expanded=False):
+    with st.expander("Approval rule details", expanded=False):
         route = context["route_df"].copy()
         if route.empty:
             st.info("No approval route is required.")
@@ -3348,12 +3558,12 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
 
     st.markdown(f"<h1>{deal.get('Deal Title', selected)}</h1>", unsafe_allow_html=True)
     metrics = st.columns(5)
-    metrics[0].metric("Status", deal_status)
+    metrics[0].metric("Status", business_deal_status(deal_status))
     metrics[1].metric("Requested Net Revenue", money(summary["total_proposed"]))
     metrics[2].metric("Requested Discount %", pct(summary["discount_pct"]))
     margin_label = "Resulting Gross Margin %" if margin_visibility_for_role() == "Exact" else "Margin Status"
     metrics[3].metric(margin_label, landing_margin_display(summary))
-    metrics[4].metric("Approval Status / Current Pending Role", pending_label)
+    metrics[4].metric("Approval Status", business_approval_status(deal_status, pending_role))
 
     customer = customer_record_for_deal(deal, data)
     confirmation = st.session_state.get("deal_detail_confirmation", "")
@@ -3361,46 +3571,19 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
         st.success(confirmation)
         st.session_state.deal_detail_confirmation = ""
 
+    render_ai_decision_support(context, data)
+    render_approval_handoff(deal, data, selected, deal_status, route_df)
+    render_deal_approval_action(selected, deal_status, pending_role, pending_label, route_df, data)
+
     tabs = st.tabs(["Decision Summary", "Financials & Pricing", "Evidence & Audit"])
     with tabs[0]:
         st.write(short_business_text(deal.get("Strategic Rationale", ""), "Commercial rationale is not available.", 320))
         if customer:
             render_customer_risk_strip(customer, data)
 
-        st.subheader("AI Decision Support")
-        support = st.columns(3)
-        support[0].metric("Approve", "Available")
-        support[1].metric("Request Changes", "Available")
-        support[2].metric("Reject", "Available")
-        for reason in decision_support_reasons(context):
-            st.write(f"- {reason}")
-
         st.subheader("Approval Timeline")
         render_approval_timeline(selected, deal_status, route_df)
         render_technical_route_details(context)
-
-        if deal_status not in ARCHIVE_STATUSES:
-            st.subheader("Approval Action")
-            user_role = current_role()
-            allowed = allowed_decisions_for_role(user_role)
-            can_act = bool(pending_role) and user_can_act_for_role(data, pending_role, current_persona(), user_role) and bool(allowed)
-            if not can_act:
-                st.info(f"Current pending approver: {pending_label}. The current user has read-only access.")
-            decision = st.radio("Decision", DECISIONS, horizontal=True, key=f"detail_decision_{selected}", disabled=not can_act)
-            comment = st.text_area(
-                "Decision comment",
-                key=f"detail_decision_comment_{selected}",
-                placeholder="Required for Request Changes and Reject.",
-                disabled=not can_act,
-            )
-            comment_required = decision in {"Request Changes", "Reject"}
-            capture_disabled = not can_act or decision not in allowed or (comment_required and not comment.strip())
-            if st.button("Capture Decision", type="primary", key=f"detail_capture_decision_{selected}", disabled=capture_disabled):
-                success, message = process_approval_decision(selected, decision, comment, route_df, deal_status, data)
-                if success:
-                    st.session_state.deal_detail_confirmation = message
-                    st.rerun()
-                st.error(message)
 
     with tabs[1]:
         financial_metrics = st.columns(4)
