@@ -390,6 +390,8 @@ def load_demo_data() -> dict[str, pd.DataFrame]:
 
 
 def init_state() -> None:
+    st.session_state.setdefault("persona", "Maya Chen")
+    st.session_state.setdefault("role", PERSONAS[st.session_state.persona])
     st.session_state.setdefault("runtime_deals", [])
     st.session_state.setdefault("runtime_lines", [])
     st.session_state.setdefault("audit_events", [])
@@ -405,6 +407,13 @@ def init_state() -> None:
     st.session_state.setdefault("selected_deal_id", None)
     st.session_state.setdefault("deal_detail_parent", "Deal Requests")
     st.session_state.setdefault("draft_lines", None)
+    st.session_state.setdefault("line_editor_rows", None)
+    st.session_state.setdefault("line_editor_revision", 0)
+    st.session_state.setdefault("editing_deal_id", None)
+    st.session_state.setdefault("deal_edit_active", False)
+    st.session_state.setdefault("current_draft_snapshot", None)
+    st.session_state.setdefault("role_selector_version", 0)
+    st.session_state.setdefault("pending_role_switch", None)
     st.session_state.setdefault("current_page", "Deal Request List")
 
 
@@ -1196,6 +1205,71 @@ def navigate_to_deal_detail(deal_id: str, source: str) -> None:
 def set_current_page(page: str) -> None:
     st.session_state.current_page = page
     st.rerun()
+
+
+def clear_deal_editor_state() -> None:
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("form_") or key == "line_editor":
+            del st.session_state[key]
+    st.session_state.draft_lines = None
+    st.session_state.line_editor_rows = None
+    st.session_state.line_editor_revision += 1
+    st.session_state.editing_deal_id = None
+    st.session_state.deal_edit_active = False
+    st.session_state.current_draft_snapshot = None
+
+
+def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
+    clear_deal_editor_state()
+    deal_type_aliases = {
+        "New Account / Launch": "New Account Launch",
+        "Tender": "Tender Bid",
+        "Strategic Exception": "Strategic Opportunity",
+    }
+    saved_deal_type = str(deal.get("Deal Type", "Contract Renewal"))
+    field_map = {
+        "form_customer": deal.get("Customer Name", deal.get("Sold-To Customer Name", "")),
+        "form_ship_to": deal.get("End Account Name", ""),
+        "form_delivery_model": deal.get("Delivery Model", "Direct customer delivery"),
+        "form_title": deal.get("Deal Title", ""),
+        "form_type": deal_type_aliases.get(saved_deal_type, saved_deal_type),
+        "form_owner": deal.get("Sales Owner", current_persona()),
+        "form_manager": deal.get("Sales Manager", "Jordan Blake"),
+        "form_terms": deal.get("Payment Terms", "Net 30"),
+        "form_contract": int(safe_float(deal.get("Contract Months"), 24)),
+        "form_visibility": deal.get("Visibility", "Confidential"),
+        "form_justification": deal.get("Strategic Rationale", ""),
+        "form_kam_risk_assessment": deal.get("KAM Risk Assessment", "Medium"),
+        "form_risk_reason": deal.get("Risk Reason", RISK_REASON_VALUES[0]),
+        "form_included_plan": deal.get("Included In Latest Financial Plan", "Yes"),
+    }
+    for key, value in field_map.items():
+        if value is not None and value != "":
+            st.session_state[key] = value
+    st.session_state.draft_lines = lines.copy()
+    editor_rows = lines.copy()
+    if "Requested Total Discount %" not in editor_rows and "Requested Discount %" in editor_rows:
+        editor_rows["Requested Total Discount %"] = editor_rows["Requested Discount %"]
+    if "Requested Total Discount %" in editor_rows:
+        editor_rows["Requested Total Discount %"] = pd.to_numeric(
+            editor_rows["Requested Total Discount %"], errors="coerce"
+        ).fillna(0) * 100
+    st.session_state.line_editor_rows = editor_rows
+    st.session_state.editing_deal_id = str(deal.get("Deal ID", ""))
+    st.session_state.deal_edit_active = True
+    st.session_state.current_page = "New Deal Intake"
+
+
+def sync_context_customer_defaults() -> None:
+    customer_name = str(st.session_state.get("form_customer", ""))
+    st.session_state.form_title = f"{customer_name} - {date.today().isoformat()}"
+    if st.session_state.get("form_delivery_model", "Direct customer delivery") == "Direct customer delivery":
+        st.session_state.form_ship_to = customer_name
+
+
+def sync_delivery_model() -> None:
+    if st.session_state.get("form_delivery_model") == "Direct customer delivery":
+        st.session_state.form_ship_to = str(st.session_state.get("form_customer", ""))
 
 
 def get_selected_dataframe_deal_id(table_event: object, display_df: pd.DataFrame) -> str | None:
@@ -2728,48 +2802,72 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
     if st.session_state.draft_lines is None:
         st.session_state.draft_lines = pd.DataFrame([build_default_line(data, "RX-ONC-100")])
+    if st.session_state.line_editor_rows is None:
+        editor_seed = st.session_state.draft_lines.copy()
+        if "Requested Total Discount %" in editor_seed:
+            editor_seed["Requested Total Discount %"] = pd.to_numeric(
+                editor_seed["Requested Total Discount %"], errors="coerce"
+            ).fillna(0) * 100
+        st.session_state.line_editor_rows = editor_seed
+    st.session_state.deal_edit_active = True
 
     tabs = st.tabs(["Context", "Commercials", "Customer & Market", "Financial Impact", "Approval Recommendation"])
 
     with tabs[0]:
         st.subheader("Deal Context")
-        customer_name = st.selectbox("Customer", customers["Customer Name"].tolist(), key="form_customer")
+        customer_name = st.selectbox(
+            "Customer",
+            customers["Customer Name"].tolist(),
+            key="form_customer",
+            on_change=sync_context_customer_defaults,
+        )
         customer = customers[customers["Customer Name"].eq(customer_name)].iloc[0].to_dict()
-        account_cols = st.columns(2)
-        ship_to_account = account_cols[0].text_input("End Account Name", value=str(customer.get("Customer Name", customer_name)), key="form_ship_to")
-        bill_to_account = account_cols[1].text_input("Sold-To Customer Name", value=str(customer.get("Customer Name", customer_name)), key="form_bill_to")
+        delivery_model = st.radio(
+            "Delivery Model",
+            ["Direct customer delivery", "Distributor delivery to end account"],
+            horizontal=True,
+            key="form_delivery_model",
+            on_change=sync_delivery_model,
+        )
+        if "form_ship_to" not in st.session_state:
+            st.session_state.form_ship_to = customer_name
+        if delivery_model == "Direct customer delivery":
+            st.session_state.form_ship_to = customer_name
+        ship_to_account = st.text_input(
+            "End Account Name",
+            key="form_ship_to",
+            disabled=delivery_model == "Direct customer delivery",
+        )
         deal_cols = st.columns(2)
-        deal_title = deal_cols[0].text_input("Deal Title", value=f"{customer_name} Commercial Deal", key="form_title")
-        deal_type = deal_cols[0].selectbox("Deal Type", ["New Account / Launch", "Contract Renewal", "Tender", "Competitive Defense", "Strategic Exception"], key="form_type")
+        if "form_title" not in st.session_state:
+            st.session_state.form_title = f"{customer_name} - {date.today().isoformat()}"
+        deal_title = deal_cols[0].text_input("Deal Title", key="form_title")
+        deal_type = deal_cols[0].selectbox(
+            "Deal Type",
+            [
+                "New Account Launch",
+                "Tender Bid",
+                "Contract Renewal",
+                "Competitive Defense",
+                "Strategic Opportunity",
+            ],
+            key="form_type",
+        )
         region = str(customer.get("Region", "Region A"))
         deal_cols[1].text_input("Region", value=region, disabled=True)
-        purpose = st.selectbox(
-            "Purpose",
-            ["Tender", "Competitive defense", "New listing", "Contract renewal", "Inventory liquidation", "Expiry mitigation", "Strategic account", "Other"],
-            key="form_purpose",
-        )
-        if purpose == "Tender":
+        if deal_type == "Tender Bid":
             tender_cols = st.columns(4)
-            tender_name = tender_cols[0].text_input("Tender name", value=f"{customer_name} access tender", key="form_tender_name")
+            tender_name = tender_cols[0].text_input("Tender Name", value=f"{customer_name} access tender", key="form_tender_name")
             tender_id = tender_cols[1].text_input("Tender ID", value=f"TND-{date.today().year}-{str(customer.get('Customer ID', '000'))[-3:]}", key="form_tender_id")
-            tender_closing = tender_cols[2].date_input("Tender closing date", value=date.today() + timedelta(days=28), key="form_tender_closing")
-            award_date = tender_cols[3].date_input("Award date", value=date.today() + timedelta(days=60), key="form_award_date")
-            tender_mechanism = st.selectbox("Tender mechanism", ["Winner takes all", "Multi-award", "Framework agreement", "Unknown"], key="form_tender_mechanism")
+            tender_closing = tender_cols[2].date_input("Submission Deadline", value=date.today() + timedelta(days=28), key="form_tender_closing")
+            award_date = tender_cols[3].date_input("Award Date", value=date.today() + timedelta(days=60), key="form_award_date")
+            tender_mechanism = st.selectbox("Tender Mechanism", ["Winner takes all", "Multi-award", "Framework agreement", "Unknown"], key="form_tender_mechanism")
         else:
             tender_name = st.session_state.get("form_tender_name", "")
             tender_id = st.session_state.get("form_tender_id", "")
             tender_closing = st.session_state.get("form_tender_closing", None)
             award_date = st.session_state.get("form_award_date", None)
             tender_mechanism = st.session_state.get("form_tender_mechanism", "")
-        if purpose == "Expiry mitigation":
-            expiry_cols = st.columns(3)
-            quantity_at_risk = expiry_cols[0].number_input("Quantity at risk", min_value=0, value=500, step=50, key="form_quantity_at_risk")
-            shelf_life = expiry_cols[1].number_input("Remaining shelf life", min_value=0, value=90, step=15, key="form_shelf_life")
-            inventory_value_at_risk = expiry_cols[2].number_input("Inventory value at risk", min_value=0.0, value=125000.0, step=5000.0, key="form_inventory_value_at_risk")
-        else:
-            quantity_at_risk = st.session_state.get("form_quantity_at_risk", 0)
-            shelf_life = st.session_state.get("form_shelf_life", 0)
-            inventory_value_at_risk = st.session_state.get("form_inventory_value_at_risk", 0.0)
         owner_cols = st.columns(4)
         kam_users = [name for name, role in PERSONAS.items() if is_kam_role(role)]
         default_owner = current_persona() if current_persona() in kam_users else kam_users[0]
@@ -2799,10 +2897,21 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         contract_months = c2.number_input("Contract Duration Months", min_value=1, max_value=72, value=24, step=1, key="form_contract")
         billing = c3.selectbox("Billing Frequency", ["Annual", "Quarterly", "Monthly", "Milestone"], key="form_billing")
         special_terms = st.checkbox("Special terms requested", key="form_special")
-        special_desc = st.text_area("Special Terms Description", value="", key="form_special_desc")
+        if special_terms:
+            special_desc = st.text_area("Special Terms Description", key="form_special_desc")
+            if not str(special_desc).strip():
+                st.warning("Special Terms Description is required when special terms are requested.")
+        else:
+            special_desc = ""
+            st.session_state.form_special_desc = ""
         st.divider()
         st.subheader("Visibility")
-        visibility = st.radio("Visibility", ["Confidential", "Bid Only", "Public"], horizontal=True, key="form_visibility")
+        visibility = st.radio(
+            "Visibility",
+            ["Confidential", "Bid Only", "Pricing Confidential", "Public"],
+            horizontal=True,
+            key="form_visibility",
+        )
         if visibility == "Public":
             pub_cols = st.columns(2)
             publication_source = pub_cols[0].text_input("Publication source", value="National tender portal", key="form_publication_source")
@@ -2818,28 +2927,46 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             "Requested Total Discount % is the complete customer-facing discount from Gross Price. "
             "Base Rebate is already reflected in Gross Price and is shown only as reference."
         )
-        st.session_state.draft_lines = ensure_commercial_line_columns(st.session_state.draft_lines, data)
+        line_actions = st.columns([1, 6])
+        if line_actions[0].button("Add SKU", icon=":material/add:", key="add_sku_line"):
+            current_rows = st.session_state.line_editor_rows.copy()
+            new_line = build_default_line(data, products.iloc[0]["SKU"])
+            new_line["Requested Total Discount %"] = safe_float(new_line.get("Requested Total Discount %")) * 100
+            st.session_state.line_editor_rows = pd.concat([current_rows, pd.DataFrame([new_line])], ignore_index=True)
+            st.session_state.line_editor_revision += 1
+            st.rerun()
+        editor_source = st.session_state.line_editor_rows.copy()
         editor_config = {
             "SKU": st.column_config.SelectboxColumn("SKU", options=products["SKU"].tolist(), required=True),
             "Quantity": st.column_config.NumberColumn("Quantity", min_value=1, step=1),
-            "Requested Total Discount %": st.column_config.NumberColumn("Requested Total Discount %", min_value=0.0, max_value=1.0, step=0.01, format="%.1f%%"),
-            "Line Commercial Rationale": st.column_config.TextColumn("Line Commercial Justification"),
+            "Requested Total Discount %": st.column_config.NumberColumn(
+                "Requested Total Discount %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                format="%.1f%%",
+            ),
         }
         editable_line_cols = [
             "SKU",
             "Quantity",
             "Requested Total Discount %",
-            "Line Commercial Rationale",
         ]
-        st.session_state.draft_lines = st.data_editor(
-            st.session_state.draft_lines[[col for col in editable_line_cols if col in st.session_state.draft_lines]],
+        editor_key = f"line_editor_{st.session_state.line_editor_revision}"
+        edited_rows = st.data_editor(
+            editor_source[[col for col in editable_line_cols if col in editor_source]],
             num_rows="dynamic",
             use_container_width=True,
             column_config=editor_config,
             hide_index=True,
-            key="line_editor",
+            key=editor_key,
         )
-        st.session_state.draft_lines = ensure_commercial_line_columns(st.session_state.draft_lines, data)
+        st.session_state.line_editor_rows = edited_rows.copy()
+        calculation_rows = st.session_state.line_editor_rows.copy()
+        calculation_rows["Requested Total Discount %"] = pd.to_numeric(
+            calculation_rows["Requested Total Discount %"], errors="coerce"
+        ).fillna(0) / 100
+        st.session_state.draft_lines = ensure_commercial_line_columns(calculation_rows, data)
         calc_lines = normalize_lines(st.session_state.draft_lines, data)
         summary = summarize_lines(calc_lines)
         metric_cols = st.columns(5)
@@ -2854,6 +2981,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 "Product Name",
                 "Product Category",
                 "Quantity",
+                "Unit List Price",
                 "Unit Gross Price",
                 "Base Discount %",
                 "Current Net Price",
@@ -2867,9 +2995,9 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 "Target Gross Margin %",
                 "Finance Director Trigger Margin",
                 "General Manager Trigger Margin",
-                "Line Commercial Rationale",
             ]
             view = calc_lines[[col for col in view_cols if col in calc_lines]].copy()
+            view = view.rename(columns={"Unit List Price": "List Price"})
             if "Requested Discount %" in view:
                 view["Requested Discount %"] = view["Requested Discount %"] * 100
             st.dataframe(mask_sensitive_dataframe(view), use_container_width=True, hide_index=True)
@@ -2906,7 +3034,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             expected_competitors = st.multiselect(
                 "Expected competitors",
                 ["NovaThera", "HelixBio", "Orion Generics", "VitaCore", "MedAxis", "Unknown"],
-                default=["NovaThera"] if st.session_state.get("form_purpose") == "Tender" else [],
+                default=["NovaThera"] if st.session_state.get("form_type") == "Tender Bid" else [],
                 key="form_expected_competitors",
             )
             competitor_type = st.selectbox(
@@ -2957,15 +3085,17 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Customer Name": customer_name,
         "Customer ID": customer.get("Customer ID"),
         "Sold-To Customer ID": customer.get("Customer ID"),
-        "Sold-To Customer Name": st.session_state.get("form_bill_to", customer_name),
+        "Sold-To Customer Name": customer_name,
         "End Account ID": customer.get("Customer ID"),
         "End Account Name": st.session_state.get("form_ship_to", customer_name),
         "Ship-to Account": st.session_state.get("form_ship_to", ""),
-        "Bill-to Account": st.session_state.get("form_bill_to", ""),
-        "Purpose": st.session_state.get("form_purpose", ""),
+        "Bill-to Account": customer_name,
+        "Delivery Model": st.session_state.get("form_delivery_model", "Direct customer delivery"),
+        "Purpose": st.session_state.get("form_type", ""),
         "Tender Name": st.session_state.get("form_tender_name", ""),
         "Tender ID": st.session_state.get("form_tender_id", ""),
         "Tender Closing Date": st.session_state.get("form_tender_closing", ""),
+        "Submission Deadline": st.session_state.get("form_tender_closing", ""),
         "Award Date": st.session_state.get("form_award_date", ""),
         "Tender Mechanism": st.session_state.get("form_tender_mechanism", ""),
         "Quantity at Risk": st.session_state.get("form_quantity_at_risk", 0),
@@ -3023,7 +3153,15 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
     calc_lines = normalize_lines(st.session_state.draft_lines, data)
     summary = summarize_lines(calc_lines)
     errors, warnings = validate_deal(header, calc_lines, data)
+    if header.get("Special Terms Requested") and not str(header.get("Special Terms Description", "")).strip():
+        errors.append("Special Terms Description is required when special terms are requested.")
     route_df = route_preview(header, calc_lines, summary, data)
+    st.session_state.current_draft_snapshot = {
+        "header": header,
+        "lines": calc_lines.copy(),
+        "summary": summary,
+        "route_df": route_df.copy(),
+    }
     system_score = system_risk_score(header, summary, data, calc_lines)
     if kam_risk_exceeds_system_score(header.get("KAM Risk Assessment"), system_score):
         warnings.append("KAM risk assessment exceeds system score; additional rationale required.")
@@ -3267,11 +3405,11 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
 
 def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df: pd.DataFrame, status: str, recommendation: str) -> str:
-    deal_id = f"DEAL-S-{len(st.session_state.runtime_deals) + 1:04d}"
+    editing_deal_id = str(st.session_state.get("editing_deal_id") or "")
+    deal_id = editing_deal_id or f"DEAL-S-{len(st.session_state.runtime_deals) + 1:04d}"
     workflow_status = "Pending Sales Manager" if status == "Submitted" else status
     risk_assessment = header.get("KAM Risk Assessment", "Medium")
-    st.session_state.runtime_deals.append(
-        {
+    record = {
             "Deal ID": deal_id,
             "Deal Title": header["Deal Title"],
             "Sold-To Customer ID": header.get("Sold-To Customer ID", header["Customer ID"]),
@@ -3283,9 +3421,11 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Ship-to Account": header.get("Ship-to Account", ""),
             "Bill-to Account": header.get("Bill-to Account", ""),
             "Purpose": header.get("Purpose", ""),
+            "Delivery Model": header.get("Delivery Model", "Direct customer delivery"),
             "Tender Name": header.get("Tender Name", ""),
             "Tender ID": header.get("Tender ID", ""),
             "Tender Mechanism": header.get("Tender Mechanism", ""),
+            "Submission Deadline": str(header.get("Submission Deadline", "")),
             "Visibility": header.get("Visibility", ""),
             "Customer Risk Flag": header.get("Customer Risk Flag", ""),
             "Credit Status": header.get("Credit Status", ""),
@@ -3321,7 +3461,17 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Discount %": summary["discount_pct"],
             "Recommendation": recommendation,
         }
+    existing_index = next(
+        (index for index, item in enumerate(st.session_state.runtime_deals) if str(item.get("Deal ID", "")) == deal_id),
+        None,
     )
+    if existing_index is None:
+        st.session_state.runtime_deals.append(record)
+    else:
+        st.session_state.runtime_deals[existing_index] = record
+    st.session_state.runtime_lines = [
+        item for item in st.session_state.runtime_lines if str(item.get("Deal ID", "")) != deal_id
+    ]
     for i, (_, line) in enumerate(lines.iterrows(), start=1):
         item = line.to_dict()
         item["Deal ID"] = deal_id
@@ -3329,7 +3479,10 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
         st.session_state.runtime_lines.append(item)
     add_audit(deal_id, "Deal draft saved" if status == "Draft" else "Deal created", details=f"Status: {workflow_status}")
     if status == "Submitted":
+        st.session_state.deal_approval_steps[deal_id] = []
         ensure_approval_assignments(deal_id, route_df, load_demo_data())
+        st.session_state.deal_edit_active = False
+        st.session_state.editing_deal_id = None
     return deal_id
 
 
@@ -3655,6 +3808,14 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     if confirmation:
         st.success(confirmation)
         st.session_state.deal_detail_confirmation = ""
+    if deal_status == "Draft":
+        is_creator = str(deal.get("Sales Owner", "")) == current_persona()
+        if is_creator:
+            if st.button("Edit Draft", type="primary", key=f"edit_draft_{selected}"):
+                begin_draft_edit(deal, calc_lines)
+                st.rerun()
+        else:
+            st.info("This draft is read-only. Only the deal creator can edit, save, or submit it.")
     last_comment = str(deal.get("Last Decision Comment", "")).strip()
     if deal_status == "Changes Requested":
         st.warning(f"Changes requested: {last_comment or 'Review the requested changes before resubmitting.'}")
@@ -4322,11 +4483,55 @@ def reset_demo_session() -> None:
     st.session_state.selected_deal_id = None
     st.session_state.deal_detail_parent = "Deal Requests"
     st.session_state.draft_lines = None
+    st.session_state.line_editor_rows = None
+    st.session_state.line_editor_revision += 1
+    st.session_state.editing_deal_id = None
+    st.session_state.deal_edit_active = False
+    st.session_state.current_draft_snapshot = None
+    st.session_state.pending_role_switch = None
     st.session_state.current_page = "Deal Request List"
     st.rerun()
 
 
-def top_navigation() -> str:
+def complete_role_switch(target_persona: str) -> None:
+    clear_deal_editor_state()
+    st.session_state.persona = target_persona
+    st.session_state.role = PERSONAS[target_persona]
+    st.session_state.role_selector_version += 1
+    st.session_state.pending_role_switch = None
+    st.session_state.selected_deal_id = None
+    st.session_state.deal_list_selected_deal_id = None
+    st.session_state.approval_queue_selected_deal_id = None
+    st.session_state.current_page = "Deal Request List"
+
+
+@st.dialog("Switch Current User")
+def role_switch_dialog(data: dict[str, pd.DataFrame]) -> None:
+    target = str(st.session_state.get("pending_role_switch") or "")
+    st.write("Do you want to save this deal as Draft before switching role?")
+    actions = st.columns(3)
+    snapshot = st.session_state.get("current_draft_snapshot")
+    if actions[0].button("Save Draft and Switch", type="primary", disabled=not bool(snapshot)):
+        save_runtime_deal(
+            snapshot["header"],
+            snapshot["lines"],
+            snapshot["summary"],
+            snapshot["route_df"],
+            status="Draft",
+            recommendation="Draft",
+        )
+        complete_role_switch(target)
+        st.rerun()
+    if actions[1].button("Discard and Switch"):
+        complete_role_switch(target)
+        st.rerun()
+    if actions[2].button("Cancel"):
+        st.session_state.role_selector_version += 1
+        st.session_state.pending_role_switch = None
+        st.rerun()
+
+
+def top_navigation(data: dict[str, pd.DataFrame]) -> str:
     valid_pages = {
         "Deal Request List",
         "New Deal Intake",
@@ -4346,17 +4551,28 @@ def top_navigation() -> str:
         nav_cols = st.columns([2.7, 0.85, 2.1, 1.25])
         nav_cols[0].markdown("<span class='nav-marker nav-title-marker'></span><h3>Deal Desk Copilot</h3>", unsafe_allow_html=True)
         nav_cols[2].markdown("<span class='nav-marker nav-user-marker'></span>", unsafe_allow_html=True)
-        persona = nav_cols[2].selectbox(
+        persona_options = list(PERSONAS.keys())
+        selected_persona = nav_cols[2].selectbox(
             "Current User",
-            list(PERSONAS.keys()),
-            key="persona",
+            persona_options,
+            index=persona_options.index(current_persona()),
+            key=f"role_selector_{st.session_state.role_selector_version}",
             format_func=lambda name: f"{name} | {PERSONAS[name]}",
         )
-        st.session_state.role = PERSONAS[persona]
+        if selected_persona != current_persona() and not st.session_state.get("pending_role_switch"):
+            if st.session_state.get("deal_edit_active") and st.session_state.get("current_page") == "New Deal Intake":
+                st.session_state.pending_role_switch = selected_persona
+            else:
+                complete_role_switch(selected_persona)
+                st.rerun()
+        if st.session_state.get("pending_role_switch"):
+            role_switch_dialog(data)
 
         new_disabled = not can_create_request(st.session_state.role)
         nav_cols[1].markdown("<span class='nav-marker nav-new-marker'></span>", unsafe_allow_html=True)
         if nav_cols[1].button("+ New Request", type="primary", disabled=new_disabled, use_container_width=True):
+            clear_deal_editor_state()
+            st.session_state.deal_edit_active = True
             st.session_state.current_page = "New Deal Intake"
             st.rerun()
 
@@ -4396,7 +4612,7 @@ def main() -> None:
     inject_css()
     init_state()
     data = load_demo_data()
-    page = top_navigation()
+    page = top_navigation(data)
     if page == "Deal Request List":
         page_deal_list(data)
     elif page == "New Deal Intake":
