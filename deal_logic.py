@@ -180,7 +180,7 @@ def calculate_decision_score(
 
     strategic_score = 12
     roles = set(route_df["Role"]) if not route_df.empty else set()
-    if "Market Access Director" in roles:
+    if "Pricing Governance Owner" in roles:
         strategic_score += 3
     if "General Manager" in roles:
         strategic_score += 4
@@ -205,7 +205,7 @@ def calculate_decision_score(
     risk_score = 18
     if "Finance Director" in roles:
         risk_score -= 2
-    if "Supply Chain Manager" in roles:
+    if "Operations Manager" in roles:
         risk_score -= 2
     if "General Manager" in roles:
         risk_score -= 2
