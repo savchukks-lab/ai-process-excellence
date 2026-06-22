@@ -4505,10 +4505,9 @@ def complete_role_switch(target_persona: str) -> None:
     st.session_state.current_page = "Deal Request List"
 
 
-@st.dialog("Switch Current User")
-def role_switch_dialog(data: dict[str, pd.DataFrame]) -> None:
+def render_role_switch_confirmation(data: dict[str, pd.DataFrame]) -> None:
     target = str(st.session_state.get("pending_role_switch") or "")
-    st.write("Do you want to save this deal as Draft before switching role?")
+    st.warning("Do you want to save this deal as Draft before switching role?")
     actions = st.columns(3)
     snapshot = st.session_state.get("current_draft_snapshot")
     if actions[0].button("Save Draft and Switch", type="primary", disabled=not bool(snapshot)):
@@ -4566,7 +4565,7 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
                 complete_role_switch(selected_persona)
                 st.rerun()
         if st.session_state.get("pending_role_switch"):
-            role_switch_dialog(data)
+            render_role_switch_confirmation(data)
 
         new_disabled = not can_create_request(st.session_state.role)
         nav_cols[1].markdown("<span class='nav-marker nav-new-marker'></span>", unsafe_allow_html=True)
