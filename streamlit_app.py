@@ -2957,11 +2957,11 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         st.divider()
         st.subheader("Products, Volume, and Requested Pricing")
         st.caption(
-            "Requested Total Discount % is the complete customer-facing discount from Gross Price. "
-            "Base Rebate is already reflected in Gross Price and is shown only as reference."
+            "Requested Total Discount % represents the full customer-facing discount from List Price. "
+            "Any standard contractual discounts or rebates are considered part of the requested total discount."
         )
         line_actions = st.columns([1, 6])
-        if line_actions[0].button("Add SKU", icon=":material/add:", key="add_sku_line"):
+        if line_actions[0].button("+ Add SKU", key="add_sku_line"):
             current_rows = st.session_state.line_editor_rows.copy()
             new_line = build_default_line(data, products.iloc[0]["SKU"])
             new_line["Requested Total Discount %"] = safe_float(new_line.get("Requested Total Discount %")) * 100
