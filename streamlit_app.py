@@ -225,7 +225,6 @@ def inject_css() -> None:
             color: inherit !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.ai-support-marker) {
-            border-left: 4px solid #16805d;
             background: #f8fbfa;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.approval-action-marker) {
@@ -410,6 +409,8 @@ def init_state() -> None:
     st.session_state.setdefault("line_editor_rows", None)
     st.session_state.setdefault("line_editor_revision", 0)
     st.session_state.setdefault("editing_deal_id", None)
+    st.session_state.setdefault("editing_deal_original_status", "")
+    st.session_state.setdefault("editing_review_comment", "")
     st.session_state.setdefault("deal_edit_active", False)
     st.session_state.setdefault("current_draft_snapshot", None)
     st.session_state.setdefault("role_selector_version", 0)
@@ -1148,6 +1149,9 @@ def combined_deals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     seed = data["deals"].copy()
     runtime = get_runtime_deals_df()
     if not runtime.empty:
+        if not seed.empty and "Deal ID" in seed and "Deal ID" in runtime:
+            runtime_ids = set(runtime["Deal ID"].astype(str))
+            seed = seed[~seed["Deal ID"].astype(str).isin(runtime_ids)]
         seed = pd.concat([seed, runtime], ignore_index=True, sort=False)
     seed = normalize_deal_headers(seed)
     overrides = st.session_state.get("deal_status_overrides", {})
@@ -1215,6 +1219,8 @@ def clear_deal_editor_state() -> None:
     st.session_state.line_editor_rows = None
     st.session_state.line_editor_revision += 1
     st.session_state.editing_deal_id = None
+    st.session_state.editing_deal_original_status = ""
+    st.session_state.editing_review_comment = ""
     st.session_state.deal_edit_active = False
     st.session_state.current_draft_snapshot = None
 
@@ -1227,6 +1233,10 @@ def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
         "Strategic Exception": "Strategic Opportunity",
     }
     saved_deal_type = str(deal.get("Deal Type", "Contract Renewal"))
+    def saved_date(value: object, fallback: date) -> date:
+        parsed = pd.to_datetime(value, errors="coerce")
+        return fallback if pd.isna(parsed) else parsed.date()
+
     field_map = {
         "form_customer": deal.get("Customer Name", deal.get("Sold-To Customer Name", "")),
         "form_ship_to": deal.get("End Account Name", ""),
@@ -1237,7 +1247,30 @@ def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
         "form_manager": deal.get("Sales Manager", "Jordan Blake"),
         "form_terms": deal.get("Payment Terms", "Net 30"),
         "form_contract": int(safe_float(deal.get("Contract Months"), 24)),
+        "form_billing": deal.get("Billing Frequency", "Annual"),
+        "form_special": str(deal.get("Special Terms Requested", "False")).lower() in {"true", "yes", "1"},
+        "form_special_desc": deal.get("Special Terms Description", ""),
         "form_visibility": deal.get("Visibility", "Confidential"),
+        "form_publication_source": deal.get("Publication Source", ""),
+        "form_publication_url": deal.get("Publication URL", ""),
+        "form_access_description": deal.get("Access Description", ""),
+        "form_tender_name": deal.get("Tender Name", ""),
+        "form_tender_id": deal.get("Tender ID", ""),
+        "form_tender_mechanism": deal.get("Tender Mechanism", ""),
+        "form_tender_closing": saved_date(
+            deal.get("Submission Deadline"), date.today() + timedelta(days=28)
+        ),
+        "form_award_date": saved_date(deal.get("Award Date"), date.today() + timedelta(days=60)),
+        "form_close": saved_date(
+            deal.get("Expected Award / Decision Date", deal.get("Target Close Date")),
+            date.today() + timedelta(days=45),
+        ),
+        "form_effective": saved_date(
+            deal.get("Requested Delivery Start"), date.today() + timedelta(days=60)
+        ),
+        "form_delivery_end": saved_date(
+            deal.get("Requested Delivery End"), date.today() + timedelta(days=120)
+        ),
         "form_justification": deal.get("Strategic Rationale", ""),
         "form_kam_risk_assessment": deal.get("KAM Risk Assessment", "Medium"),
         "form_risk_reason": deal.get("Risk Reason", RISK_REASON_VALUES[0]),
@@ -1256,6 +1289,14 @@ def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
         ).fillna(0) * 100
     st.session_state.line_editor_rows = editor_rows
     st.session_state.editing_deal_id = str(deal.get("Deal ID", ""))
+    saved_status = str(deal.get("Status", "")).strip()
+    returned_for_changes = str(deal.get("Returned For Changes", "False")).lower() in {"true", "yes", "1"}
+    st.session_state.editing_deal_original_status = (
+        "Changes Requested" if saved_status == "Draft" and returned_for_changes else saved_status
+    )
+    st.session_state.editing_review_comment = str(
+        deal.get("Last Decision Comment", deal.get("Last Requested Change Comment", ""))
+    ).strip()
     st.session_state.deal_edit_active = True
     st.session_state.current_page = "New Deal Intake"
 
@@ -2567,22 +2608,7 @@ def breadcrumb_for_current_page() -> str:
 
 def render_header(title: str, subtitle: str = "") -> None:
     breadcrumb = breadcrumb_for_current_page()
-    page = st.session_state.get("current_page", "Deal Request List")
-    governance_page = page in {
-        "Reference Data",
-        "Approval Matrix",
-        "Approver Roster",
-        "System Administrator Settings",
-        "Delegate Administration",
-        "Audit Log",
-    }
-    if governance_page:
-        nav = st.columns([0.7, 3.3])
-        if nav[0].button("Home", key=f"governance_home_{page}", use_container_width=True):
-            set_current_page("Deal Request List")
-        if nav[1].button(breadcrumb, key=f"governance_breadcrumb_{page}", use_container_width=True):
-            set_current_page("Deal Request List")
-    elif breadcrumb and breadcrumb != title:
+    if breadcrumb and breadcrumb != title:
         st.markdown(f"<div class='page-breadcrumb'>{breadcrumb}</div>", unsafe_allow_html=True)
     st.markdown(f"<h1>{title}</h1>", unsafe_allow_html=True)
     if subtitle:
@@ -2794,6 +2820,13 @@ def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) ->
 
 def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
     render_header("New Deal Intake", "Create a draft or submit a commercial deal request.")
+    review_comment = str(st.session_state.get("editing_review_comment", "")).strip()
+    original_status = str(st.session_state.get("editing_deal_original_status", "")).strip()
+    if original_status == "Changes Requested":
+        st.warning(
+            "Changes requested by reviewer:\n\n"
+            f"{review_comment or 'Review the requested changes before resubmitting.'}"
+        )
     customers = data["customers"]
     products = data["products"]
     if customers.empty or products.empty:
@@ -3398,9 +3431,21 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         if a.button("Save Draft", type="secondary"):
             save_runtime_deal(header, calc_lines, summary, route_df, status="Draft", recommendation=recommendation)
             st.success("Draft saved for this session.")
-        if b.button("Submit Deal", type="primary", disabled=bool(errors)):
+        submit_label = "Resubmit Deal" if original_status == "Changes Requested" else "Submit Deal"
+        if b.button(submit_label, type="primary", disabled=bool(errors)):
             deal_id = save_runtime_deal(header, calc_lines, summary, route_df, status="Submitted", recommendation=recommendation)
-            add_audit(deal_id, "Deal submitted", details=f"Recommendation: {recommendation}")
+            if original_status == "Changes Requested":
+                add_audit(
+                    deal_id,
+                    "Deal resubmitted",
+                    details="Submitting KAM updated and resubmitted the deal. Approval progress restarted with Sales Manager review.",
+                    decision="Resubmit",
+                    comment=review_comment,
+                    previous_status="Changes Requested",
+                    new_status="Submitted",
+                )
+            else:
+                add_audit(deal_id, "Deal submitted", details=f"Recommendation: {recommendation}")
             navigate_to_deal_detail(deal_id, "new deal intake submission")
 
 
@@ -3409,6 +3454,16 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
     deal_id = editing_deal_id or f"DEAL-S-{len(st.session_state.runtime_deals) + 1:04d}"
     workflow_status = "Pending Sales Manager" if status == "Submitted" else status
     risk_assessment = header.get("KAM Risk Assessment", "Medium")
+    previous_record: dict = {}
+    if editing_deal_id:
+        existing = combined_deals(load_demo_data())
+        match = existing[existing["Deal ID"].astype(str).eq(deal_id)]
+        if not match.empty:
+            previous_record = match.iloc[-1].to_dict()
+    returned_for_changes = status == "Draft" and (
+        str(st.session_state.get("editing_deal_original_status", "")).strip() == "Changes Requested"
+        or str(previous_record.get("Returned For Changes", "False")).lower() in {"true", "yes", "1"}
+    )
     record = {
             "Deal ID": deal_id,
             "Deal Title": header["Deal Title"],
@@ -3426,7 +3481,11 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Tender ID": header.get("Tender ID", ""),
             "Tender Mechanism": header.get("Tender Mechanism", ""),
             "Submission Deadline": str(header.get("Submission Deadline", "")),
+            "Award Date": str(header.get("Award Date", "")),
             "Visibility": header.get("Visibility", ""),
+            "Publication Source": header.get("Publication Source", ""),
+            "Publication URL": header.get("Publication URL", ""),
+            "Access Description": header.get("Access Description", ""),
             "Customer Risk Flag": header.get("Customer Risk Flag", ""),
             "Credit Status": header.get("Credit Status", ""),
             "Revenue L12M": header.get("Revenue L12M", 0),
@@ -3443,12 +3502,16 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Sales Owner": header["Sales Owner"],
             "Sales Manager": header["Sales Manager"],
             "Status": workflow_status,
+            "Returned For Changes": returned_for_changes,
             "Target Close Date": str(header["Target Close Date"]),
             "Expected Award / Decision Date": str(header.get("Expected Award / Decision Date", header["Target Close Date"])),
             "Requested Delivery Start": str(header.get("Requested Delivery Start", header.get("Requested Effective Date", ""))),
             "Requested Delivery End": str(header.get("Requested Delivery End", "")),
             "Payment Terms": header["Payment Terms"],
             "Contract Months": header["Contract Months"],
+            "Billing Frequency": header.get("Billing Frequency", "Annual"),
+            "Special Terms Requested": header.get("Special Terms Requested", False),
+            "Special Terms Description": header.get("Special Terms Description", ""),
             "Strategic Rationale": header["Business Justification"],
             "KAM Risk Assessment": risk_assessment,
             "Risk Reason": header.get("Risk Reason", "Generated from configured approval route and commercial risk signals."),
@@ -3461,6 +3524,17 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
             "Discount %": summary["discount_pct"],
             "Recommendation": recommendation,
         }
+    for key in [
+        "Last Decision",
+        "Last Decision Comment",
+        "Last Decision Timestamp",
+        "Last Decision Actor",
+        "Last Decision Role",
+        "Last Approval Step",
+        "Last Requested Change Comment",
+    ]:
+        if key in previous_record:
+            record[key] = previous_record[key]
     existing_index = next(
         (index for index, item in enumerate(st.session_state.runtime_deals) if str(item.get("Deal ID", "")) == deal_id),
         None,
@@ -3469,6 +3543,7 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
         st.session_state.runtime_deals.append(record)
     else:
         st.session_state.runtime_deals[existing_index] = record
+    st.session_state.deal_status_overrides.pop(deal_id, None)
     st.session_state.runtime_lines = [
         item for item in st.session_state.runtime_lines if str(item.get("Deal ID", "")) != deal_id
     ]
@@ -3480,6 +3555,12 @@ def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df
     add_audit(deal_id, "Deal draft saved" if status == "Draft" else "Deal created", details=f"Status: {workflow_status}")
     if status == "Submitted":
         st.session_state.deal_approval_steps[deal_id] = []
+        assignments = st.session_state.get("approval_assignments", {})
+        st.session_state.approval_assignments = {
+            key: value
+            for key, value in assignments.items()
+            if str(value.get("Deal ID", "")) != str(deal_id)
+        }
         ensure_approval_assignments(deal_id, route_df, load_demo_data())
         st.session_state.deal_edit_active = False
         st.session_state.editing_deal_id = None
@@ -3758,17 +3839,6 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     selected = str(default)
     st.session_state.selected_deal_id = selected
 
-    navigation = st.columns([0.8, 1.1, 4])
-    if navigation[0].button("Home", type="secondary", use_container_width=True, key=f"detail_home_{selected}"):
-        set_current_page("Deal Request List")
-    if navigation[1].button(
-        "+ New Request",
-        type="primary",
-        disabled=not can_create_request(),
-        use_container_width=True,
-        key=f"detail_new_request_{selected}",
-    ):
-        set_current_page("New Deal Intake")
     if st.button(f"Deal Requests > {selected}", key=f"detail_breadcrumb_{selected}"):
         set_current_page("Deal Request List")
 
@@ -3781,6 +3851,10 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     summary = context["summary"]
     route_df = context["route_df"]
     deal_status = str(deal.get("Status", "")).strip()
+    is_creator = is_kam_role() and str(deal.get("Sales Owner", "")) == current_persona()
+    if deal_status in {"Draft", "Changes Requested"} and is_creator:
+        begin_draft_edit(deal, calc_lines)
+        st.rerun()
     pending_roles = current_required_approval_roles(selected, deal_status, route_df)
     pending_role = pending_roles[0] if pending_roles else ""
     pending_label = (
@@ -3809,7 +3883,6 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
         st.success(confirmation)
         st.session_state.deal_detail_confirmation = ""
     if deal_status == "Draft":
-        is_creator = str(deal.get("Sales Owner", "")) == current_persona()
         if is_creator:
             if st.button("Edit Draft", type="primary", key=f"edit_draft_{selected}"):
                 begin_draft_edit(deal, calc_lines)
@@ -3819,18 +3892,7 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     last_comment = str(deal.get("Last Decision Comment", "")).strip()
     if deal_status == "Changes Requested":
         st.warning(f"Changes requested: {last_comment or 'Review the requested changes before resubmitting.'}")
-        can_resubmit = is_kam_role() and str(deal.get("Sales Owner", "")) == current_persona()
-        if st.button(
-            "Resubmit Deal",
-            type="primary",
-            key=f"resubmit_deal_{selected}",
-            disabled=not can_resubmit,
-        ):
-            success, message = resubmit_deal_for_approval(selected, data)
-            if success:
-                st.session_state.deal_detail_confirmation = message
-                st.rerun()
-            st.error(message)
+        st.info("This deal is read-only. Only the original creator can edit and resubmit it.")
     elif deal_status == "Rejected" and last_comment:
         st.error(f"Rejected: {last_comment}")
 
@@ -4548,7 +4610,12 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
 
     with st.container():
         nav_cols = st.columns([2.7, 0.85, 2.1, 1.25])
-        nav_cols[0].markdown("<span class='nav-marker nav-title-marker'></span><h3>Deal Desk Copilot</h3>", unsafe_allow_html=True)
+        nav_cols[0].markdown("<span class='nav-marker nav-title-marker'></span>", unsafe_allow_html=True)
+        if nav_cols[0].button("Home", key="top_navigation_home", use_container_width=True):
+            clear_deal_editor_state()
+            st.session_state.selected_deal_id = None
+            st.session_state.current_page = "Deal Request List"
+            st.rerun()
         nav_cols[2].markdown("<span class='nav-marker nav-user-marker'></span>", unsafe_allow_html=True)
         persona_options = list(PERSONAS.keys())
         selected_persona = nav_cols[2].selectbox(
