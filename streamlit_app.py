@@ -3914,10 +3914,6 @@ def render_deal_approval_action(
     with st.container(border=True):
         st.markdown("<span class='approval-action-marker'></span>", unsafe_allow_html=True)
         st.subheader("Your Decision")
-        status_cols = st.columns(2)
-        status_cols[0].metric("Current Approver", pending_label)
-        next_roles = [role for role in actionable_route_roles(route_df) if role not in completed_approval_steps(selected) and role not in pending_roles]
-        status_cols[1].metric("Next Approvers", " -> ".join(next_roles) if next_roles else "None")
         if not can_act:
             st.info("You can review this case, but only the current reviewer can capture a decision.")
         controls = st.columns([2.2, 3.2, 1.3])
@@ -4142,12 +4138,18 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     elif deal_status == "Rejected" and last_comment:
         st.error(f"Rejected: {last_comment}")
 
-    render_latest_reviewer_comment(deal, selected)
     render_ai_decision_support(context, data)
-    render_approval_history(selected, deal_status, route_df, data)
-    st.subheader("Approval Progress")
-    render_approval_progress(selected, deal_status, route_df, data)
-    render_deal_approval_action(selected, deal_status, pending_roles, pending_label, route_df, data)
+    if is_creator:
+        owner_status = "Returned for Revision" if deal_status == "Changes Requested" else business_approval_status(deal_status, " + ".join(pending_roles))
+        with st.container(border=True):
+            st.subheader("Current Approval Status")
+            st.write(owner_status)
+    else:
+        render_latest_reviewer_comment(deal, selected)
+        render_approval_history(selected, deal_status, route_df, data)
+        st.subheader("Approval Progress")
+        render_approval_progress(selected, deal_status, route_df, data)
+        render_deal_approval_action(selected, deal_status, pending_roles, pending_label, route_df, data)
 
     tabs = st.tabs(["Executive Summary", "Financials & Pricing", "Insights & Supply", "Audit Trail"])
     with tabs[0]:
@@ -4164,6 +4166,11 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     with tabs[1]:
         st.subheader("Commercial Pricing")
         st.dataframe(commercial_pricing_view(calc_lines), use_container_width=True, hide_index=True)
+        st.subheader("Plan Comparison")
+        if context["included_in_plan"]:
+            st.dataframe(mask_sensitive_dataframe(context["plan_df"]), use_container_width=True, hide_index=True)
+        else:
+            st.info("This request is outside the latest financial plan. Planned price comparison is not available; treat the volume as incremental.")
         st.subheader("Financial Projection")
         projection = financial_projection_values(deal, calc_lines, summary)
         projection_cols = st.columns(5)
@@ -4863,7 +4870,7 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
         st.session_state.current_page = "Deal Request List"
 
     with st.container():
-        nav_cols = st.columns([0.55, 0.55, 2.8, 1.35])
+        nav_cols = st.columns([0.55, 0.95, 1.75, 1.35, 1.05])
         nav_cols[0].markdown("<span class='nav-marker nav-title-marker'></span>", unsafe_allow_html=True)
         if nav_cols[0].button("Home", key="top_navigation_home"):
             clear_deal_editor_state()
@@ -4888,9 +4895,9 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
         if st.session_state.get("pending_role_switch"):
             render_role_switch_confirmation(data)
 
-        new_disabled = not can_create_request(st.session_state.role)
+        new_disabled = not is_kam_role(st.session_state.role)
         nav_cols[1].markdown("<span class='nav-marker nav-new-marker'></span>", unsafe_allow_html=True)
-        if nav_cols[1].button("+", type="primary", disabled=new_disabled):
+        if nav_cols[1].button("New Request", disabled=new_disabled):
             clear_deal_editor_state()
             st.session_state.deal_edit_active = True
             st.session_state.current_page = "New Deal Intake"
