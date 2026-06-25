@@ -1709,6 +1709,44 @@ def commercial_line_items_view(lines: pd.DataFrame) -> pd.DataFrame:
     return mask_sensitive_dataframe(view)
 
 
+def commercial_pricing_view(lines: pd.DataFrame) -> pd.DataFrame:
+    if lines.empty:
+        return pd.DataFrame(columns=["SKU", "Product", "Quantity", "Gross Price", "Net Price", "Discount %", "Revenue", "Gross Margin"])
+    view = pd.DataFrame(
+        {
+            "SKU": lines.get("SKU", pd.Series(dtype=str)),
+            "Product": lines.get("Product Name", pd.Series(dtype=str)),
+            "Quantity": pd.to_numeric(lines.get("Quantity", pd.Series(dtype=float)), errors="coerce").fillna(0),
+            "Gross Price": pd.to_numeric(lines.get("Unit Gross Price", pd.Series(dtype=float)), errors="coerce"),
+            "Net Price": pd.to_numeric(lines.get("Requested Net Price", pd.Series(dtype=float)), errors="coerce"),
+            "Discount %": pd.to_numeric(lines.get("Requested Discount %", lines.get("Discount %", pd.Series(dtype=float))), errors="coerce"),
+            "Revenue": pd.to_numeric(lines.get("Proposed Net Revenue", lines.get("Extended Proposed", pd.Series(dtype=float))), errors="coerce"),
+            "Gross Margin": pd.to_numeric(lines.get("Margin %", lines.get("Estimated Gross Margin %", pd.Series(dtype=float))), errors="coerce"),
+        }
+    )
+    return mask_sensitive_dataframe(view)
+
+
+def contract_duration_months(deal: dict) -> int:
+    months = int(safe_float(deal.get("Contract Months", deal.get("Contract Duration Months", 12))))
+    return max(months, 1)
+
+
+def financial_projection_values(deal: dict, lines: pd.DataFrame, summary: dict) -> dict:
+    months = contract_duration_months(deal)
+    total_revenue = safe_float(summary.get("total_proposed"))
+    annual_revenue = total_revenue if months == 12 else total_revenue * 12 / months
+    total_cost = safe_float((lines["Quantity"] * lines["Unit Cost"]).sum()) if not lines.empty else 0
+    gross_profit = total_revenue - total_cost
+    return {
+        "Contract Duration": f"{months} months",
+        "Annual Revenue": money(annual_revenue),
+        "Total Contract Revenue": money(total_revenue),
+        "Gross Profit": money(gross_profit) if has_full_visibility() else "Restricted",
+        "Gross Margin %": landing_margin_display(summary),
+    }
+
+
 def find_inventory(data: dict[str, pd.DataFrame], sku: str, region: str) -> pd.Series | None:
     inv = data["inventory_coverage"]
     if inv.empty or "SKU" not in inv:
@@ -2106,6 +2144,70 @@ def competitor_summary(competitor_df: pd.DataFrame) -> str:
     return " ".join(summary)
 
 
+def market_intelligence_insights(signal_df: pd.DataFrame, competitor_df: pd.DataFrame) -> list[tuple[str, str]]:
+    insights = []
+    if signal_df.empty and competitor_df.empty:
+        return [("Market Signals", "No material external market signal is available for the selected products.")]
+    if not competitor_df.empty:
+        insights.append(("Competitive Pressure", competitor_summary(competitor_df)))
+    if not signal_df.empty:
+        signal_types = ", ".join(signal_df.get("Signal", signal_df.get("Signal Type", pd.Series(dtype=str))).dropna().astype(str).unique()[:3])
+        impact = signal_df.get("Potential Business Impact", pd.Series(dtype=str)).dropna().astype(str)
+        response = signal_df.get("Response", signal_df.get("Suggested Commercial Response", pd.Series(dtype=str))).dropna().astype(str)
+        insights.append(("Pricing and Market Signals", signal_types or "External market signals identified."))
+        if not impact.empty:
+            insights.append(("Market Risk", short_business_text(impact.iloc[0], "Market impact is not specified.", 180)))
+        if not response.empty:
+            insights.append(("Suggested Response", short_business_text(response.iloc[0], "No response guidance is specified.", 180)))
+    return insights
+
+
+def supply_inventory_insights(inventory_df: pd.DataFrame, aging_df: pd.DataFrame) -> list[tuple[str, str]]:
+    insights = [("Supply Summary", inventory_aging_recommendation(inventory_df, aging_df))]
+    if not inventory_df.empty:
+        shortage = safe_float(inventory_df.get("Inventory Shortage", pd.Series(dtype=float)).sum())
+        high_allocation = int(inventory_df.get("Allocation Risk", pd.Series(dtype=str)).astype(str).eq("High").sum())
+        available = safe_float(inventory_df.get("Available Inventory", pd.Series(dtype=float)).sum())
+        insights.append(("Inventory Availability", f"Available inventory across requested lines is {available:,.0f} units; shortage is {shortage:,.0f} units."))
+        insights.append(("Allocation Risk", f"{high_allocation} line(s) show high allocation risk."))
+    if not aging_df.empty:
+        near_expiry = int(aging_df.get("Near Expiry Inventory", pd.Series(dtype=str)).astype(str).eq("Yes").sum())
+        actions = aging_df.get("Recommended Action", pd.Series(dtype=str)).dropna().astype(str)
+        action = actions.iloc[0] if not actions.empty else "Use normal inventory rotation."
+        insights.append(("Expiry Exposure", f"{near_expiry} line(s) have near-expiry exposure. Recommended action: {action}"))
+    return insights
+
+
+def tender_intelligence_insights(tender_df: pd.DataFrame) -> list[tuple[str, str]]:
+    if tender_df.empty:
+        return [("Tender Precedent", "No comparable tender precedent is available for the selected account and products.")]
+    result_counts = tender_df.get("Result", pd.Series(dtype=str)).astype(str).value_counts()
+    outcomes = ", ".join(f"{status}: {count}" for status, count in result_counts.items())
+    discounts = pd.to_numeric(tender_df.get("Winning Discount %", pd.Series(dtype=float)), errors="coerce").dropna()
+    if discounts.empty:
+        discount_range = "No winning discount benchmark is available."
+    else:
+        discount_range = f"Typical winning discount range is {pct(discounts.min())} to {pct(discounts.max())}."
+    drivers = tender_df.get("Win / Loss Driver", tender_df.get("Driver", pd.Series(dtype=str))).dropna().astype(str)
+    driver_text = ", ".join(drivers.unique()[:3]) if not drivers.empty else "No driver detail is available."
+    return [
+        ("Previous Tender Outcomes", outcomes or "Prior tender outcomes are not classified."),
+        ("Winning Discount Range", discount_range),
+        ("Win/Loss Drivers", driver_text),
+        ("Key Lesson", "Compare the requested discount and supply commitment against prior winning levels before approving."),
+    ]
+
+
+def render_insight_cards(insights: list[tuple[str, str]], columns: int = 2) -> None:
+    if not insights:
+        return
+    cols = st.columns(columns)
+    for index, (title, body) in enumerate(insights):
+        with cols[index % columns].container(border=True):
+            st.markdown(f"**{title}**")
+            st.write(body)
+
+
 def route_with_trigger_reasons(route_df: pd.DataFrame, inventory_df: pd.DataFrame, competitor_df: pd.DataFrame, gp_impact: dict) -> pd.DataFrame:
     if route_df.empty:
         return route_df
@@ -2266,7 +2368,7 @@ def render_inline_deal_preview(context: dict, compact: bool = False) -> None:
     margin_label = "Resulting Gross Margin %" if margin_visibility_for_role(role) == "Exact" else "Margin Status"
     metrics[2].metric(margin_label, landing_margin_display(summary, role))
     metrics[3].metric("Margin vs Approval Threshold", margin_threshold_display(summary, role))
-    metrics[4].metric("Revenue Impact", money(revenue_at_risk(context)))
+    metrics[4].metric("Financial Plan Status", "Included" if context["included_in_plan"] else "Outside Plan")
 
     context_cols = st.columns(3)
     with context_cols[0].container(border=True):
@@ -4047,43 +4149,49 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     render_approval_progress(selected, deal_status, route_df, data)
     render_deal_approval_action(selected, deal_status, pending_roles, pending_label, route_df, data)
 
-    tabs = st.tabs(["Decision Summary", "Financials & Pricing", "Evidence & Audit"])
+    tabs = st.tabs(["Executive Summary", "Financials & Pricing", "Insights & Supply", "Audit Trail"])
     with tabs[0]:
+        plan_status = "✓ Included" if context["included_in_plan"] else "⚠ Outside Financial Plan"
+        summary_cols = st.columns(3)
+        summary_cols[0].metric("Financial Plan Status", plan_status)
+        summary_cols[1].metric("Deal Type", str(deal.get("Deal Type", "")) or "Not specified")
+        summary_cols[2].metric("Risk Assessment", str(deal.get("KAM Risk Assessment", deal.get("Intake Risk", ""))) or "Not rated")
+        st.subheader("Business Case")
         st.write(short_business_text(deal.get("Strategic Rationale", ""), "Commercial rationale is not available.", 320))
         if customer:
             render_customer_risk_strip(customer, data)
-        render_technical_route_details(context)
 
     with tabs[1]:
-        financial_metrics = st.columns(4)
-        financial_metrics[0].metric("Gross Revenue", money(summary["total_gross"]))
-        financial_metrics[1].metric("Requested Net Revenue", money(summary["total_proposed"]))
-        financial_metrics[2].metric("Discount Amount", money(summary["discount_amount"]))
-        financial_metrics[3].metric("Gross Margin", landing_margin_display(summary))
-        st.subheader("Line Items")
-        st.dataframe(commercial_line_items_view(calc_lines), use_container_width=True, hide_index=True)
-        st.subheader("Plan Comparison")
-        comparison = context["plan_df"] if context["included_in_plan"] else context["incremental_df"]
-        st.dataframe(mask_sensitive_dataframe(comparison), use_container_width=True, hide_index=True)
-        st.subheader("Price Benchmarks")
-        customer_name = str(deal.get("Sold-To Customer Name", deal.get("Customer Name", "")))
-        benchmark = price_volume_summary(data, calc_lines, customer_name, str(deal.get("Channel", "")))
-        st.dataframe(mask_sensitive_dataframe(benchmark), use_container_width=True, hide_index=True)
+        st.subheader("Commercial Pricing")
+        st.dataframe(commercial_pricing_view(calc_lines), use_container_width=True, hide_index=True)
+        st.subheader("Financial Projection")
+        projection = financial_projection_values(deal, calc_lines, summary)
+        projection_cols = st.columns(5)
+        for index, (label, value) in enumerate(projection.items()):
+            projection_cols[index].metric(label, value)
 
     with tabs[2]:
-        st.subheader("Commercial Rationale")
-        st.write(deal.get("Strategic Rationale", ""))
-        st.subheader("Supply & Expiry Evidence")
-        st.info(inventory_aging_recommendation(context["inventory_df"], context["aging_df"]))
-        evidence_cols = st.columns(2)
-        evidence_cols[0].dataframe(mask_sensitive_dataframe(context["inventory_df"]), use_container_width=True, hide_index=True)
-        evidence_cols[1].dataframe(mask_sensitive_dataframe(context["aging_df"]), use_container_width=True, hide_index=True)
         customer_name = str(deal.get("End Account Name", deal.get("Customer Name", "")))
         tender_df, signal_df = tender_competitor_summary(data, calc_lines, customer_name, str(deal.get("Region", "")))
-        st.subheader("Tender History")
-        st.dataframe(mask_sensitive_dataframe(tender_df), use_container_width=True, hide_index=True)
-        st.subheader("External Market Signals")
-        st.dataframe(mask_sensitive_dataframe(signal_df), use_container_width=True, hide_index=True)
+        st.subheader("Commercial Rationale")
+        st.write(short_business_text(deal.get("Strategic Rationale", ""), "Commercial rationale is not available.", 420))
+        st.subheader("Market Intelligence")
+        render_insight_cards(market_intelligence_insights(signal_df, context["competitor_df"]))
+        st.subheader("Supply & Inventory")
+        render_insight_cards(supply_inventory_insights(context["inventory_df"], context["aging_df"]))
+        with st.expander("Supporting supply detail", expanded=False):
+            evidence_cols = st.columns(2)
+            evidence_cols[0].dataframe(mask_sensitive_dataframe(context["inventory_df"]), use_container_width=True, hide_index=True)
+            evidence_cols[1].dataframe(mask_sensitive_dataframe(context["aging_df"]), use_container_width=True, hide_index=True)
+        st.subheader("Tender Intelligence")
+        render_insight_cards(tender_intelligence_insights(tender_df))
+        with st.expander("Supporting market and tender detail", expanded=False):
+            detail_cols = st.columns(2)
+            detail_cols[0].dataframe(mask_sensitive_dataframe(tender_df), use_container_width=True, hide_index=True)
+            detail_cols[1].dataframe(mask_sensitive_dataframe(signal_df), use_container_width=True, hide_index=True)
+
+    with tabs[3]:
+        render_technical_route_details(context)
         st.subheader("Audit Trail")
         audit = pd.DataFrame(st.session_state.audit_events)
         if not audit.empty:
