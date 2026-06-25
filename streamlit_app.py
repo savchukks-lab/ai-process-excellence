@@ -469,6 +469,13 @@ def pct(value: float | int | None) -> str:
     return f"{float(value) * 100:.1f}%"
 
 
+def display_timestamp(value: str) -> str:
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return str(value or "Not recorded")
+    return timestamp.strftime("%d-%b-%Y %H:%M")
+
+
 def status_badge(value: str) -> str:
     return f"<span class='status-pill'>{value}</span>"
 
@@ -2731,13 +2738,14 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
 
     render_landing_kpis(cockpit, role)
 
-    filters = st.columns([1.25, 1.15, 0.8, 1, 1.15])
     product_options = sorted({product for values in cockpit["All Products"] for product in values})
-    selected_products = filters[0].multiselect("Product", product_options)
-    selected_types = filters[1].multiselect("Customer Type", sorted(cockpit["Customer Type"].dropna().astype(str).unique()))
-    selected_risks = filters[2].multiselect("Risk", sorted(cockpit["Risk"].dropna().astype(str).unique()))
-    selected_owners = filters[3].multiselect("Sales Owner", sorted(cockpit["Sales Owner"].dropna().astype(str).unique()))
-    selected_reviewers = filters[4].multiselect("Reviewer Role", ACTIONABLE_APPROVAL_ROLES)
+    with st.expander("Search & Filters", expanded=False):
+        filters = st.columns([1.25, 1.15, 0.8, 1, 1.15])
+        selected_products = filters[0].multiselect("Product", product_options)
+        selected_types = filters[1].multiselect("Customer Type", sorted(cockpit["Customer Type"].dropna().astype(str).unique()))
+        selected_risks = filters[2].multiselect("Risk", sorted(cockpit["Risk"].dropna().astype(str).unique()))
+        selected_owners = filters[3].multiselect("Sales Owner", sorted(cockpit["Sales Owner"].dropna().astype(str).unique()))
+        selected_reviewers = filters[4].multiselect("Reviewer Role", ACTIONABLE_APPROVAL_ROLES)
 
     filtered = cockpit.copy()
     if selected_products:
@@ -3694,6 +3702,44 @@ def approval_actor_for_role(deal_id: str, role: str, data: dict[str, pd.DataFram
     return active_approver_for_role(data, role)
 
 
+def approval_decision_events(deal_id: str) -> list[dict]:
+    events = [
+        event
+        for event in st.session_state.get("audit_events", [])
+        if str(event.get("Deal ID", "")) == str(deal_id)
+        and str(event.get("Action", "")).startswith("Approval decision")
+    ]
+    return sorted(events, key=lambda event: str(event.get("Timestamp", "")))
+
+
+def latest_review_event(deal: dict, deal_id: str) -> dict | None:
+    commented_events = [event for event in approval_decision_events(deal_id) if str(event.get("Comment", "")).strip()]
+    if commented_events:
+        return commented_events[-1]
+    comment = str(deal.get("Last Decision Comment", "")).strip()
+    if not comment:
+        return None
+    return {
+        "Role": deal.get("Last Decision Role", deal.get("Last Approval Step", "")),
+        "Actor": deal.get("Last Decision Actor", ""),
+        "Decision": deal.get("Last Decision", ""),
+        "Timestamp": "",
+        "Comment": comment,
+    }
+
+
+def render_latest_reviewer_comment(deal: dict, deal_id: str) -> None:
+    event = latest_review_event(deal, deal_id)
+    if not event:
+        return
+    role = str(event.get("Role", "")).strip() or "Reviewer"
+    comment = str(event.get("Comment", "")).strip()
+    with st.container(border=True):
+        st.subheader("Latest Reviewer Comment")
+        st.markdown(f"**{role}**")
+        st.write(f'"{comment}"')
+
+
 def business_approval_status(deal_status: str, pending_role: str) -> str:
     if pending_role:
         return f"Awaiting {pending_role} Review"
@@ -3766,10 +3812,12 @@ def render_deal_approval_action(
     with st.container(border=True):
         st.markdown("<span class='approval-action-marker'></span>", unsafe_allow_html=True)
         st.subheader("Your Decision")
-        if can_act:
-            st.success(f"This deal is awaiting your review as {pending_label}.")
-        else:
-            st.info(f"This deal is awaiting {pending_label}. You can review the case, but only the current reviewer can decide.")
+        status_cols = st.columns(2)
+        status_cols[0].metric("Current Approver", pending_label)
+        next_roles = [role for role in actionable_route_roles(route_df) if role not in completed_approval_steps(selected) and role not in pending_roles]
+        status_cols[1].metric("Next Approvers", " -> ".join(next_roles) if next_roles else "None")
+        if not can_act:
+            st.info("You can review this case, but only the current reviewer can capture a decision.")
         controls = st.columns([2.2, 3.2, 1.3])
         decision = controls[0].radio(
             "Decision",
@@ -3838,6 +3886,81 @@ def render_approval_timeline(deal_id: str, deal_status: str, route_df: pd.DataFr
     st.markdown(" → ".join(f"**{item}**" if item.startswith("Pending:") else item for item in timeline))
 
 
+def render_approval_progress(deal_id: str, deal_status: str, route_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> None:
+    roles = actionable_route_roles(route_df)
+    completed = set(completed_approval_steps(deal_id))
+    current = set(current_required_approval_roles(deal_id, deal_status, route_df))
+    items = []
+    for role in roles:
+        if role in completed:
+            marker = "✓"
+        elif role in current:
+            marker = "●"
+        else:
+            marker = "○"
+        items.append(f"**{marker} {role_display_label(data, role)}**")
+    if items:
+        st.markdown(" &nbsp; ".join(items), unsafe_allow_html=True)
+    st.caption("✓ completed  |  ● current reviewer  |  ○ upcoming reviewer")
+    current_names = ", ".join(active_approver_for_role(data, role) for role in current) or "None"
+    remaining = [role for role in roles if role not in completed and role not in current]
+    progress_cols = st.columns(2)
+    progress_cols[0].metric("Current Approver", current_names)
+    progress_cols[1].metric("Next Approvers", " -> ".join(remaining) if remaining else "None")
+
+
+def approval_history_rows(deal_id: str, deal_status: str, route_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> list[dict]:
+    roles = actionable_route_roles(route_df)
+    completed = set(completed_approval_steps(deal_id))
+    current = set(current_required_approval_roles(deal_id, deal_status, route_df))
+    events = approval_decision_events(deal_id)
+    rows = []
+    for role in roles:
+        role_events = [event for event in events if str(event.get("Approval Step", "")) == role]
+        event = role_events[-1] if role_events else {}
+        if role in completed or event:
+            rows.append(
+                {
+                    "State": "completed",
+                    "Reviewer": str(event.get("Actor", "")) or approval_actor_for_role(deal_id, role, data),
+                    "Role": role_display_label(data, role),
+                    "Decision": str(event.get("Decision", "Approved") or "Approved"),
+                    "Timestamp": display_timestamp(str(event.get("Timestamp", ""))),
+                    "Comment": str(event.get("Comment", "")).strip() or "No reviewer comment recorded.",
+                }
+            )
+        elif role in current:
+            rows.append(
+                {
+                    "State": "current",
+                    "Reviewer": active_approver_for_role(data, role),
+                    "Role": role_display_label(data, role),
+                    "Decision": "Pending",
+                    "Timestamp": "",
+                    "Comment": "",
+                }
+            )
+    return rows
+
+
+def render_approval_history(deal_id: str, deal_status: str, route_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> None:
+    rows = approval_history_rows(deal_id, deal_status, route_df, data)
+    if not rows:
+        return
+    st.subheader("Approval History")
+    for row in rows:
+        marker = "✓" if row["State"] == "completed" else "⏳"
+        with st.container(border=True):
+            st.markdown(f"**{marker} {row['Reviewer']}**")
+            st.write(row["Role"])
+            st.markdown(f"**{row['Decision']}**")
+            if row["Timestamp"]:
+                st.write(row["Timestamp"])
+            if row["Comment"]:
+                st.markdown("**Comment:**")
+                st.write(f'"{row["Comment"]}"')
+
+
 def render_technical_route_details(context: dict) -> None:
     with st.expander("Approval rule details", expanded=False):
         route = context["route_df"].copy()
@@ -3858,8 +3981,10 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     selected = str(default)
     st.session_state.selected_deal_id = selected
 
-    if st.button(f"Deal Requests > {selected}", key=f"detail_breadcrumb_{selected}"):
+    breadcrumb_cols = st.columns([0.72, 4.6])
+    if breadcrumb_cols[0].button("Deal Requests", key=f"detail_breadcrumb_home_{selected}"):
         set_current_page("Deal Request List")
+    breadcrumb_cols[1].markdown(f"<div class='page-breadcrumb'>&gt; {selected}</div>", unsafe_allow_html=True)
 
     deal = deals[deals["Deal ID"].astype(str).eq(selected)].iloc[0].to_dict()
     context = build_deal_context(data, selected)
@@ -3915,8 +4040,11 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     elif deal_status == "Rejected" and last_comment:
         st.error(f"Rejected: {last_comment}")
 
+    render_latest_reviewer_comment(deal, selected)
     render_ai_decision_support(context, data)
-    render_approval_handoff(deal, data, selected, deal_status, route_df)
+    render_approval_history(selected, deal_status, route_df, data)
+    st.subheader("Approval Progress")
+    render_approval_progress(selected, deal_status, route_df, data)
     render_deal_approval_action(selected, deal_status, pending_roles, pending_label, route_df, data)
 
     tabs = st.tabs(["Decision Summary", "Financials & Pricing", "Evidence & Audit"])
@@ -3924,9 +4052,6 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
         st.write(short_business_text(deal.get("Strategic Rationale", ""), "Commercial rationale is not available.", 320))
         if customer:
             render_customer_risk_strip(customer, data)
-
-        st.subheader("Approval Timeline")
-        render_approval_timeline(selected, deal_status, route_df)
         render_technical_route_details(context)
 
     with tabs[1]:
@@ -4630,9 +4755,9 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
         st.session_state.current_page = "Deal Request List"
 
     with st.container():
-        nav_cols = st.columns([2.7, 0.85, 2.1, 1.25])
+        nav_cols = st.columns([0.55, 0.55, 2.8, 1.35])
         nav_cols[0].markdown("<span class='nav-marker nav-title-marker'></span>", unsafe_allow_html=True)
-        if nav_cols[0].button("Home", key="top_navigation_home", use_container_width=True):
+        if nav_cols[0].button("Home", key="top_navigation_home"):
             clear_deal_editor_state()
             st.session_state.selected_deal_id = None
             st.session_state.current_page = "Deal Request List"
@@ -4657,7 +4782,7 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
 
         new_disabled = not can_create_request(st.session_state.role)
         nav_cols[1].markdown("<span class='nav-marker nav-new-marker'></span>", unsafe_allow_html=True)
-        if nav_cols[1].button("+ New Request", type="primary", disabled=new_disabled, use_container_width=True):
+        if nav_cols[1].button("+", type="primary", disabled=new_disabled):
             clear_deal_editor_state()
             st.session_state.deal_edit_active = True
             st.session_state.current_page = "New Deal Intake"
