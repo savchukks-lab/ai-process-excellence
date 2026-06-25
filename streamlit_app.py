@@ -404,6 +404,8 @@ def init_state() -> None:
     st.session_state.setdefault("approval_confirmation", "")
     st.session_state.setdefault("deal_detail_confirmation", "")
     st.session_state.setdefault("selected_deal_id", None)
+    st.session_state.setdefault("deal_list_view_mode", "Active")
+    st.session_state.setdefault("deal_list_table_revision", 0)
     st.session_state.setdefault("deal_detail_parent", "Deal Requests")
     st.session_state.setdefault("draft_lines", None)
     st.session_state.setdefault("line_editor_rows", None)
@@ -1045,14 +1047,32 @@ def visible_deals_for_current_role(deals: pd.DataFrame, data: dict[str, pd.DataF
     return deals[pending_mask].copy()
 
 
-def reviewer_participated_in_deal(deal_id: str, role: str) -> bool:
-    if role in completed_approval_steps(deal_id):
-        return True
+def reviewer_participated_in_deal(deal_id: str, role: str, persona: str | None = None) -> bool:
+    actor = str(persona or "").strip()
     for event in st.session_state.get("audit_events", []):
         if str(event.get("Deal ID", "")) != str(deal_id):
             continue
-        if str(event.get("Role", "")) == role and str(event.get("Action", "")).startswith("Approval decision"):
+        if str(event.get("Role", "")) != role:
+            continue
+        if actor and str(event.get("Actor", "")) != actor:
+            continue
+        if str(event.get("Action", "")).startswith("Approval decision"):
             return True
+    if not actor and role in completed_approval_steps(deal_id):
+        return True
+    return False
+
+
+def archive_visible_to_current_user(deal: pd.Series | dict) -> bool:
+    item = deal.to_dict() if isinstance(deal, pd.Series) else dict(deal)
+    role = current_role()
+    persona = current_persona()
+    if role == "System Administrator":
+        return True
+    if str(item.get("Sales Owner", "")).strip() == persona:
+        return True
+    if role in ACTIONABLE_APPROVAL_ROLES and reviewer_participated_in_deal(str(item.get("Deal ID", "")), role, persona):
+        return True
     return False
 
 
@@ -1060,14 +1080,7 @@ def archived_deals_for_current_role(deals: pd.DataFrame) -> pd.DataFrame:
     if deals.empty or "Status" not in deals:
         return deals.iloc[0:0].copy()
     archived = deals[deals["Status"].astype(str).isin(ARCHIVE_STATUSES)].copy()
-    role = current_role()
-    if role == "System Administrator":
-        return archived
-    if is_kam_role(role):
-        return archived[archived.get("Sales Owner", pd.Series(index=archived.index, dtype=str)).astype(str).eq(current_persona())]
-    if role in ACTIONABLE_APPROVAL_ROLES:
-        return archived[archived["Deal ID"].astype(str).apply(lambda deal_id: reviewer_participated_in_deal(deal_id, role))]
-    return archived.iloc[0:0].copy()
+    return archived[archived.apply(archive_visible_to_current_user, axis=1)].copy()
 
 
 def deal_detail_visible_deals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -2657,7 +2670,13 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     active_deals = visible_deals_for_current_role(all_deals, data)
     active_deals = active_deals[~active_deals["Status"].astype(str).isin(ARCHIVE_STATUSES)]
     archived_deals = archived_deals_for_current_role(all_deals)
-    list_mode = st.radio("Queue", ["Active", "Archive"], horizontal=True, label_visibility="collapsed")
+    list_mode = st.radio(
+        "Queue",
+        ["Active", "Archive"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="deal_list_view_mode",
+    )
     deals = active_deals if list_mode == "Active" else archived_deals
 
     records = []
@@ -2756,7 +2775,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row",
-        key="deal_request_list_table",
+        key=f"deal_request_list_table_{st.session_state.deal_list_table_revision}",
         column_config={
             "Deal ID": None,
             "Deal": st.column_config.TextColumn("Deal", width="large"),
@@ -4564,6 +4583,8 @@ def complete_role_switch(target_persona: str) -> None:
     st.session_state.selected_deal_id = None
     st.session_state.deal_list_selected_deal_id = None
     st.session_state.approval_queue_selected_deal_id = None
+    st.session_state.deal_list_view_mode = "Active"
+    st.session_state.deal_list_table_revision += 1
     st.session_state.current_page = "Deal Request List"
 
 
