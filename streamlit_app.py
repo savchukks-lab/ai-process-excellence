@@ -2946,7 +2946,7 @@ def log_requestor_followup(case_id: str, reviewer: str) -> None:
         "Actor": current_persona(),
         "Action": "Follow-up Reviewer",
     }
-    st.session_state.requestor_followups.append(event)
+    st.session_state.requestor_followups = [*st.session_state.get("requestor_followups", []), event]
     add_audit(
         case_id,
         "Follow-up Sent",
@@ -2963,13 +2963,10 @@ def render_requestor_active_cases(records: pd.DataFrame, contexts: dict[str, dic
         return
     display_cols = ["Case ID", "Account", "Product", "Scenario", "Status", "Current Reviewer", "SLA / Days Waiting", "Deadline"]
     display_df = active[display_cols].head(8).reset_index(drop=True)
-    table_event = st.dataframe(
+    st.dataframe(
         display_df,
         use_container_width=True,
         hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key=f"requestor_active_cases_{st.session_state.deal_list_table_revision}",
         column_config={
             "Case ID": st.column_config.TextColumn("Case ID", width="small"),
             "Account": st.column_config.TextColumn("Account", width="medium"),
@@ -2981,17 +2978,16 @@ def render_requestor_active_cases(records: pd.DataFrame, contexts: dict[str, dic
             "Deadline": st.column_config.TextColumn("Deadline", width="small"),
         },
     )
-    selected_case = get_selected_dataframe_value(table_event, display_df, "Case ID")
-    if selected_case:
-        st.session_state.deal_list_selected_deal_id = selected_case
-        st.session_state.selected_deal_id = selected_case
-    else:
-        selected_case = st.session_state.get("deal_list_selected_deal_id")
-        if selected_case not in set(active["Case ID"].astype(str)):
-            selected_case = None
-    if not selected_case:
-        st.caption("Select a case row to open actions.")
-        return
+    case_options = display_df["Case ID"].astype(str).tolist()
+    prior_selection = st.session_state.get("deal_list_selected_deal_id")
+    default_index = case_options.index(prior_selection) if prior_selection in case_options else 0
+    selected_case = st.selectbox(
+        "Selected case",
+        case_options,
+        index=default_index,
+        key="requestor_selected_case",
+    )
+    st.session_state.deal_list_selected_deal_id = selected_case
 
     selected_row = active[active["Case ID"].astype(str).eq(str(selected_case))].iloc[0]
     with st.container(border=True):
