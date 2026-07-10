@@ -1346,6 +1346,18 @@ def get_selected_dataframe_deal_id(table_event: object, display_df: pd.DataFrame
     return None
 
 
+def get_selected_dataframe_value(table_event: object, display_df: pd.DataFrame, column: str) -> str | None:
+    if display_df.empty or column not in display_df:
+        return None
+    if isinstance(table_event, dict):
+        selected_rows = table_event.get("selection", {}).get("rows", [])
+    else:
+        selected_rows = getattr(getattr(table_event, "selection", None), "rows", [])
+    if selected_rows:
+        return str(display_df.iloc[selected_rows[0]][column])
+    return None
+
+
 def update_deal_status(
     deal_id: str,
     status: str,
@@ -2935,6 +2947,12 @@ def log_requestor_followup(case_id: str, reviewer: str) -> None:
         "Action": "Follow-up Reviewer",
     }
     st.session_state.requestor_followups.append(event)
+    add_audit(
+        case_id,
+        "Follow-up Sent",
+        entity="Requestor Follow-up",
+        details=f"Follow-up requested for {reviewer}. No email or Teams message was sent in this demo.",
+    )
 
 
 def render_requestor_active_cases(records: pd.DataFrame, contexts: dict[str, dict]) -> None:
@@ -2943,25 +2961,51 @@ def render_requestor_active_cases(records: pd.DataFrame, contexts: dict[str, dic
     if active.empty:
         st.info("No active cases are open for this requestor.")
         return
-    headers = st.columns([0.8, 1.35, 1.05, 1.0, 0.95, 1.15, 0.9, 0.9, 1.25])
-    for col, label in zip(headers, ["Case ID", "Account", "Product", "Scenario", "Status", "Current Reviewer", "SLA / Days Waiting", "Deadline", "Action"]):
-        col.markdown(f"**{label}**")
-    for _, row in active.head(8).iterrows():
-        row_cols = st.columns([0.8, 1.35, 1.05, 1.0, 0.95, 1.15, 0.9, 0.9, 1.25])
-        case_id = str(row["Case ID"])
-        row_cols[0].write(case_id)
-        row_cols[1].write(short_business_text(row["Account"], "", 32))
-        row_cols[2].write(short_business_text(row["Product"], "", 24))
-        row_cols[3].write(short_business_text(row["Scenario"], "", 24))
-        row_cols[4].write(row["Status"])
-        row_cols[5].write(short_business_text(row["Current Reviewer"], "", 28))
-        row_cols[6].write(row["SLA / Days Waiting"])
-        row_cols[7].write(row["Deadline"])
-        if row_cols[8].button("Open", key=f"requestor_open_{case_id}"):
-            navigate_to_deal_detail(case_id, "requestor workspace")
-        if row["Pending Role"] and row_cols[8].button("Follow-up Reviewer", key=f"requestor_followup_{case_id}"):
-            log_requestor_followup(case_id, str(row["Current Reviewer"]))
-            st.success(f"Follow-up logged for {row['Current Reviewer']} on {case_id}. No email or Teams message was sent.")
+    display_cols = ["Case ID", "Account", "Product", "Scenario", "Status", "Current Reviewer", "SLA / Days Waiting", "Deadline"]
+    display_df = active[display_cols].head(8).reset_index(drop=True)
+    table_event = st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"requestor_active_cases_{st.session_state.deal_list_table_revision}",
+        column_config={
+            "Case ID": st.column_config.TextColumn("Case ID", width="small"),
+            "Account": st.column_config.TextColumn("Account", width="medium"),
+            "Product": st.column_config.TextColumn("Product", width="small"),
+            "Scenario": st.column_config.TextColumn("Scenario", width="medium"),
+            "Status": st.column_config.TextColumn("Status", width="small"),
+            "Current Reviewer": st.column_config.TextColumn("Current Reviewer", width="medium"),
+            "SLA / Days Waiting": st.column_config.TextColumn("SLA / Days Waiting", width="small"),
+            "Deadline": st.column_config.TextColumn("Deadline", width="small"),
+        },
+    )
+    selected_case = get_selected_dataframe_value(table_event, display_df, "Case ID")
+    if selected_case:
+        st.session_state.deal_list_selected_deal_id = selected_case
+        st.session_state.selected_deal_id = selected_case
+    else:
+        selected_case = st.session_state.get("deal_list_selected_deal_id")
+        if selected_case not in set(active["Case ID"].astype(str)):
+            selected_case = None
+    if not selected_case:
+        st.caption("Select a case row to open actions.")
+        return
+
+    selected_row = active[active["Case ID"].astype(str).eq(str(selected_case))].iloc[0]
+    with st.container(border=True):
+        st.markdown(f"**Selected Case Actions: {selected_case}**")
+        action_cols = st.columns([0.8, 1.1, 0.7, 3.0])
+        if action_cols[0].button("Open Case", key=f"requestor_open_selected_{selected_case}"):
+            navigate_to_deal_detail(str(selected_case), "requestor workspace")
+        followup_disabled = not bool(str(selected_row.get("Pending Role", "")).strip())
+        if action_cols[1].button("Follow-up Reviewer", key=f"requestor_followup_selected_{selected_case}", disabled=followup_disabled):
+            reviewer = str(selected_row.get("Current Reviewer", "reviewer"))
+            log_requestor_followup(str(selected_case), reviewer)
+            st.success(f"Follow-up requested for {reviewer}. No email or Teams message was sent in this demo.")
+        if action_cols[2].button("Ask AI", key=f"requestor_ask_ai_{selected_case}"):
+            st.success(f"AI summary prepared for {selected_case}: focus on reviewer timing, deadline risk, and latest commercial rationale.")
 
 
 def page_requestor_workspace(data: dict[str, pd.DataFrame]) -> None:
