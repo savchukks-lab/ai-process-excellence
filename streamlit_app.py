@@ -401,6 +401,7 @@ def init_state() -> None:
     st.session_state.setdefault("delegate_overrides", None)
     st.session_state.setdefault("approval_matrix_overrides", None)
     st.session_state.setdefault("role_permission_overrides", None)
+    st.session_state.setdefault("requestor_followups", [])
     st.session_state.setdefault("approval_confirmation", "")
     st.session_state.setdefault("deal_detail_confirmation", "")
     st.session_state.setdefault("selected_deal_id", None)
@@ -2773,7 +2774,212 @@ def render_landing_kpis(cockpit: pd.DataFrame, role: str) -> None:
         kpis[4].metric("Total Requested Value", money(values.sum()))
 
 
+def requestor_workspace_records(data: dict[str, pd.DataFrame]) -> tuple[pd.DataFrame, dict[str, dict]]:
+    own_deals = combined_deals(data)
+    if own_deals.empty:
+        return pd.DataFrame(), {}
+    own_deals = own_deals[own_deals.get("Sales Owner", pd.Series(index=own_deals.index, dtype=str)).astype(str).eq(current_persona())]
+    records = []
+    contexts: dict[str, dict] = {}
+    for _, deal_row in own_deals.iterrows():
+        deal_id = str(deal_row.get("Deal ID", ""))
+        context = build_deal_context(data, deal_id)
+        if not context:
+            continue
+        contexts[deal_id] = context
+        deal = context["deal"]
+        lines = context["lines"]
+        summary = context["summary"]
+        products = lines["Product Name"].dropna().astype(str).unique().tolist() if not lines.empty else []
+        status = str(deal.get("Status", "")).strip()
+        pending_roles = current_required_approval_roles(deal_id, status, context["route_df"])
+        pending_role = pending_roles[0] if pending_roles else ""
+        current_reviewer = active_approver_for_role(data, pending_role) if pending_role else ""
+        sla = assignment_status(deal_id, pending_role) if pending_role else {}
+        hours_elapsed = safe_float(sla.get("Hours Elapsed"))
+        days_waiting = max(0, int(hours_elapsed // 24)) if hours_elapsed else 0
+        sla_text = f"{days_waiting}d waiting" if pending_role else "n/a"
+        if sla.get("Is Breached"):
+            sla_text = f"Overdue by {abs(int(safe_float(sla.get('Hours Remaining')) // 24))}d"
+        deadline = pd.to_datetime(deal.get("Expected Award / Decision Date"), errors="coerce")
+        records.append(
+            {
+                "Case ID": deal_id,
+                "Account": deal.get("End Account Name", deal.get("Sold-To Customer Name", deal.get("Customer Name", ""))),
+                "Product": products[0] if products else "",
+                "Scenario": deal.get("Deal Type", deal.get("Risk Reason", "")),
+                "Status": business_deal_status(status),
+                "Raw Status": status,
+                "Current Reviewer": current_reviewer or pending_role or "None",
+                "Pending Role": pending_role,
+                "SLA / Days Waiting": sla_text,
+                "Days Waiting": days_waiting,
+                "Deadline": deadline.strftime("%Y-%m-%d") if not pd.isna(deadline) else "",
+                "Deadline Date": deadline,
+                "Requested Value": safe_float(summary.get("total_proposed")),
+                "Included In Latest Financial Plan": context.get("included_value", ""),
+            }
+        )
+    return pd.DataFrame(records), contexts
+
+
+def requestor_kpi_values(records: pd.DataFrame) -> list[tuple[str, str]]:
+    if records.empty:
+        return [
+            ("Active Cases", "0"),
+            ("Draft Cases", "0"),
+            ("Waiting for Review", "0"),
+            ("Need My Action", "0"),
+            ("Cases Near Deadline", "0"),
+            ("Approved This Month", "0"),
+            ("Average Approval Time", "n/a"),
+            ("Executed Cases with Price Deviations", "0"),
+        ]
+    raw_status = records["Raw Status"].astype(str)
+    deadlines = pd.to_datetime(records["Deadline Date"], errors="coerce")
+    today = pd.Timestamp(date.today())
+    active = ~raw_status.isin(ARCHIVE_STATUSES)
+    near_deadline = active & deadlines.notna() & deadlines.dt.normalize().between(today, today + pd.Timedelta(days=5))
+    approved = raw_status.isin(["Approved", "Final Approved"])
+    approved_month = approved & deadlines.notna() & deadlines.dt.to_period("M").eq(pd.Period(today, freq="M"))
+    waiting_days = pd.to_numeric(records.get("Days Waiting", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    avg_waiting = f"{waiting_days[waiting_days > 0].mean():.1f}d" if (waiting_days > 0).any() else "n/a"
+    price_deviation = approved & records.get("Included In Latest Financial Plan", pd.Series(dtype=str)).astype(str).str.lower().eq("yes")
+    return [
+        ("Active Cases", str(int(active.sum()))),
+        ("Draft Cases", str(int(raw_status.eq("Draft").sum()))),
+        ("Waiting for Review", str(int((active & records["Pending Role"].astype(str).ne("")).sum()))),
+        ("Need My Action", str(int(raw_status.isin(["Draft", "Changes Requested"]).sum()))),
+        ("Cases Near Deadline", str(int(near_deadline.sum()))),
+        ("Approved This Month", str(int(approved_month.sum()))),
+        ("Average Approval Time", avg_waiting),
+        ("Executed Cases with Price Deviations", str(int(price_deviation.sum()))),
+    ]
+
+
+def render_requestor_kpis(records: pd.DataFrame) -> None:
+    values = requestor_kpi_values(records)
+    first_row = st.columns(4)
+    second_row = st.columns(4)
+    for index, (label, value) in enumerate(values):
+        target = first_row if index < 4 else second_row
+        target[index % 4].metric(label, value)
+
+
+def requestor_action_items(records: pd.DataFrame) -> list[tuple[str, str]]:
+    if records.empty:
+        return []
+    raw_status = records["Raw Status"].astype(str)
+    deadlines = pd.to_datetime(records["Deadline Date"], errors="coerce")
+    today = pd.Timestamp(date.today())
+    items = []
+    returned = records[raw_status.eq("Changes Requested")]
+    for _, row in returned.head(3).iterrows():
+        items.append(("Cases returned for changes", f"{row['Case ID']} needs revision before it can continue approval."))
+    drafts = records[raw_status.eq("Draft")]
+    for _, row in drafts.head(2).iterrows():
+        items.append(("Questions to answer", f"{row['Case ID']} is still in draft and needs final submission inputs."))
+    approaching = records[deadlines.notna() & deadlines.dt.normalize().between(today, today + pd.Timedelta(days=5))]
+    for _, row in approaching.head(3).iterrows():
+        items.append(("Deadlines approaching", f"{row['Case ID']} is due by {row['Deadline']}."))
+    waiting = records[pd.to_numeric(records.get("Days Waiting", pd.Series(dtype=float)), errors="coerce").fillna(0).ge(1)]
+    for _, row in waiting.head(3).iterrows():
+        items.append(("Reviewers waiting too long", f"{row['Current Reviewer']} has had {row['Case ID']} for {row['SLA / Days Waiting']}."))
+    return items
+
+
+def render_requestor_action_center(records: pd.DataFrame) -> None:
+    st.subheader("Action Center")
+    items = requestor_action_items(records)
+    if not items:
+        st.info("No requestor actions need attention right now.")
+        return
+    cols = st.columns(2)
+    for index, (title, body) in enumerate(items[:6]):
+        with cols[index % 2].container(border=True):
+            st.markdown(f"**{title}**")
+            st.write(body)
+
+
+def render_ai_daily_brief(records: pd.DataFrame) -> None:
+    st.subheader("AI Daily Brief")
+    if records.empty:
+        st.info("No active requestor cases are available for today.")
+        return
+    actionable = requestor_action_items(records)
+    near_deadline = records[pd.to_datetime(records["Deadline Date"], errors="coerce").notna()].sort_values("Deadline Date").head(1)
+    waiting = records[pd.to_numeric(records.get("Days Waiting", pd.Series(dtype=float)), errors="coerce").fillna(0).ge(1)].head(1)
+    with st.container(border=True):
+        st.markdown("**Attention today**")
+        st.write(actionable[0][1] if actionable else "No urgent requestor action is required today.")
+        st.markdown("**Closest deadline**")
+        if near_deadline.empty:
+            st.write("No dated case deadline is available.")
+        else:
+            row = near_deadline.iloc[0]
+            st.write(f"{row['Case ID']} is due by {row['Deadline']}.")
+        st.markdown("**Reviewer follow-up**")
+        if waiting.empty:
+            st.write("No reviewer follow-up is currently recommended.")
+        else:
+            row = waiting.iloc[0]
+            st.write(f"Follow up with {row['Current Reviewer']} on {row['Case ID']} ({row['SLA / Days Waiting']}).")
+
+
+def log_requestor_followup(case_id: str, reviewer: str) -> None:
+    event = {
+        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Case ID": case_id,
+        "Reviewer": reviewer,
+        "Actor": current_persona(),
+        "Action": "Follow-up Reviewer",
+    }
+    st.session_state.requestor_followups.append(event)
+
+
+def render_requestor_active_cases(records: pd.DataFrame, contexts: dict[str, dict]) -> None:
+    st.subheader("My Active Cases")
+    active = records[~records["Raw Status"].astype(str).isin(ARCHIVE_STATUSES)].copy()
+    if active.empty:
+        st.info("No active cases are open for this requestor.")
+        return
+    headers = st.columns([0.8, 1.35, 1.05, 1.0, 0.95, 1.15, 0.9, 0.9, 1.25])
+    for col, label in zip(headers, ["Case ID", "Account", "Product", "Scenario", "Status", "Current Reviewer", "SLA / Days Waiting", "Deadline", "Action"]):
+        col.markdown(f"**{label}**")
+    for _, row in active.head(8).iterrows():
+        row_cols = st.columns([0.8, 1.35, 1.05, 1.0, 0.95, 1.15, 0.9, 0.9, 1.25])
+        case_id = str(row["Case ID"])
+        row_cols[0].write(case_id)
+        row_cols[1].write(short_business_text(row["Account"], "", 32))
+        row_cols[2].write(short_business_text(row["Product"], "", 24))
+        row_cols[3].write(short_business_text(row["Scenario"], "", 24))
+        row_cols[4].write(row["Status"])
+        row_cols[5].write(short_business_text(row["Current Reviewer"], "", 28))
+        row_cols[6].write(row["SLA / Days Waiting"])
+        row_cols[7].write(row["Deadline"])
+        if row_cols[8].button("Open", key=f"requestor_open_{case_id}"):
+            navigate_to_deal_detail(case_id, "requestor workspace")
+        if row["Pending Role"] and row_cols[8].button("Follow-up Reviewer", key=f"requestor_followup_{case_id}"):
+            log_requestor_followup(case_id, str(row["Current Reviewer"]))
+            st.success(f"Follow-up logged for {row['Current Reviewer']} on {case_id}. No email or Teams message was sent.")
+
+
+def page_requestor_workspace(data: dict[str, pd.DataFrame]) -> None:
+    render_header("Requestor Workspace")
+    records, contexts = requestor_workspace_records(data)
+    render_requestor_kpis(records)
+    workspace_cols = st.columns([3.2, 1.15])
+    with workspace_cols[0]:
+        render_requestor_action_center(records)
+        render_requestor_active_cases(records, contexts)
+    with workspace_cols[1]:
+        render_ai_daily_brief(records)
+
+
 def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
+    if is_kam_role():
+        page_requestor_workspace(data)
+        return
     render_header("Deal Requests")
     all_deals = combined_deals(data)
     active_deals = visible_deals_for_current_role(all_deals, data)
@@ -4794,6 +5000,7 @@ def reset_demo_session() -> None:
     st.session_state.deal_approval_steps = {}
     st.session_state.approval_assignments = {}
     st.session_state.workflow_audit_keys = []
+    st.session_state.requestor_followups = []
     st.session_state.delegate_overrides = None
     st.session_state.approval_matrix_overrides = None
     st.session_state.role_permission_overrides = None
