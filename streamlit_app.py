@@ -2939,20 +2939,7 @@ def render_ai_daily_brief(records: pd.DataFrame) -> None:
 
 
 def log_requestor_followup(case_id: str, reviewer: str) -> None:
-    event = {
-        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Case ID": case_id,
-        "Reviewer": reviewer,
-        "Actor": current_persona(),
-        "Action": "Follow-up Reviewer",
-    }
-    st.session_state.requestor_followups = [*st.session_state.get("requestor_followups", []), event]
-    add_audit(
-        case_id,
-        "Follow-up Sent",
-        entity="Requestor Follow-up",
-        details=f"Follow-up requested for {reviewer}. No email or Teams message was sent in this demo.",
-    )
+    return
 
 
 def render_requestor_active_cases(records: pd.DataFrame, contexts: dict[str, dict]) -> None:
@@ -2963,57 +2950,60 @@ def render_requestor_active_cases(records: pd.DataFrame, contexts: dict[str, dic
         return
     display_cols = ["Case ID", "Account", "Product", "Scenario", "Status", "Current Reviewer", "SLA / Days Waiting", "Deadline"]
     display_df = active[display_cols].head(8).reset_index(drop=True)
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Case ID": st.column_config.TextColumn("Case ID", width="small"),
-            "Account": st.column_config.TextColumn("Account", width="medium"),
-            "Product": st.column_config.TextColumn("Product", width="small"),
-            "Scenario": st.column_config.TextColumn("Scenario", width="medium"),
-            "Status": st.column_config.TextColumn("Status", width="small"),
-            "Current Reviewer": st.column_config.TextColumn("Current Reviewer", width="medium"),
-            "SLA / Days Waiting": st.column_config.TextColumn("SLA / Days Waiting", width="small"),
-            "Deadline": st.column_config.TextColumn("Deadline", width="small"),
-        },
-    )
+    st.table(display_df)
     case_options = display_df["Case ID"].astype(str).tolist()
-    prior_selection = st.session_state.get("deal_list_selected_deal_id")
-    default_index = case_options.index(prior_selection) if prior_selection in case_options else 0
     selected_case = st.selectbox(
         "Selected case",
         case_options,
-        index=default_index,
         key="requestor_selected_case",
     )
-    st.session_state.deal_list_selected_deal_id = selected_case
 
     selected_row = active[active["Case ID"].astype(str).eq(str(selected_case))].iloc[0]
-    with st.container(border=True):
-        st.markdown(f"**Selected Case Actions: {selected_case}**")
-        action_cols = st.columns([0.8, 1.1, 0.7, 3.0])
-        if action_cols[0].button("Open Case", key=f"requestor_open_selected_{selected_case}"):
-            navigate_to_deal_detail(str(selected_case), "requestor workspace")
-        followup_disabled = not bool(str(selected_row.get("Pending Role", "")).strip())
-        if action_cols[1].button("Follow-up Reviewer", key=f"requestor_followup_selected_{selected_case}", disabled=followup_disabled):
-            reviewer = str(selected_row.get("Current Reviewer", "reviewer"))
-            log_requestor_followup(str(selected_case), reviewer)
-            st.success(f"Follow-up requested for {reviewer}. No email or Teams message was sent in this demo.")
-        if action_cols[2].button("Ask AI", key=f"requestor_ask_ai_{selected_case}"):
-            st.success(f"AI summary prepared for {selected_case}: focus on reviewer timing, deadline risk, and latest commercial rationale.")
+    st.markdown(f"**Selected Case Actions: {selected_case}**")
+    action_cols = st.columns([1, 1.4, 1, 3])
+    if action_cols[0].button("Open Case", key=f"requestor_open_selected_{selected_case}"):
+        navigate_to_deal_detail(str(selected_case), "requestor workspace")
+    followup_disabled = not bool(str(selected_row.get("Pending Role", "")).strip())
+    if action_cols[1].button("Follow-up Reviewer", key=f"requestor_followup_selected_{selected_case}", disabled=followup_disabled):
+        reviewer = str(selected_row.get("Current Reviewer", "reviewer"))
+        log_requestor_followup(str(selected_case), reviewer)
+        st.success(f"Follow-up requested for {reviewer}. No email or Teams message was sent in this demo.")
+    if action_cols[2].button("Ask AI", key=f"requestor_ask_ai_{selected_case}"):
+        st.success(f"AI summary prepared for {selected_case}.")
+
+
+def render_requestor_workspace_fallback(data: dict[str, pd.DataFrame]) -> None:
+    st.warning("Requestor Workspace is running in simplified mode.")
+    deals = combined_deals(data)
+    if deals.empty:
+        st.info("No cases are available.")
+        return
+    own = deals[deals.get("Sales Owner", pd.Series(index=deals.index, dtype=str)).astype(str).eq(current_persona())].copy()
+    if own.empty:
+        st.info("No cases are available for this requestor.")
+        return
+    display = own[["Deal ID", "Deal Title", "Status"]].head(10).copy()
+    st.table(display)
+    selected = st.selectbox("Selected case", display["Deal ID"].astype(str).tolist(), key="requestor_fallback_selected_case")
+    if st.button("Open Case", key="requestor_fallback_open_case"):
+        navigate_to_deal_detail(str(selected), "requestor workspace fallback")
 
 
 def page_requestor_workspace(data: dict[str, pd.DataFrame]) -> None:
     render_header("Requestor Workspace")
-    records, contexts = requestor_workspace_records(data)
-    render_requestor_kpis(records)
-    workspace_cols = st.columns([3.2, 1.15])
-    with workspace_cols[0]:
-        render_requestor_action_center(records)
-        render_requestor_active_cases(records, contexts)
-    with workspace_cols[1]:
-        render_ai_daily_brief(records)
+    try:
+        records, contexts = requestor_workspace_records(data)
+        render_requestor_kpis(records)
+        workspace_cols = st.columns([3.2, 1.15])
+        with workspace_cols[0]:
+            render_requestor_action_center(records)
+            render_requestor_active_cases(records, contexts)
+        with workspace_cols[1]:
+            render_ai_daily_brief(records)
+    except Exception as exc:
+        st.error("Requestor Workspace could not load the dashboard view. Showing a simplified case list instead.")
+        st.caption(str(exc))
+        render_requestor_workspace_fallback(data)
 
 
 def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
