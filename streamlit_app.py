@@ -1357,6 +1357,22 @@ def get_selected_dataframe_value(table_event: object, display_df: pd.DataFrame, 
     return None
 
 
+def deal_selection_checkbox_key(deal_id: str) -> str:
+    safe_id = "".join(char if char.isalnum() else "_" for char in str(deal_id))
+    return f"deal_list_select_{safe_id}"
+
+
+def set_deal_list_checkbox_selection(deal_id: str, visible_deal_ids: list[str]) -> None:
+    selected_key = deal_selection_checkbox_key(deal_id)
+    if st.session_state.get(selected_key):
+        st.session_state.deal_list_selected_deal_id = deal_id
+        for other_id in visible_deal_ids:
+            if other_id != deal_id:
+                st.session_state[deal_selection_checkbox_key(other_id)] = False
+    elif st.session_state.get("deal_list_selected_deal_id") == deal_id:
+        st.session_state.deal_list_selected_deal_id = None
+
+
 def update_deal_status(
     deal_id: str,
     status: str,
@@ -2891,42 +2907,46 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         "Status",
     ]
     display_df = filtered[display_cols].reset_index(drop=True)
-    table_event = st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key=f"deal_request_list_table_{st.session_state.deal_list_table_revision}",
-        column_config={
-            "Deal ID": None,
-            "Deal": st.column_config.TextColumn("Deal", width="large"),
-            "Sold-To Customer": st.column_config.TextColumn("Sold-To Customer", width="medium"),
-            "End Account": st.column_config.TextColumn("End Account", width="medium"),
-            "Main Product": st.column_config.TextColumn("Main Product", width="medium"),
-            "Requested Discount %": st.column_config.TextColumn("Requested Discount %", width="small"),
-            "Resulting Gross Margin %": st.column_config.TextColumn("Resulting Gross Margin %", width="small"),
-            "Risk": st.column_config.TextColumn("Risk", width="small"),
-            "Decision Due": st.column_config.TextColumn("Decision Due", width="small"),
-            "Status": st.column_config.TextColumn("Status", width="small"),
-        },
-    )
-    table_selected = get_selected_dataframe_deal_id(table_event, display_df)
-    if table_selected:
-        st.session_state.deal_list_selected_deal_id = table_selected
-        st.session_state.selected_deal_id = table_selected
-    else:
+    visible_ids = display_df["Deal ID"].astype(str).tolist()
+    selected_id = st.session_state.get("deal_list_selected_deal_id")
+    if selected_id not in set(visible_ids):
+        selected_id = None
         st.session_state.deal_list_selected_deal_id = None
 
-    if table_selected:
-        context = contexts.get(table_selected) or build_deal_context(data, table_selected)
+    header_cols = st.columns([0.28, 1.6, 1.2, 1.2, 1.0, 0.82, 0.95, 0.62, 0.78, 0.82])
+    for col, label in zip(header_cols, ["", "Deal", "Sold-To Customer", "End Account", "Product", "Discount", "Margin", "Risk", "Due", "Status"]):
+        col.markdown(f"**{label}**")
+    for _, row in display_df.iterrows():
+        deal_id = str(row["Deal ID"])
+        row_cols = st.columns([0.28, 1.6, 1.2, 1.2, 1.0, 0.82, 0.95, 0.62, 0.78, 0.82])
+        row_cols[0].checkbox(
+            "Select deal",
+            value=selected_id == deal_id,
+            key=deal_selection_checkbox_key(deal_id),
+            label_visibility="collapsed",
+            on_change=set_deal_list_checkbox_selection,
+            args=(deal_id, visible_ids),
+        )
+        row_cols[1].write(short_business_text(row["Deal"], "", 38))
+        row_cols[2].write(short_business_text(row["Sold-To Customer"], "", 28))
+        row_cols[3].write(short_business_text(row["End Account"], "", 28))
+        row_cols[4].write(short_business_text(row["Main Product"], "", 24))
+        row_cols[5].write(row["Requested Discount %"])
+        row_cols[6].write(row["Resulting Gross Margin %"])
+        row_cols[7].write(row["Risk"])
+        row_cols[8].write(row["Decision Due"])
+        row_cols[9].write(row["Status"])
+
+    selected_id = st.session_state.get("deal_list_selected_deal_id")
+    if selected_id:
+        context = contexts.get(selected_id) or build_deal_context(data, selected_id)
         if context:
             render_inline_deal_preview(context, compact=True)
             actions = st.columns([1, 5])
             if actions[0].button("Open Deal Detail", type="primary"):
-                navigate_to_deal_detail(table_selected, "deal request list row selection")
+                navigate_to_deal_detail(selected_id, "deal request list row selection")
     else:
-        st.caption("Use the selection control at the left of a row to open its preview.")
+        st.caption("Use the checkbox at the left of a row to open its preview.")
 
 
 def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) -> dict:
