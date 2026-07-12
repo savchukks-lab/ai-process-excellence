@@ -403,6 +403,7 @@ def init_state() -> None:
     st.session_state.setdefault("role_permission_overrides", None)
     st.session_state.setdefault("approval_confirmation", "")
     st.session_state.setdefault("deal_detail_confirmation", "")
+    st.session_state.setdefault("navigation_warning", "")
     st.session_state.setdefault("selected_deal_id", None)
     st.session_state.setdefault("deal_list_view_mode", "Active")
     st.session_state.setdefault("deal_list_table_revision", 0)
@@ -1217,12 +1218,9 @@ def combined_lines(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def navigate_to_deal_detail(deal_id: str, source: str) -> None:
-    st.session_state.selected_deal_id = deal_id
+    st.session_state.selected_deal_id = str(deal_id)
     st.session_state.current_page = "Deal Detail"
     st.session_state.deal_detail_parent = "Review Queue" if "approval" in source.lower() else "Deal Requests"
-    add_audit(deal_id, "Deal viewed", details=f"Opened from {source}.")
-    if sensitive_fields_visible_for_role(current_role()) == "Yes":
-        add_audit(deal_id, "Sensitive deal data accessed", details=f"Opened from {source}.", sensitive_fields_visible="Yes")
     st.rerun()
 
 
@@ -2803,6 +2801,10 @@ def render_landing_kpis(cockpit: pd.DataFrame, role: str) -> None:
 
 def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     render_header("Deal Requests")
+    navigation_warning = str(st.session_state.get("navigation_warning", "")).strip()
+    if navigation_warning:
+        st.warning(navigation_warning)
+        st.session_state.navigation_warning = ""
     all_deals = combined_deals(data)
     active_deals = visible_deals_for_current_role(all_deals, data)
     active_deals = active_deals[~active_deals["Status"].astype(str).isin(ARCHIVE_STATUSES)]
@@ -2943,7 +2945,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         if context:
             render_inline_deal_preview(context, compact=True)
             actions = st.columns([1, 5])
-            if actions[0].button("Open Deal Detail", type="primary"):
+            if actions[0].button("Open Deal Detail", type="primary", key=f"open_deal_detail_{selected_id}"):
                 navigate_to_deal_detail(selected_id, "deal request list row selection")
     else:
         st.caption("Use the checkbox at the left of a row to open its preview.")
@@ -4107,9 +4109,13 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     if deals.empty:
         st.info("No deal details are visible for the current user.")
         return
-    default = st.session_state.selected_deal_id if st.session_state.selected_deal_id in set(deals["Deal ID"]) else deals.iloc[0]["Deal ID"]
-    selected = str(default)
-    st.session_state.selected_deal_id = selected
+    visible_ids = set(deals["Deal ID"].astype(str))
+    selected = str(st.session_state.get("selected_deal_id") or "")
+    if not selected or selected not in visible_ids:
+        st.session_state.selected_deal_id = None
+        st.session_state.current_page = "Deal Request List"
+        st.session_state.navigation_warning = "The selected case is no longer available. Returning to Deal Requests."
+        st.rerun()
 
     breadcrumb_cols = st.columns([0.72, 4.6])
     if breadcrumb_cols[0].button("Deal Requests", key=f"detail_breadcrumb_home_{selected}"):
@@ -4517,7 +4523,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
         st.session_state.approval_confirmation = f"Comment added for {selected}. Status remains {previous_status}."
         st.rerun()
 
-    if st.button("Open Full Deal Detail", type="secondary"):
+    if st.button("Open Full Deal Detail", type="secondary", key=f"open_full_deal_detail_{selected}"):
         navigate_to_deal_detail(selected, "approval queue preview")
 
 
