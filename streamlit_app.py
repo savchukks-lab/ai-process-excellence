@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import faulthandler
+import os
+import sys
 from datetime import date, datetime, timedelta
+from importlib import metadata
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,9 +25,46 @@ from deal_logic import (
     summarize_lines,
 )
 
+try:
+    faulthandler.enable()
+except (OSError, RuntimeError, ValueError):
+    pass
 
 BASE_DIR = Path(__file__).resolve().parent
 DEMO_DIR = BASE_DIR / "demo-data"
+
+
+def memory_usage_mb() -> float | None:
+    try:
+        import resource
+
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return usage / 1024
+    except Exception:
+        return None
+
+
+def package_version(name: str) -> str:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return "not installed"
+
+
+def log_runtime_checkpoint(label: str) -> None:
+    memory = memory_usage_mb()
+    memory_text = f"{memory:.1f} MB" if memory is not None else "unavailable"
+    print(
+        "[deal-desk-stability] "
+        f"{label} | python={sys.version.split()[0]} "
+        f"streamlit={package_version('streamlit')} "
+        f"pandas={package_version('pandas')} "
+        f"numpy={package_version('numpy')} "
+        f"pyarrow={package_version('pyarrow')} "
+        f"memory={memory_text}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 ROLE_ORDER = [
     "KAM North",
@@ -470,6 +511,23 @@ def pct(value: float | int | None) -> str:
     return f"{float(value) * 100:.1f}%"
 
 
+ROLE_DISPLAY_RENAMES = {
+    "Pricing Governance Owner": "Commercial Manager",
+    "Finance Director": "Finance Manager",
+}
+
+
+def display_role_name(role: object) -> str:
+    return ROLE_DISPLAY_RENAMES.get(str(role), str(role))
+
+
+def display_role_text(value: object) -> str:
+    text = str(value)
+    for old, new in ROLE_DISPLAY_RENAMES.items():
+        text = text.replace(old, new)
+    return text
+
+
 def display_timestamp(value: str) -> str:
     timestamp = pd.to_datetime(value, errors="coerce")
     if pd.isna(timestamp):
@@ -603,9 +661,9 @@ def render_credit_warning_banner(customer: dict) -> None:
     credit_status = str(customer.get("Credit Status", ""))
     overdue_ar = safe_float(customer.get("Overdue AR"))
     if credit_status == "Hold":
-        st.error("Credit status is Hold. Finance Director approval is mandatory before final approval.")
+        st.error("Credit status is Hold. Finance Manager approval is mandatory before final approval.")
     elif overdue_ar > 0:
-        st.warning(f"Overdue receivables are {money(overdue_ar)}. Finance Director approval is mandatory.")
+        st.warning(f"Overdue receivables are {money(overdue_ar)}. Finance Manager approval is mandatory.")
 
 
 def render_customer_information_panel(customer: dict) -> None:
@@ -903,7 +961,8 @@ def active_approver_for_role(data: dict[str, pd.DataFrame], role: str) -> str:
 
 def role_display_label(data: dict[str, pd.DataFrame], role: str) -> str:
     record = delegate_record(data, role)
-    return f"{role} (Delegated)" if bool(record.get("Delegation Enabled")) else role
+    label = display_role_name(role)
+    return f"{label} (Delegated)" if bool(record.get("Delegation Enabled")) else label
 
 
 def user_can_act_for_role(data: dict[str, pd.DataFrame], route_role: str, persona: str, user_role: str) -> bool:
@@ -1701,7 +1760,7 @@ def normalize_lines(line_df: pd.DataFrame, data: dict[str, pd.DataFrame]) -> pd.
                 "Base Rebate %": prod.get("Base Rebate %", 0),
                 "Target Margin %": product_target_margin(prod),
                 "Target Gross Margin %": product_target_margin(prod),
-                "Finance Director Trigger Margin": finance_trigger_margin(product_target_margin(prod)),
+                "Finance Manager Trigger Margin": finance_trigger_margin(product_target_margin(prod)),
                 "General Manager Trigger Margin": gm_trigger_margin(product_target_margin(prod)),
                 "Requested Delivery Date": row.get("Requested Delivery Date", None),
                 "Inventory Tracked": prod.get("Inventory Tracked", ""),
@@ -1737,20 +1796,138 @@ def commercial_line_items_view(lines: pd.DataFrame) -> pd.DataFrame:
 
 def commercial_pricing_view(lines: pd.DataFrame) -> pd.DataFrame:
     if lines.empty:
-        return pd.DataFrame(columns=["SKU", "Product", "Quantity", "Gross Price", "Net Price", "Discount %", "Revenue", "Gross Margin"])
+        return pd.DataFrame(columns=["SKU", "Product", "Quantity", "Gross Price", "Proposed Net Price", "Discount %", "Gross Revenue", "Net Revenue", "Gross Profit", "Gross Margin %"])
+    quantity = pd.to_numeric(lines.get("Quantity", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    gross_price = pd.to_numeric(lines.get("Unit Gross Price", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    net_price = pd.to_numeric(lines.get("Requested Net Price", lines.get("Proposed Unit Price", pd.Series(dtype=float))), errors="coerce").fillna(0)
+    unit_cost = pd.to_numeric(lines.get("Unit Cost", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    gross_revenue = pd.to_numeric(lines.get("Gross Revenue", lines.get("Extended Gross", quantity * gross_price)), errors="coerce").fillna(0)
+    net_revenue = pd.to_numeric(lines.get("Proposed Net Revenue", lines.get("Extended Proposed", quantity * net_price)), errors="coerce").fillna(0)
+    gross_profit = net_revenue - (quantity * unit_cost)
+    margin = gross_profit.divide(net_revenue.where(net_revenue != 0))
     view = pd.DataFrame(
         {
             "SKU": lines.get("SKU", pd.Series(dtype=str)),
             "Product": lines.get("Product Name", pd.Series(dtype=str)),
-            "Quantity": pd.to_numeric(lines.get("Quantity", pd.Series(dtype=float)), errors="coerce").fillna(0),
-            "Gross Price": pd.to_numeric(lines.get("Unit Gross Price", pd.Series(dtype=float)), errors="coerce"),
-            "Net Price": pd.to_numeric(lines.get("Requested Net Price", pd.Series(dtype=float)), errors="coerce"),
+            "Quantity": quantity,
+            "Gross Price": gross_price,
+            "Proposed Net Price": net_price,
             "Discount %": pd.to_numeric(lines.get("Requested Discount %", lines.get("Discount %", pd.Series(dtype=float))), errors="coerce"),
-            "Revenue": pd.to_numeric(lines.get("Proposed Net Revenue", lines.get("Extended Proposed", pd.Series(dtype=float))), errors="coerce"),
-            "Gross Margin": pd.to_numeric(lines.get("Margin %", lines.get("Estimated Gross Margin %", pd.Series(dtype=float))), errors="coerce"),
+            "Gross Revenue": gross_revenue,
+            "Net Revenue": net_revenue,
+            "Gross Profit": gross_profit,
+            "Gross Margin %": margin,
         }
     )
-    return mask_sensitive_dataframe(view)
+    formatted = view.copy()
+    for col in ["Gross Price", "Proposed Net Price", "Gross Revenue", "Net Revenue", "Gross Profit"]:
+        formatted[col] = [sensitive_money(col, value) for value in formatted[col]]
+    formatted["Discount %"] = formatted["Discount %"].apply(pct)
+    targets = pd.to_numeric(lines.get("Target Margin %", pd.Series([None] * len(view))), errors="coerce")
+    formatted["Gross Margin %"] = [
+        margin_value_display(value, target, current_role())
+        for value, target in zip(view["Gross Margin %"], targets)
+    ]
+    formatted["Quantity"] = formatted["Quantity"].map(lambda value: f"{safe_float(value):,.0f}")
+    return formatted
+
+
+def line_cost_total(lines: pd.DataFrame) -> float:
+    if lines.empty:
+        return 0
+    quantity = pd.to_numeric(lines.get("Quantity", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    unit_cost = pd.to_numeric(lines.get("Unit Cost", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    return safe_float((quantity * unit_cost).sum())
+
+
+def weighted_price_from_lines(lines: pd.DataFrame, price_col: str) -> float | None:
+    if lines.empty or price_col not in lines:
+        return None
+    quantity = pd.to_numeric(lines.get("Quantity", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    return weighted_average(pd.to_numeric(lines[price_col], errors="coerce").fillna(0), quantity)
+
+
+def financial_pnl_values(lines: pd.DataFrame, plan_df: pd.DataFrame, included_in_plan: bool) -> dict[str, dict[str, float | None]]:
+    summary = summarize_lines(lines)
+    proposed_cost = line_cost_total(lines)
+    proposed_profit = safe_float(summary.get("total_proposed")) - proposed_cost
+    proposed_values = {
+        "Gross Revenue": safe_float(summary.get("total_gross")),
+        "Discount": safe_float(summary.get("discount_amount")),
+        "Net Revenue": safe_float(summary.get("total_proposed")),
+        "COGS": proposed_cost,
+        "Gross Profit": proposed_profit,
+        "Gross Margin % of Net Revenue": calculate_margin_pct(summary.get("total_proposed"), proposed_profit),
+    }
+
+    planned_values: dict[str, float | None] = {key: None for key in proposed_values}
+    if included_in_plan and not plan_df.empty:
+        planned_net_revenue = safe_float(plan_df.get("Planned Revenue", pd.Series(dtype=float)).sum())
+        planned_gross_profit = safe_float(plan_df.get("Planned Gross Profit", pd.Series(dtype=float)).sum())
+        planned_cost = planned_net_revenue - planned_gross_profit
+        planned_qty_by_sku = plan_df.groupby("SKU")["Planned Quantity"].sum() if "SKU" in plan_df and "Planned Quantity" in plan_df else pd.Series(dtype=float)
+        planned_gross_revenue = 0
+        for _, line in lines.iterrows():
+            sku = str(line.get("SKU", ""))
+            planned_qty = safe_float(planned_qty_by_sku.get(sku, 0)) if not planned_qty_by_sku.empty else safe_float(line.get("Quantity"))
+            planned_gross_revenue += safe_float(line.get("Unit Gross Price")) * planned_qty
+        planned_values = {
+            "Gross Revenue": planned_gross_revenue,
+            "Discount": planned_gross_revenue - planned_net_revenue,
+            "Net Revenue": planned_net_revenue,
+            "COGS": planned_cost,
+            "Gross Profit": planned_gross_profit,
+            "Gross Margin % of Net Revenue": calculate_margin_pct(planned_net_revenue, planned_gross_profit),
+        }
+    return {"plan": planned_values, "proposed": proposed_values}
+
+
+def format_financial_value(metric: str, value: float | None, target: float | None = None) -> str:
+    if value is None:
+        return "n/a"
+    if "Margin %" in metric:
+        return margin_value_display(value, target, current_role())
+    return sensitive_money(metric, value)
+
+
+def financial_pnl_table(lines: pd.DataFrame, plan_df: pd.DataFrame, included_in_plan: bool) -> pd.DataFrame:
+    values = financial_pnl_values(lines, plan_df, included_in_plan)
+    target_margin = safe_float(summarize_lines(lines).get("weighted_target_margin"))
+    rows = []
+    for metric in ["Gross Revenue", "Discount", "Net Revenue", "COGS", "Gross Profit", "Gross Margin % of Net Revenue"]:
+        plan_value = values["plan"][metric]
+        proposed_value = values["proposed"][metric]
+        variance = None if plan_value is None or proposed_value is None else proposed_value - plan_value
+        rows.append(
+            {
+                "P&L Line": metric,
+                "Budget / Plan": format_financial_value(metric, plan_value, target_margin),
+                "Proposed Case": format_financial_value(metric, proposed_value, target_margin),
+                "Variance": format_financial_value(metric, variance, target_margin),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def compact_plan_comparison(plan_df: pd.DataFrame) -> pd.DataFrame:
+    if plan_df.empty:
+        return pd.DataFrame()
+    planned_qty = safe_float(plan_df.get("Planned Quantity", pd.Series(dtype=float)).sum())
+    proposed_qty = safe_float(plan_df.get("New Quantity", pd.Series(dtype=float)).sum())
+    planned_price = weighted_average(plan_df.get("Planned Net Price", pd.Series(dtype=float)), plan_df.get("Planned Quantity", pd.Series(dtype=float)))
+    proposed_price = weighted_average(plan_df.get("Proposed Net Price", pd.Series(dtype=float)), plan_df.get("New Quantity", pd.Series(dtype=float)))
+    planned_revenue = safe_float(plan_df.get("Planned Revenue", pd.Series(dtype=float)).sum())
+    proposed_revenue = safe_float(plan_df.get("Proposed Revenue", pd.Series(dtype=float)).sum())
+    planned_gp = safe_float(plan_df.get("Planned Gross Profit", pd.Series(dtype=float)).sum())
+    proposed_gp = safe_float(plan_df.get("Proposed Gross Profit", pd.Series(dtype=float)).sum())
+    price_variance_pct = None if planned_price <= 0 else (proposed_price - planned_price) / planned_price
+    rows = [
+        {"Metric": "Net Price", "Budget / Plan": money(planned_price), "Proposed Case": money(proposed_price), "Variance": pct(price_variance_pct)},
+        {"Metric": "Quantity", "Budget / Plan": f"{planned_qty:,.0f}", "Proposed Case": f"{proposed_qty:,.0f}", "Variance": f"{safe_float(plan_df.get('Volume Variance', pd.Series(dtype=float)).sum()):,.0f}"},
+        {"Metric": "Net Revenue", "Budget / Plan": sensitive_money("Planned Revenue", planned_revenue), "Proposed Case": sensitive_money("Proposed Revenue", proposed_revenue), "Variance": sensitive_money("Revenue Variance", safe_float(plan_df.get("Revenue Variance", pd.Series(dtype=float)).sum()))},
+        {"Metric": "Gross Profit", "Budget / Plan": sensitive_money("Planned Gross Profit", planned_gp), "Proposed Case": sensitive_money("Proposed Gross Profit", proposed_gp), "Variance": sensitive_money("Gross Profit Variance", proposed_gp - planned_gp)},
+    ]
+    return pd.DataFrame(rows)
 
 
 def contract_duration_months(deal: dict) -> int:
@@ -2597,6 +2774,8 @@ def approval_route_text(route_df: pd.DataFrame, data: dict[str, pd.DataFrame] | 
     roles = [str(role) for role in route_df.sort_values("Sequence")["Role"].tolist()]
     if data is not None:
         roles = [role_display_label(data, role) for role in roles]
+    else:
+        roles = [display_role_name(role) for role in roles]
     return " \u2192 ".join(dict.fromkeys(roles))
 
 
@@ -2660,9 +2839,9 @@ def business_recommendation(summary: dict, lines: pd.DataFrame, route_df: pd.Dat
     if "General Manager" in roles:
         return "Escalate to General Manager"
     if "Pricing Governance Owner" in roles:
-        return "Approve with Pricing Governance Review"
+        return "Approve with Commercial Manager Review"
     if "Finance Director" in roles:
-        return "Approve with Finance Review"
+        return "Approve with Finance Manager Review"
     return "Approve"
 
 
@@ -2842,6 +3021,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
             {
                 "Deal ID": deal_id,
                 "Deal": deal.get("Deal Title", deal_id),
+                "Requestor": deal.get("Sales Owner", deal.get("Submitted By", "")),
                 "Sold-To Customer": deal.get("Sold-To Customer Name", deal.get("Customer Name", "")),
                 "End Account": deal.get("End Account Name", deal.get("Customer Name", "")),
                 "Main Product": products[0] if products else "",
@@ -2877,7 +3057,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         selected_types = filters[1].multiselect("Customer Type", sorted(cockpit["Customer Type"].dropna().astype(str).unique()))
         selected_risks = filters[2].multiselect("Risk", sorted(cockpit["Risk"].dropna().astype(str).unique()))
         selected_owners = filters[3].multiselect("Sales Owner", sorted(cockpit["Sales Owner"].dropna().astype(str).unique()))
-        selected_reviewers = filters[4].multiselect("Reviewer Role", ACTIONABLE_APPROVAL_ROLES)
+        selected_reviewers = filters[4].multiselect("Reviewer Role", ACTIONABLE_APPROVAL_ROLES, format_func=display_role_name)
 
     filtered = cockpit.copy()
     if selected_products:
@@ -2899,6 +3079,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
     display_cols = [
         "Deal ID",
         "Deal",
+        "Requestor",
         "Sold-To Customer",
         "End Account",
         "Main Product",
@@ -2915,12 +3096,12 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         selected_id = None
         st.session_state.deal_list_selected_deal_id = None
 
-    header_cols = st.columns([0.28, 1.6, 1.2, 1.2, 1.0, 0.82, 0.95, 0.62, 0.78, 0.82])
-    for col, label in zip(header_cols, ["", "Deal", "Sold-To Customer", "End Account", "Product", "Discount", "Margin", "Risk", "Due", "Status"]):
+    header_cols = st.columns([0.25, 1.35, 0.85, 1.05, 1.05, 0.9, 0.72, 0.85, 0.55, 0.7, 0.75])
+    for col, label in zip(header_cols, ["", "Deal", "Requestor", "Customer", "End Account", "Product", "Discount", "Margin", "Risk", "Due", "Status"]):
         col.markdown(f"**{label}**")
     for _, row in display_df.iterrows():
         deal_id = str(row["Deal ID"])
-        row_cols = st.columns([0.28, 1.6, 1.2, 1.2, 1.0, 0.82, 0.95, 0.62, 0.78, 0.82])
+        row_cols = st.columns([0.25, 1.35, 0.85, 1.05, 1.05, 0.9, 0.72, 0.85, 0.55, 0.7, 0.75])
         row_cols[0].checkbox(
             "Select deal",
             value=selected_id == deal_id,
@@ -2930,14 +3111,15 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
             args=(deal_id, visible_ids),
         )
         row_cols[1].write(short_business_text(row["Deal"], "", 38))
-        row_cols[2].write(short_business_text(row["Sold-To Customer"], "", 28))
-        row_cols[3].write(short_business_text(row["End Account"], "", 28))
-        row_cols[4].write(short_business_text(row["Main Product"], "", 24))
-        row_cols[5].write(row["Requested Discount %"])
-        row_cols[6].write(row["Resulting Gross Margin %"])
-        row_cols[7].write(row["Risk"])
-        row_cols[8].write(row["Decision Due"])
-        row_cols[9].write(row["Status"])
+        row_cols[2].write(short_business_text(row["Requestor"], "", 18))
+        row_cols[3].write(short_business_text(row["Sold-To Customer"], "", 24))
+        row_cols[4].write(short_business_text(row["End Account"], "", 24))
+        row_cols[5].write(short_business_text(row["Main Product"], "", 22))
+        row_cols[6].write(row["Requested Discount %"])
+        row_cols[7].write(row["Resulting Gross Margin %"])
+        row_cols[8].write(row["Risk"])
+        row_cols[9].write(row["Decision Due"])
+        row_cols[10].write(row["Status"])
 
     selected_id = st.session_state.get("deal_list_selected_deal_id")
     if selected_id:
@@ -3189,7 +3371,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 "Guidance Price",
                 "Walk-away Price",
                 "Target Gross Margin %",
-                "Finance Director Trigger Margin",
+                "Finance Manager Trigger Margin",
                 "General Manager Trigger Margin",
             ]
             view = calc_lines[[col for col in view_cols if col in calc_lines]].copy()
@@ -3252,6 +3434,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             expansion_impact = st.text_area("Renewal or Expansion Impact", height=100, key="form_expansion")
 
         st.markdown("**Market summary**")
+        plan_status = "Included" if context["included_in_plan"] else "Outside Financial Plan"
         summary_cols = st.columns(3)
         summary_cols[0].info(f"Competitor posture: {competitor_type}")
         summary_cols[1].info(f"Bid range: {expected_bid_range}")
@@ -3868,7 +4051,7 @@ def render_latest_reviewer_comment(deal: dict, deal_id: str) -> None:
     event = latest_review_event(deal, deal_id)
     if not event:
         return
-    role = str(event.get("Role", "")).strip() or "Reviewer"
+    role = display_role_text(str(event.get("Role", "")).strip() or "Reviewer")
     comment = str(event.get("Comment", "")).strip()
     with st.container(border=True):
         st.subheader("Latest Reviewer Comment")
@@ -3878,7 +4061,7 @@ def render_latest_reviewer_comment(deal: dict, deal_id: str) -> None:
 
 def business_approval_status(deal_status: str, pending_role: str) -> str:
     if pending_role:
-        return f"Awaiting {pending_role} Review"
+        return f"Awaiting {display_role_text(pending_role)} Review"
     if deal_status == "Changes Requested":
         return "Awaiting KAM Revision"
     if deal_status in {"Approved", "Final Approved"}:
@@ -3910,7 +4093,7 @@ def render_approval_handoff(
     current_roles = current_required_approval_roles(deal_id, deal_status, route_df)
     approved_by = ", ".join(approval_actor_for_role(deal_id, role, data) for role in completed if role in roles)
     current_reviewer = ", ".join(active_approver_for_role(data, role) for role in current_roles)
-    remaining = [role for role in roles if role not in completed and role not in current_roles]
+    remaining = [display_role_name(role) for role in roles if role not in completed and role not in current_roles]
     submitted_by = str(deal.get("Sales Owner", deal.get("Submitted By", ""))) or "Submitting KAM"
 
     handoff = st.columns(4)
@@ -3921,15 +4104,15 @@ def render_approval_handoff(
 
 
 def render_ai_decision_support(context: dict, data: dict[str, pd.DataFrame]) -> None:
-    recommendation, reasons = deal_decision_support(context, data)
+    _recommendation, reasons = deal_decision_support(context, data)
     with st.container(border=True):
         st.markdown("<span class='ai-support-marker'></span>", unsafe_allow_html=True)
-        st.subheader("AI Decision Support")
-        st.markdown(f"**Recommended action: {recommendation}**")
-        st.markdown("**Why**")
+        st.subheader("AI Case Insights")
+        st.caption("AI-generated insights may contain inaccuracies. Review the underlying case information before making a decision.")
+        st.markdown("**Key considerations**")
         for tone, reason in reasons:
-            prefix = "Positive" if tone == "positive" else "Attention" if tone == "attention" else "Critical"
-            st.write(f"**{prefix}:** {reason}")
+            prefix = "Positive factor" if tone == "positive" else "Risk or question" if tone == "attention" else "High-risk item"
+            st.write(f"**{prefix}:** {display_role_text(reason)}")
 
 
 def render_deal_approval_action(
@@ -4006,11 +4189,11 @@ def render_approval_timeline(deal_id: str, deal_status: str, route_df: pd.DataFr
     timeline = ["Submitted by KAM"]
     for role in roles:
         if role in completed:
-            timeline.append(f"Approved by {role}")
+            timeline.append(f"Approved by {display_role_name(role)}")
         elif role in current:
-            timeline.append(f"Awaiting {role} Review")
+            timeline.append(f"Awaiting {display_role_name(role)} Review")
         else:
-            timeline.append(f"Next: {role}")
+            timeline.append(f"Next: {display_role_name(role)}")
     if deal_status in {"Approved", "Final Approved"}:
         timeline.append("Approved")
     elif deal_status == "Rejected":
@@ -4035,7 +4218,7 @@ def render_approval_progress(deal_id: str, deal_status: str, route_df: pd.DataFr
         st.markdown(" &nbsp; ".join(items), unsafe_allow_html=True)
     st.caption("✓ completed  |  ● current reviewer  |  ○ upcoming reviewer")
     current_names = ", ".join(active_approver_for_role(data, role) for role in current) or "None"
-    remaining = [role for role in roles if role not in completed and role not in current]
+    remaining = [display_role_name(role) for role in roles if role not in completed and role not in current]
     progress_cols = st.columns(2)
     progress_cols[0].metric("Current Approver", current_names)
     progress_cols[1].metric("Next Approvers", " -> ".join(remaining) if remaining else "None")
@@ -4105,6 +4288,7 @@ def render_technical_route_details(context: dict) -> None:
 
 
 def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
+    log_runtime_checkpoint("before deal detail render")
     deals = deal_detail_visible_deals(data)
     if deals.empty:
         st.info("No deal details are visible for the current user.")
@@ -4148,13 +4332,22 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
     )
 
     st.markdown(f"<h1>{deal.get('Deal Title', selected)}</h1>", unsafe_allow_html=True)
+    requestor = str(deal.get("Sales Owner", deal.get("Submitted By", "")) or "Unassigned")
+    caption_parts = [
+        selected,
+        f"Requestor: {requestor}",
+        str(deal.get("End Account Name", deal.get("Sold-To Customer Name", deal.get("Customer Name", ""))) or ""),
+        str(calc_lines["Product Name"].dropna().astype(str).iloc[0]) if not calc_lines.empty and "Product Name" in calc_lines else "",
+        str(deal.get("Deal Type", "") or ""),
+    ]
+    st.caption(" | ".join(part for part in caption_parts if part))
     metrics = st.columns(5)
     metrics[0].metric("Status", business_deal_status(deal_status))
     metrics[1].metric("Requested Net Revenue", money(summary["total_proposed"]))
     metrics[2].metric("Requested Discount %", pct(summary["discount_pct"]))
     margin_label = "Resulting Gross Margin %" if margin_visibility_for_role() == "Exact" else "Margin Status"
     metrics[3].metric(margin_label, landing_margin_display(summary))
-    status_role = " + ".join(pending_roles)
+    status_role = " + ".join(role_display_label(data, role) for role in pending_roles)
     metrics[4].metric("Approval Status", business_approval_status(deal_status, status_role))
 
     customer = customer_record_for_deal(deal, data)
@@ -4178,7 +4371,7 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
 
     render_ai_decision_support(context, data)
     if is_creator:
-        owner_status = "Returned for Revision" if deal_status == "Changes Requested" else business_approval_status(deal_status, " + ".join(pending_roles))
+        owner_status = "Returned for Revision" if deal_status == "Changes Requested" else business_approval_status(deal_status, " + ".join(role_display_label(data, role) for role in pending_roles))
         with st.container(border=True):
             st.subheader("Current Approval Status")
             st.write(owner_status)
@@ -4202,15 +4395,38 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
             render_customer_risk_strip(customer, data)
 
     with tabs[1]:
-        st.subheader("Commercial Pricing")
-        st.dataframe(commercial_pricing_view(calc_lines), use_container_width=True, hide_index=True)
-        st.subheader("Plan Comparison")
-        if context["included_in_plan"]:
-            st.dataframe(mask_sensitive_dataframe(context["plan_df"]), use_container_width=True, hide_index=True)
+        st.subheader("Case P&L")
+        sku_labels = ["All SKUs (Combined Case)"]
+        if not calc_lines.empty and "SKU" in calc_lines:
+            sku_labels.extend(
+                [
+                    f"{row['SKU']} | {row.get('Product Name', '')}"
+                    for _, row in calc_lines[["SKU", "Product Name"]].drop_duplicates().iterrows()
+                ]
+            )
+        selected_sku_label = st.selectbox("Financial view", sku_labels, key=f"financial_sku_view_{selected}")
+        if selected_sku_label == "All SKUs (Combined Case)":
+            financial_lines = calc_lines
+            financial_plan = context["plan_df"]
         else:
-            st.info("This request is outside the latest financial plan. Planned price comparison is not available; treat the volume as incremental.")
+            selected_sku = selected_sku_label.split("|", 1)[0].strip()
+            financial_lines = calc_lines[calc_lines["SKU"].astype(str).eq(selected_sku)].copy()
+            financial_plan = context["plan_df"][context["plan_df"]["SKU"].astype(str).eq(selected_sku)].copy() if not context["plan_df"].empty and "SKU" in context["plan_df"] else pd.DataFrame()
+        financial_summary = summarize_lines(financial_lines)
+        st.dataframe(financial_pnl_table(financial_lines, financial_plan, context["included_in_plan"]), use_container_width=True, hide_index=True)
+
+        st.subheader("SKU Pricing")
+        st.dataframe(commercial_pricing_view(financial_lines), use_container_width=True, hide_index=True)
+
+        st.subheader("Plan Comparison")
+        compact_plan = compact_plan_comparison(financial_plan) if context["included_in_plan"] else pd.DataFrame()
+        if not compact_plan.empty:
+            st.dataframe(compact_plan, use_container_width=True, hide_index=True)
+        else:
+            st.info("No planned comparison is available for this view. Treat the volume as incremental or review the combined case.")
+
         st.subheader("Financial Projection")
-        projection = financial_projection_values(deal, calc_lines, summary)
+        projection = financial_projection_values(deal, financial_lines, financial_summary)
         projection_cols = st.columns(5)
         for index, (label, value) in enumerate(projection.items()):
             projection_cols[index].metric(label, value)
@@ -4373,7 +4589,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     selectable_roles = ACTIONABLE_APPROVAL_ROLES if can_configure_system() else list(dict.fromkeys(([current_role()] if current_role() in ACTIONABLE_APPROVAL_ROLES else []) + delegated_roles))
     if not selectable_roles:
         selectable_roles = ROLE_ORDER
-    role = st.selectbox("Queue Role", selectable_roles, index=0)
+    role = st.selectbox("Queue Role", selectable_roles, index=0, format_func=display_role_name)
     lines = combined_lines(data)
     rows = []
     for _, deal in submitted.iterrows():
@@ -4410,23 +4626,12 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
         st.info(f"No deals currently require {role}.")
         return
     queue_display = mask_sensitive_dataframe(queue.drop(columns=["Route Role"], errors="ignore"))
-    table_event = st.dataframe(
-        queue_display,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="approval_queue_table",
-    )
-    selected = get_selected_dataframe_deal_id(table_event, queue)
-    if selected:
-        st.session_state.approval_queue_selected_deal_id = selected
-        st.session_state.selected_deal_id = selected
-    else:
-        st.session_state.approval_queue_selected_deal_id = None
-    if not selected:
-        st.warning("Select a deal row using the checkbox column to review details and capture a decision.")
-        return
+    st.dataframe(queue_display, use_container_width=True, hide_index=True)
+    deal_options = queue["Deal ID"].astype(str).tolist()
+    previous = st.session_state.get("approval_queue_selected_deal_id")
+    index = deal_options.index(previous) if previous in deal_options else 0
+    selected = st.selectbox("Selected deal", deal_options, index=index, key="approval_queue_selected_deal")
+    st.session_state.approval_queue_selected_deal_id = selected
 
     context = build_deal_context(data, selected)
     if not context:
@@ -4445,10 +4650,10 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     can_act_on_step = bool(required_role) and user_can_act_for_role(data, required_role, current_persona(), user_role) and bool(allowed_decisions)
     role_cols = st.columns(3)
     role_cols[0].metric("Current Required Role", required_role_label)
-    role_cols[1].metric("Current User Role", user_role)
+    role_cols[1].metric("Current User Role", display_role_name(user_role))
     role_cols[2].metric("Can Approve", "Yes" if can_act_on_step else "No")
     if not can_act_on_step:
-        st.warning(f"{user_role} cannot capture a decision for this step. Required role: {required_role_label}.")
+        st.warning(f"{display_role_name(user_role)} cannot capture a decision for this step. Required role: {required_role_label}.")
 
     if sla_status:
         sla_cols = st.columns(4)
@@ -4501,7 +4706,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
     comment = st.text_area("Decision comment", key=f"decision_comment_{selected}")
     can_capture = can_act_on_step and decision in allowed_decisions
     if decision not in allowed_decisions:
-        st.warning(f"{user_role} is not permitted to capture `{decision}`.")
+        st.warning(f"{display_role_name(user_role)} is not permitted to capture `{decision}`.")
     if st.button("Capture Decision", type="primary", disabled=not can_capture):
         success, message = process_approval_decision(selected, decision, comment, context["route_df"], previous_status, data)
         if success:
@@ -4530,7 +4735,7 @@ def page_approval_queue(data: dict[str, pd.DataFrame]) -> None:
 def page_reference_data(data: dict[str, pd.DataFrame]) -> None:
     render_header("Reference Data", "Inspect source datasets powering the MVP.")
     if not can_view_reference_data():
-        st.warning("Reference Data is available to Finance, Pricing Governance, Market Access, General Manager, and System Administrator roles.")
+        st.warning("Reference Data is available to Finance Manager, Commercial Manager, General Manager, and System Administrator roles.")
         return
     sensitive_data_note()
     labels = {
@@ -4586,7 +4791,7 @@ def approval_matrix_summary(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     rules = rules.copy()
     rules["Readable Rule"] = rules.apply(readable_condition_for_rule, axis=1)
     for rule, part in rules.sort_values(["Sequence", "Required Role"]).groupby("Readable Rule", sort=False):
-        roles = part.sort_values(["Sequence", "Required Role"])["Required Role"].astype(str).tolist()
+        roles = [display_role_name(role) for role in part.sort_values(["Sequence", "Required Role"])["Required Role"].astype(str).tolist()]
         rows.append({"Rule": rule, "Required Roles": "\n".join(dict.fromkeys(roles))})
     return pd.DataFrame(rows)
 
@@ -4609,7 +4814,7 @@ def product_margin_thresholds(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
                 "Base Rebate %": safe_float(item.get("Base Rebate %", 0)),
                 "Standard Cost": safe_float(item.get("Standard Cost", 0)),
                 "Target Margin": target,
-                "FD Trigger Margin": finance_trigger_margin(target),
+                "Finance Manager Trigger Margin": finance_trigger_margin(target),
                 "GM Trigger Margin": gm_trigger_margin(target),
             }
         )
@@ -4636,7 +4841,7 @@ def page_approval_matrix(data: dict[str, pd.DataFrame]) -> None:
             },
             {
                 "Stage": "2. Specialist Review",
-                "Required Review": "Pricing Governance Owner + Finance Director + Operations Manager when triggered",
+                "Required Review": "Commercial Manager + Finance Manager + Operations Manager when triggered",
                 "How It Works": "Required specialist reviews run in parallel after Sales Manager approval.",
             },
             {
@@ -4674,7 +4879,10 @@ def page_approval_matrix(data: dict[str, pd.DataFrame]) -> None:
             "SLA Hours",
             "Notes",
         ]
-        st.dataframe(rules[[col for col in display_cols if col in rules]], use_container_width=True, hide_index=True)
+        rules_view = rules[[col for col in display_cols if col in rules]].copy()
+        if "Required Role" in rules_view:
+            rules_view["Required Role"] = rules_view["Required Role"].apply(display_role_name)
+        st.dataframe(rules_view, use_container_width=True, hide_index=True)
 def page_approver_roster(data: dict[str, pd.DataFrame]) -> None:
     render_header("Approver Roster", "Primary and delegate approver assignments by role.")
     if not can_configure_system():
@@ -4922,7 +5130,7 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
             persona_options,
             index=persona_options.index(current_persona()),
             key=f"role_selector_{st.session_state.role_selector_version}",
-            format_func=lambda name: f"{name} | {PERSONAS[name]}",
+            format_func=lambda name: f"{name} | {display_role_name(PERSONAS[name])}",
         )
         if selected_persona != current_persona() and not st.session_state.get("pending_role_switch"):
             if st.session_state.get("deal_edit_active") and st.session_state.get("current_page") == "New Deal Intake":
@@ -4974,9 +5182,15 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
 
 
 def main() -> None:
-    inject_css()
+    log_runtime_checkpoint("startup")
     init_state()
+    if os.environ.get("APP_DIAGNOSTIC_MODE") == "1":
+        st.title("Deal Desk Copilot")
+        st.write("Diagnostic mode is active. Core imports and session initialization completed.")
+        return
+    inject_css()
     data = load_demo_data()
+    log_runtime_checkpoint("after demo data load")
     page = top_navigation(data)
     if page == "Deal Request List":
         page_deal_list(data)
