@@ -118,6 +118,7 @@ ACTIONABLE_APPROVAL_ROLES = [
 ]
 
 ACTIVE_APPROVAL_STATUSES = {
+    "Under Review",
     "In Review",
     "Submitted",
     "Pending Sales Manager",
@@ -521,7 +522,7 @@ def seed_demo_workflow_state(data: dict[str, pd.DataFrame]) -> None:
         last_role = str(row.get("Last Decision Role", "")).strip() or "Sales Manager"
         previous_status = str(row.get("Previous Status", "")).strip() or "Submitted"
 
-        if status in {"Submitted", "Changes Requested", "In Review"}:
+        if status in {"Submitted", "Under Review", "Changes Requested", "In Review"}:
             seeded_events.append(
                 {
                     "Timestamp": "2026-06-24 09:00:00",
@@ -535,7 +536,7 @@ def seed_demo_workflow_state(data: dict[str, pd.DataFrame]) -> None:
                     "Correlation ID": f"seed-{deal_id[-4:]}",
                     "Sensitive Fields Visible": "No",
                     "Previous Status": "Draft",
-                    "New Status": "Submitted",
+                    "New Status": "Under Review",
                 }
             )
 
@@ -579,7 +580,7 @@ def seed_demo_workflow_state(data: dict[str, pd.DataFrame]) -> None:
                     }
                 )
 
-        if status == "In Review" and last_decision == "Approve":
+        if status in {"In Review", "Under Review"} and last_decision == "Approve":
             st.session_state.deal_approval_steps.setdefault(deal_id, ["Sales Manager"])
 
     existing_keys = {
@@ -1695,7 +1696,7 @@ def resubmit_deal_for_approval(deal_id: str, data: dict[str, pd.DataFrame]) -> t
     }
     update_deal_status(
         deal_id,
-        "Submitted",
+        "Under Review",
         "Resubmit",
         "Resubmitted after requested changes.",
         previous_status="Changes Requested",
@@ -1711,7 +1712,7 @@ def resubmit_deal_for_approval(deal_id: str, data: dict[str, pd.DataFrame]) -> t
         details="Submitting KAM resubmitted the deal. Approval progress restarted with Sales Manager review.",
         decision="Resubmit",
         previous_status="Changes Requested",
-        new_status="Submitted",
+        new_status="Under Review",
     )
     return True, f"{deal_id} was resubmitted and returned to Sales Manager review."
 
@@ -3057,11 +3058,11 @@ def render_landing_kpis(cockpit: pd.DataFrame, role: str) -> None:
     due_today = due_dates.dt.normalize().eq(today) & active
     overdue = due_dates.dt.normalize().lt(today) & active
     if is_kam_role(role):
-        kpis[0].metric("Draft", int(status.eq("Draft").sum()))
-        kpis[1].metric("Submitted", int(status.eq("Submitted").sum()))
-        kpis[2].metric("Changes Requested", int(status.eq("Changes Requested").sum()))
-        kpis[3].metric("Approved", int(status.isin(["Approved", "Final Approved"]).sum()))
-        kpis[4].metric("Rejected", int(status.eq("Rejected").sum()))
+        kpis[0].metric("Under Review", int(status.eq("Under Review").sum()))
+        kpis[1].metric("Changes Requested", int(status.eq("Changes Requested").sum()))
+        kpis[2].metric("Approved", int(status.isin(["Approved", "Final Approved"]).sum()))
+        kpis[3].metric("Rejected", int(status.eq("Rejected").sum()))
+        kpis[4].metric("Total Active", int(status.isin(["Under Review", "Changes Requested"]).sum()))
     elif role == "General Manager":
         strategic = cockpit.get("Strategic Account", pd.Series(dtype=bool)).fillna(False).astype(bool)
         kpis[0].metric("Pending GM Review", int(pending_groups.apply(lambda roles: "General Manager" in roles).sum()))
@@ -3133,7 +3134,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
                 "Risk": deal.get("KAM Risk Assessment", deal.get("Intake Risk", "")),
                 "Decision Due": deadline.strftime("%Y-%m-%d") if not pd.isna(deadline) else "",
                 "Decision Due Date": deadline,
-                "Status": deal.get("Status", ""),
+                "Status": business_deal_status(str(deal.get("Status", ""))),
                 "Customer Type": deal.get("Customer Type", deal.get("Segment", "")),
                 "Sales Owner": deal.get("Sales Owner", ""),
                 "Reviewer Roles": required_roles,
@@ -3890,7 +3891,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                     decision="Resubmit",
                     comment=review_comment,
                     previous_status="Changes Requested",
-                    new_status="Submitted",
+                    new_status="Under Review",
                 )
             else:
                 add_audit(deal_id, "Deal submitted", details=f"Recommendation: {recommendation}")
@@ -3900,7 +3901,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 def save_runtime_deal(header: dict, lines: pd.DataFrame, summary: dict, route_df: pd.DataFrame, status: str, recommendation: str) -> str:
     editing_deal_id = str(st.session_state.get("editing_deal_id") or "")
     deal_id = editing_deal_id or f"DEAL-S-{len(st.session_state.runtime_deals) + 1:04d}"
-    workflow_status = "Pending Sales Manager" if status == "Submitted" else status
+    workflow_status = "Under Review" if status == "Submitted" else status
     risk_assessment = header.get("KAM Risk Assessment", "Medium")
     previous_record: dict = {}
     if editing_deal_id:
@@ -4175,7 +4176,7 @@ def business_approval_status(deal_status: str, pending_role: str) -> str:
 
 def business_deal_status(deal_status: str) -> str:
     if deal_status in ACTIVE_APPROVAL_STATUSES - {"Changes Requested"}:
-        return "In Review"
+        return "Under Review"
     if deal_status == "Changes Requested":
         return "Changes Requested"
     if deal_status in {"Approved", "Final Approved"}:
