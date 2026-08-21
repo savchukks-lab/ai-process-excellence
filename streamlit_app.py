@@ -118,6 +118,7 @@ ACTIONABLE_APPROVAL_ROLES = [
 ]
 
 ACTIVE_APPROVAL_STATUSES = {
+    "In Review",
     "Submitted",
     "Pending Sales Manager",
     "Pending Pricing Governance",
@@ -439,6 +440,7 @@ def init_state() -> None:
     st.session_state.setdefault("deal_approval_steps", {})
     st.session_state.setdefault("approval_assignments", {})
     st.session_state.setdefault("workflow_audit_keys", [])
+    st.session_state.setdefault("demo_workflow_seeded", False)
     st.session_state.setdefault("delegate_overrides", None)
     st.session_state.setdefault("approval_matrix_overrides", None)
     st.session_state.setdefault("role_permission_overrides", None)
@@ -497,6 +499,106 @@ def add_audit(
     if new_status:
         event["New Status"] = new_status
     st.session_state.audit_events.append(event)
+
+
+def seed_demo_workflow_state(data: dict[str, pd.DataFrame]) -> None:
+    if st.session_state.get("demo_workflow_seeded"):
+        return
+    deals = data.get("deals", pd.DataFrame())
+    if deals.empty:
+        st.session_state.demo_workflow_seeded = True
+        return
+
+    seeded_events: list[dict] = []
+    for _, row in deals.iterrows():
+        deal_id = str(row.get("Deal ID", "")).strip()
+        status = str(row.get("Status", "")).strip()
+        owner = str(row.get("Sales Owner", "")).strip()
+        last_decision = str(row.get("Last Decision", "")).strip()
+        last_comment = str(row.get("Last Decision Comment", "")).strip()
+        last_timestamp = str(row.get("Last Decision Timestamp", "")).strip()
+        last_actor = str(row.get("Last Decision Actor", "")).strip() or "Jordan Blake"
+        last_role = str(row.get("Last Decision Role", "")).strip() or "Sales Manager"
+        previous_status = str(row.get("Previous Status", "")).strip() or "Submitted"
+
+        if status in {"Submitted", "Changes Requested", "In Review"}:
+            seeded_events.append(
+                {
+                    "Timestamp": "2026-06-24 09:00:00",
+                    "Deal ID": deal_id,
+                    "Actor": owner or "Submitting KAM",
+                    "Role": str(PERSONAS.get(owner, "KAM North")),
+                    "Action": "Deal submitted",
+                    "Entity": "Deal",
+                    "Details": "Demo case submitted for approval.",
+                    "Source": "Demo data seed",
+                    "Correlation ID": f"seed-{deal_id[-4:]}",
+                    "Sensitive Fields Visible": "No",
+                    "Previous Status": "Draft",
+                    "New Status": "Submitted",
+                }
+            )
+
+        if last_decision:
+            seeded_events.append(
+                {
+                    "Timestamp": last_timestamp or "2026-06-24 14:00:00",
+                    "Deal ID": deal_id,
+                    "Actor": last_actor,
+                    "Role": last_role,
+                    "Action": f"Approval decision: {last_decision}",
+                    "Entity": "Approval Step",
+                    "Details": f"Status changed from {previous_status} to {status}.",
+                    "Source": "Demo data seed",
+                    "Correlation ID": f"seed-{deal_id[-4:]}-{last_decision[:3].lower()}",
+                    "Sensitive Fields Visible": "Yes",
+                    "Decision": last_decision,
+                    "Comment": last_comment,
+                    "Approval Step": str(row.get("Last Approval Step", last_role) or last_role),
+                    "Previous Status": previous_status,
+                    "New Status": status,
+                }
+            )
+            if last_decision == "Request Changes":
+                seeded_events.append(
+                    {
+                        "Timestamp": last_timestamp or "2026-06-24 14:00:00",
+                        "Deal ID": deal_id,
+                        "Actor": last_actor,
+                        "Role": last_role,
+                        "Action": "Creator Notified",
+                        "Entity": "Workflow Notification",
+                        "Details": f"{owner or 'Submitting KAM'} notified that the deal was returned for changes. No email was sent.",
+                        "Source": "Demo data seed",
+                        "Correlation ID": f"seed-{deal_id[-4:]}-notify",
+                        "Sensitive Fields Visible": "Yes",
+                        "Comment": last_comment,
+                        "Approval Step": str(row.get("Last Approval Step", last_role) or last_role),
+                        "Previous Status": previous_status,
+                        "New Status": status,
+                    }
+                )
+
+        if status == "In Review" and last_decision == "Approve":
+            st.session_state.deal_approval_steps.setdefault(deal_id, ["Sales Manager"])
+
+    existing_keys = {
+        (
+            str(event.get("Deal ID", "")),
+            str(event.get("Action", "")),
+            str(event.get("Timestamp", "")),
+        )
+        for event in st.session_state.get("audit_events", [])
+    }
+    for event in seeded_events:
+        key = (
+            str(event.get("Deal ID", "")),
+            str(event.get("Action", "")),
+            str(event.get("Timestamp", "")),
+        )
+        if key not in existing_keys:
+            st.session_state.audit_events.append(event)
+    st.session_state.demo_workflow_seeded = True
 
 
 def money(value: float | int | None) -> str:
@@ -5040,6 +5142,7 @@ def reset_demo_session() -> None:
     st.session_state.deal_approval_steps = {}
     st.session_state.approval_assignments = {}
     st.session_state.workflow_audit_keys = []
+    st.session_state.demo_workflow_seeded = False
     st.session_state.delegate_overrides = None
     st.session_state.approval_matrix_overrides = None
     st.session_state.role_permission_overrides = None
@@ -5191,6 +5294,7 @@ def main() -> None:
     inject_css()
     data = load_demo_data()
     log_runtime_checkpoint("after demo data load")
+    seed_demo_workflow_state(data)
     page = top_navigation(data)
     if page == "Deal Request List":
         page_deal_list(data)
