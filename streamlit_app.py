@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import faulthandler
 import os
+import re
 import sys
 from datetime import date, datetime, timedelta
 from importlib import metadata
@@ -134,6 +135,12 @@ ACTIVE_APPROVAL_STATUSES = {
 ARCHIVE_STATUSES = {"Approved", "Final Approved", "Rejected", "Withdrawn"}
 
 DECISIONS = ["Approve", "Request Changes", "Reject"]
+
+VISIBILITY_OPTIONS = ["Confidential", "Bidders Only", "Public"]
+VISIBILITY_VALUE_ALIASES = {
+    "Bid Only": "Bidders Only",
+    "Pricing Confidential": "Confidential",
+}
 
 KAM_RISK_LEVELS = ["Low", "Medium", "High", "Critical"]
 
@@ -1391,9 +1398,68 @@ def set_current_page(page: str) -> None:
     st.rerun()
 
 
+def normalize_visibility_value(value: object) -> str:
+    normalized = VISIBILITY_VALUE_ALIASES.get(str(value).strip(), str(value).strip())
+    return normalized if normalized in VISIBILITY_OPTIONS else "Confidential"
+
+
+def line_editor_case_token() -> str:
+    deal_id = str(st.session_state.get("editing_deal_id") or "new").strip() or "new"
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", deal_id)
+
+
+def line_editor_rows_key() -> str:
+    return f"line_editor_rows_{line_editor_case_token()}"
+
+
+def line_editor_widget_key() -> str:
+    return f"line_editor_widget_{line_editor_case_token()}_{st.session_state.line_editor_revision}"
+
+
+def prepare_line_editor_rows(lines: pd.DataFrame) -> pd.DataFrame:
+    editor_rows = lines.copy()
+    if "Requested Total Discount %" not in editor_rows and "Requested Discount %" in editor_rows:
+        editor_rows["Requested Total Discount %"] = editor_rows["Requested Discount %"]
+    if "Requested Total Discount %" in editor_rows:
+        discounts = pd.to_numeric(editor_rows["Requested Total Discount %"], errors="coerce").fillna(0)
+        if not discounts.empty and discounts.max() <= 1:
+            discounts = discounts * 100
+        editor_rows["Requested Total Discount %"] = discounts
+    return editor_rows
+
+
+def apply_data_editor_state(rows: pd.DataFrame, editor_state: object) -> pd.DataFrame:
+    if not isinstance(editor_state, dict):
+        return rows.copy()
+    updated = rows.copy().reset_index(drop=True)
+    for row_index, changes in dict(editor_state.get("edited_rows", {})).items():
+        if not isinstance(changes, dict):
+            continue
+        try:
+            index = int(row_index)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < len(updated):
+            for column, value in changes.items():
+                if column in updated.columns:
+                    updated.at[index, column] = value
+    deleted_rows = []
+    for row_index in editor_state.get("deleted_rows", []):
+        try:
+            deleted_rows.append(int(row_index))
+        except (TypeError, ValueError):
+            continue
+    if deleted_rows:
+        updated = updated.drop(index=[idx for idx in deleted_rows if 0 <= idx < len(updated)]).reset_index(drop=True)
+    added_rows = [row for row in editor_state.get("added_rows", []) if isinstance(row, dict)]
+    if added_rows:
+        updated = pd.concat([updated, pd.DataFrame(added_rows)], ignore_index=True, sort=False)
+    return updated
+
+
 def clear_deal_editor_state() -> None:
     for key in list(st.session_state.keys()):
-        if str(key).startswith("form_") or key == "line_editor":
+        if str(key).startswith("form_") or str(key).startswith("line_editor_rows_") or str(key).startswith("line_editor_widget_") or key == "line_editor":
             del st.session_state[key]
     st.session_state.draft_lines = None
     st.session_state.line_editor_rows = None
@@ -1430,7 +1496,7 @@ def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
         "form_billing": deal.get("Billing Frequency", "Annual"),
         "form_special": str(deal.get("Special Terms Requested", "False")).lower() in {"true", "yes", "1"},
         "form_special_desc": deal.get("Special Terms Description", ""),
-        "form_visibility": deal.get("Visibility", "Confidential"),
+        "form_visibility": normalize_visibility_value(deal.get("Visibility", "Confidential")),
         "form_publication_source": deal.get("Publication Source", ""),
         "form_publication_url": deal.get("Publication URL", ""),
         "form_access_description": deal.get("Access Description", ""),
@@ -1459,16 +1525,11 @@ def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
     for key, value in field_map.items():
         if value is not None and value != "":
             st.session_state[key] = value
-    st.session_state.draft_lines = lines.copy()
-    editor_rows = lines.copy()
-    if "Requested Total Discount %" not in editor_rows and "Requested Discount %" in editor_rows:
-        editor_rows["Requested Total Discount %"] = editor_rows["Requested Discount %"]
-    if "Requested Total Discount %" in editor_rows:
-        editor_rows["Requested Total Discount %"] = pd.to_numeric(
-            editor_rows["Requested Total Discount %"], errors="coerce"
-        ).fillna(0) * 100
-    st.session_state.line_editor_rows = editor_rows
     st.session_state.editing_deal_id = str(deal.get("Deal ID", ""))
+    st.session_state.draft_lines = lines.copy()
+    editor_rows = prepare_line_editor_rows(lines)
+    st.session_state.line_editor_rows = editor_rows
+    st.session_state[line_editor_rows_key()] = editor_rows.copy()
     saved_status = str(deal.get("Status", "")).strip()
     returned_for_changes = str(deal.get("Returned For Changes", "False")).lower() in {"true", "yes", "1"}
     st.session_state.editing_deal_original_status = (
@@ -3293,13 +3354,11 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
     if st.session_state.draft_lines is None:
         st.session_state.draft_lines = pd.DataFrame([build_default_line(data, "RX-ONC-100")])
-    if st.session_state.line_editor_rows is None:
-        editor_seed = st.session_state.draft_lines.copy()
-        if "Requested Total Discount %" in editor_seed:
-            editor_seed["Requested Total Discount %"] = pd.to_numeric(
-                editor_seed["Requested Total Discount %"], errors="coerce"
-            ).fillna(0) * 100
-        st.session_state.line_editor_rows = editor_seed
+    editor_rows_key = line_editor_rows_key()
+    if editor_rows_key not in st.session_state:
+        seed_rows = st.session_state.line_editor_rows if st.session_state.line_editor_rows is not None else st.session_state.draft_lines
+        st.session_state[editor_rows_key] = prepare_line_editor_rows(seed_rows)
+    st.session_state.line_editor_rows = st.session_state[editor_rows_key].copy()
     st.session_state.deal_edit_active = True
 
     tabs = st.tabs(["Context", "Commercials", "Customer & Market", "Financial Impact", "Approval Recommendation"])
@@ -3397,9 +3456,12 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             st.session_state.form_special_desc = ""
         st.divider()
         st.subheader("Visibility")
+        st.session_state.form_visibility = normalize_visibility_value(
+            st.session_state.get("form_visibility", "Confidential")
+        )
         visibility = st.radio(
             "Visibility",
-            ["Confidential", "Bid Only", "Pricing Confidential", "Public"],
+            VISIBILITY_OPTIONS,
             horizontal=True,
             key="form_visibility",
         )
@@ -3420,13 +3482,19 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         )
         line_actions = st.columns([1, 6])
         if line_actions[0].button("+ Add SKU", key="add_sku_line"):
-            current_rows = st.session_state.line_editor_rows.copy()
+            current_rows = st.session_state[editor_rows_key].copy()
             new_line = build_default_line(data, products.iloc[0]["SKU"])
             new_line["Requested Total Discount %"] = safe_float(new_line.get("Requested Total Discount %")) * 100
-            st.session_state.line_editor_rows = pd.concat([current_rows, pd.DataFrame([new_line])], ignore_index=True)
+            st.session_state[editor_rows_key] = pd.concat([current_rows, pd.DataFrame([new_line])], ignore_index=True)
+            st.session_state.line_editor_rows = st.session_state[editor_rows_key].copy()
             st.session_state.line_editor_revision += 1
             st.rerun()
-        editor_source = st.session_state.line_editor_rows.copy()
+        editor_key = line_editor_widget_key()
+        editor_source = apply_data_editor_state(
+            st.session_state[editor_rows_key],
+            st.session_state.get(editor_key),
+        )
+        st.session_state[editor_rows_key] = editor_source.copy()
         editor_config = {
             "SKU": st.column_config.SelectboxColumn("SKU", options=products["SKU"].tolist(), required=True),
             "Quantity": st.column_config.NumberColumn("Quantity", min_value=1, step=1),
@@ -3443,7 +3511,6 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             "Quantity",
             "Requested Total Discount %",
         ]
-        editor_key = f"line_editor_{st.session_state.line_editor_revision}"
         edited_rows = st.data_editor(
             editor_source[[col for col in editable_line_cols if col in editor_source]],
             num_rows="dynamic",
@@ -3452,8 +3519,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             hide_index=True,
             key=editor_key,
         )
-        st.session_state.line_editor_rows = edited_rows.copy()
-        calculation_rows = st.session_state.line_editor_rows.copy()
+        updated_editor_rows = apply_data_editor_state(edited_rows.copy(), st.session_state.get(editor_key))
+        st.session_state[editor_rows_key] = updated_editor_rows.copy()
+        st.session_state.line_editor_rows = st.session_state[editor_rows_key].copy()
+        calculation_rows = updated_editor_rows.copy()
         calculation_rows["Requested Total Discount %"] = pd.to_numeric(
             calculation_rows["Requested Total Discount %"], errors="coerce"
         ).fillna(0) / 100
@@ -3610,7 +3679,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Billing Frequency": st.session_state.get("form_billing", billing),
         "Special Terms Requested": st.session_state.get("form_special", False),
         "Special Terms Description": st.session_state.get("form_special_desc", ""),
-        "Visibility": st.session_state.get("form_visibility", "Confidential"),
+        "Visibility": normalize_visibility_value(st.session_state.get("form_visibility", "Confidential")),
         "Publication Source": st.session_state.get("form_publication_source", ""),
         "Publication URL": st.session_state.get("form_publication_url", ""),
         "Access Description": st.session_state.get("form_access_description", ""),
