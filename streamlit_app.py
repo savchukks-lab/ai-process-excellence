@@ -3281,6 +3281,16 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         st.error("Customer and product reference data are required.")
         return
 
+    editing_context = None
+    editing_deal_id = str(st.session_state.get("editing_deal_id") or "").strip()
+    if editing_deal_id:
+        editing_context = build_deal_context(data, editing_deal_id)
+    if "form_included_plan" not in st.session_state:
+        if editing_context:
+            st.session_state.form_included_plan = "Yes" if bool(editing_context.get("included_in_plan", False)) else "No"
+        else:
+            st.session_state.form_included_plan = "Yes"
+
     if st.session_state.draft_lines is None:
         st.session_state.draft_lines = pd.DataFrame([build_default_line(data, "RX-ONC-100")])
     if st.session_state.line_editor_rows is None:
@@ -3537,7 +3547,8 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             expansion_impact = st.text_area("Renewal or Expansion Impact", height=100, key="form_expansion")
 
         st.markdown("**Market summary**")
-        plan_status = "Included" if context["included_in_plan"] else "Outside Financial Plan"
+        included_in_plan = str(st.session_state.get("form_included_plan", "Yes")).strip().lower() == "yes"
+        plan_status = "Included" if included_in_plan else "Outside Financial Plan"
         summary_cols = st.columns(3)
         summary_cols[0].info(f"Competitor posture: {competitor_type}")
         summary_cols[1].info(f"Bid range: {expected_bid_range}")
