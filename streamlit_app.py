@@ -141,6 +141,38 @@ VISIBILITY_VALUE_ALIASES = {
     "Bid Only": "Bidders Only",
     "Pricing Confidential": "Confidential",
 }
+DELIVERY_MODEL_OPTIONS = ["Direct customer delivery", "Distributor delivery to end account"]
+DEAL_TYPE_OPTIONS = [
+    "New Account Launch",
+    "Tender Bid",
+    "Contract Renewal",
+    "Competitive Defense",
+    "Strategic Opportunity",
+]
+DEAL_TYPE_ALIASES = {
+    "New Account / Launch": "New Account Launch",
+    "Tender": "Tender Bid",
+    "Strategic Exception": "Strategic Opportunity",
+    "Tender Defense": "Tender Bid",
+    "Competitive Price Pressure": "Competitive Defense",
+}
+PAYMENT_TERMS_OPTIONS = ["Net 30", "Net 45", "Net 60", "Net 90", "Custom"]
+PAYMENT_TERMS_ALIASES = {
+    "Net 75": "Custom",
+}
+BILLING_FREQUENCY_OPTIONS = ["Annual", "Quarterly", "Monthly", "Milestone"]
+TENDER_MECHANISM_OPTIONS = ["Winner takes all", "Multi-award", "Framework agreement", "Unknown"]
+COMPETITOR_TYPE_OPTIONS = ["Incumbent", "Aggressive bidder", "Supply constrained", "Unknown"]
+COMPETITIVE_SITUATION_OPTIONS = ["None known", "Incumbent competitor", "Price pressure", "Feature comparison", "Unknown"]
+CUSTOMER_BIDDING_STRATEGY_OPTIONS = [
+    "Lowest compliant price",
+    "Balanced price and supply reliability",
+    "Incumbent preference",
+    "Multi-supplier risk mitigation",
+    "Unknown",
+]
+RECONCILIATION_TYPE_OPTIONS = ["None", "Credit Note", "Chargeback", "Rebate", "Other"]
+INCLUDED_PLAN_OPTIONS = ["Yes", "No"]
 
 KAM_RISK_LEVELS = ["Low", "Medium", "High", "Critical"]
 
@@ -413,6 +445,115 @@ def read_sheet(filename: str, sheet_name: str) -> pd.DataFrame:
     return df
 
 
+def validate_and_repair_demo_data(data: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    warnings: list[str] = []
+    customers = data.get("customers", pd.DataFrame())
+    products = data.get("products", pd.DataFrame())
+    deals = data.get("deals", pd.DataFrame()).copy()
+    lines = data.get("line_items", pd.DataFrame()).copy()
+    summary = data.get("deal_summary", pd.DataFrame()).copy()
+    approval_matrix = data.get("approval_matrix", pd.DataFrame()).copy()
+    roles_df = data.get("roles", pd.DataFrame()).copy()
+    approver_roster = data.get("approver_roster", pd.DataFrame()).copy()
+
+    customer_names = customers.get("Customer Name", pd.Series(dtype=str)).dropna().astype(str).tolist()
+    customer_ids = customers.get("Customer ID", pd.Series(dtype=str)).dropna().astype(str).tolist()
+    customer_by_id = dict(zip(customer_ids, customer_names))
+    product_names = products.get("Product Name", pd.Series(dtype=str)).dropna().astype(str).tolist()
+    product_skus = products.get("SKU", pd.Series(dtype=str)).dropna().astype(str).tolist()
+    product_by_sku = dict(zip(product_skus, product_names))
+    kam_users = [name for name, role in PERSONAS.items() if is_kam_role(role)]
+    manager_options = list(SALES_MANAGER_TEAMS.keys())
+
+    def repair_customer_value(deal_id: str, value: object, fallback_id: object = "", fallback_name: object = "") -> str:
+        candidates = [
+            value,
+            customer_by_id.get(str(fallback_id).strip(), ""),
+            fallback_name,
+            customer_names[0] if customer_names else "",
+        ]
+        repaired = next((str(item).strip() for item in candidates if not is_missing_value(item) and str(item).strip() in customer_names), "")
+        original = "" if is_missing_value(value) else str(value).strip()
+        if original and repaired and original != repaired and original not in customer_names:
+            warnings.append(f"{deal_id}: customer value '{original}' mapped to '{repaired}'.")
+        return repaired
+
+    status_aliases = {
+        "Submitted": "Under Review",
+        "In Review": "Under Review",
+        "Pending Sales Manager": "Under Review",
+        "Pending Governance Review": "Under Review",
+        "Pending Finance": "Under Review",
+        "Pending Operations": "Under Review",
+    }
+    allowed_statuses = ["Changes Requested", "Under Review", "Approved", "Rejected", "Draft"]
+
+    if not deals.empty:
+        for idx, row in deals.iterrows():
+            deal_id = str(row.get("Deal ID", f"row-{idx}"))
+            customer_name = repair_customer_value(
+                deal_id,
+                row.get("Customer Name"),
+                row.get("Customer ID"),
+                first_present(row.get("Sold-To Customer Name"), row.get("End Account Name")),
+            )
+            sold_to = repair_customer_value(deal_id, row.get("Sold-To Customer Name"), row.get("Sold-To Customer ID"), customer_name)
+            end_account = repair_customer_value(deal_id, row.get("End Account Name"), row.get("End Account ID"), sold_to)
+            if "Customer Name" in deals:
+                deals.at[idx, "Customer Name"] = customer_name
+            if "Sold-To Customer Name" in deals:
+                deals.at[idx, "Sold-To Customer Name"] = sold_to
+            if "End Account Name" in deals:
+                deals.at[idx, "End Account Name"] = end_account
+            if "Deal Type" in deals:
+                deals.at[idx, "Deal Type"] = safe_option_value(DEAL_TYPE_OPTIONS, row.get("Deal Type"), "Contract Renewal", DEAL_TYPE_ALIASES)
+            if "Payment Terms" in deals:
+                deals.at[idx, "Payment Terms"] = safe_option_value(PAYMENT_TERMS_OPTIONS, row.get("Payment Terms"), "Net 30", PAYMENT_TERMS_ALIASES)
+            if "Billing Frequency" in deals:
+                deals.at[idx, "Billing Frequency"] = safe_option_value(BILLING_FREQUENCY_OPTIONS, row.get("Billing Frequency"), "Annual")
+            if "Visibility" in deals:
+                deals.at[idx, "Visibility"] = normalize_visibility_value(row.get("Visibility", "Confidential"))
+            if "Sales Owner" in deals:
+                deals.at[idx, "Sales Owner"] = safe_option_value(kam_users, row.get("Sales Owner"), kam_users[0] if kam_users else "")
+            if "Sales Manager" in deals:
+                deals.at[idx, "Sales Manager"] = safe_option_value(manager_options, row.get("Sales Manager"), manager_options[0] if manager_options else "")
+            if "KAM Risk Assessment" in deals:
+                deals.at[idx, "KAM Risk Assessment"] = safe_option_value(KAM_RISK_LEVELS, row.get("KAM Risk Assessment"), "Medium")
+            if "Risk Reason" in deals:
+                deals.at[idx, "Risk Reason"] = safe_option_value(RISK_REASON_VALUES, row.get("Risk Reason"), RISK_REASON_VALUES[0])
+            if "Status" in deals:
+                deals.at[idx, "Status"] = safe_option_value(allowed_statuses, row.get("Status"), "Under Review", status_aliases)
+
+    if not lines.empty:
+        for idx, row in lines.iterrows():
+            sku = safe_option_value(product_skus, row.get("SKU"), product_skus[0] if product_skus else "")
+            if "SKU" in lines:
+                lines.at[idx, "SKU"] = sku
+            if "Product Name" in lines and sku in product_by_sku:
+                lines.at[idx, "Product Name"] = product_by_sku[sku]
+
+    if not summary.empty and "Status" in summary:
+        summary["Status"] = summary["Status"].apply(lambda value: safe_option_value(allowed_statuses, value, "Under Review", status_aliases))
+
+    if not approval_matrix.empty and "Required Role" in approval_matrix:
+        approval_matrix["Required Role"] = approval_matrix["Required Role"].apply(canonical_role_name)
+    if not roles_df.empty and "Role" in roles_df:
+        roles_df["Role"] = roles_df["Role"].apply(canonical_role_name)
+    if not approver_roster.empty and "Role" in approver_roster:
+        approver_roster["Role"] = approver_roster["Role"].apply(canonical_role_name)
+
+    data["deals"] = deals
+    data["line_items"] = lines
+    data["deal_summary"] = summary
+    data["approval_matrix"] = approval_matrix
+    data["roles"] = roles_df
+    data["approver_roster"] = approver_roster
+    data["validation_warnings"] = warnings
+    for warning in warnings[:20]:
+        print(f"[deal-desk-data-validation] {warning}")
+    return data
+
+
 @st.cache_data(show_spinner=False)
 def load_demo_data() -> dict[str, pd.DataFrame]:
     data = {
@@ -433,6 +574,7 @@ def load_demo_data() -> dict[str, pd.DataFrame]:
         "tender_history": read_sheet("Tender_History.xlsx", "Tender History"),
         "competitor_intel": read_sheet("Competitor_Intelligence.xlsx", "External Market Signals"),
     }
+    data = validate_and_repair_demo_data(data)
     data["deal_summary_source"] = data["deal_summary"]
     data["deal_summary"] = calculated_deal_summary(data)
     return data
@@ -626,9 +768,20 @@ ROLE_DISPLAY_RENAMES = {
     "Finance Director": "Finance Manager",
 }
 
+ROLE_INPUT_ALIASES = {
+    "Commercial Manager": "Pricing Governance Owner",
+    "Finance Manager": "Finance Director",
+}
+
+
+def canonical_role_name(role: object) -> str:
+    value = str(role).strip()
+    return ROLE_INPUT_ALIASES.get(value, value)
+
 
 def display_role_name(role: object) -> str:
-    return ROLE_DISPLAY_RENAMES.get(str(role), str(role))
+    internal_role = canonical_role_name(role)
+    return ROLE_DISPLAY_RENAMES.get(internal_role, internal_role)
 
 
 def display_role_text(value: object) -> str:
@@ -1398,9 +1551,70 @@ def set_current_page(page: str) -> None:
     st.rerun()
 
 
+def is_missing_value(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip() == ""
+
+
+def first_present(*values: object, default: object = "") -> object:
+    for value in values:
+        if not is_missing_value(value):
+            return value
+    return default
+
+
+def safe_option_value(
+    options: list[str],
+    current_value: object,
+    fallback: str | None = None,
+    aliases: dict[str, str] | None = None,
+) -> str:
+    fallback_value = fallback if fallback in options else options[0] if options else ""
+    if is_missing_value(current_value):
+        return fallback_value
+    value = str(current_value).strip()
+    value = (aliases or {}).get(value, value)
+    return value if value in options else fallback_value
+
+
+def normalize_session_option(
+    key: str,
+    options: list[str],
+    fallback: str | None = None,
+    aliases: dict[str, str] | None = None,
+) -> str:
+    value = safe_option_value(options, st.session_state.get(key), fallback=fallback, aliases=aliases)
+    st.session_state[key] = value
+    return value
+
+
+def normalize_session_multiselect(key: str, options: list[str], aliases: dict[str, str] | None = None) -> list[str]:
+    raw_value = st.session_state.get(key, [])
+    if is_missing_value(raw_value):
+        values: list[object] = []
+    elif isinstance(raw_value, (list, tuple, set)):
+        values = list(raw_value)
+    else:
+        values = [raw_value]
+    normalized: list[str] = []
+    for item in values:
+        if is_missing_value(item):
+            continue
+        value = (aliases or {}).get(str(item).strip(), str(item).strip())
+        if value in options and value not in normalized:
+            normalized.append(value)
+    st.session_state[key] = normalized
+    return normalized
+
+
 def normalize_visibility_value(value: object) -> str:
-    normalized = VISIBILITY_VALUE_ALIASES.get(str(value).strip(), str(value).strip())
-    return normalized if normalized in VISIBILITY_OPTIONS else "Confidential"
+    return safe_option_value(VISIBILITY_OPTIONS, value, fallback="Confidential", aliases=VISIBILITY_VALUE_ALIASES)
 
 
 def line_editor_case_token() -> str:
@@ -1473,27 +1687,22 @@ def clear_deal_editor_state() -> None:
 
 def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
     clear_deal_editor_state()
-    deal_type_aliases = {
-        "New Account / Launch": "New Account Launch",
-        "Tender": "Tender Bid",
-        "Strategic Exception": "Strategic Opportunity",
-    }
     saved_deal_type = str(deal.get("Deal Type", "Contract Renewal"))
     def saved_date(value: object, fallback: date) -> date:
         parsed = pd.to_datetime(value, errors="coerce")
         return fallback if pd.isna(parsed) else parsed.date()
 
     field_map = {
-        "form_customer": deal.get("Customer Name", deal.get("Sold-To Customer Name", "")),
-        "form_ship_to": deal.get("End Account Name", ""),
-        "form_delivery_model": deal.get("Delivery Model", "Direct customer delivery"),
+        "form_customer": first_present(deal.get("Customer Name"), deal.get("Sold-To Customer Name"), deal.get("End Account Name")),
+        "form_ship_to": first_present(deal.get("End Account Name"), deal.get("Customer Name"), deal.get("Sold-To Customer Name")),
+        "form_delivery_model": safe_option_value(DELIVERY_MODEL_OPTIONS, deal.get("Delivery Model"), "Direct customer delivery"),
         "form_title": deal.get("Deal Title", ""),
-        "form_type": deal_type_aliases.get(saved_deal_type, saved_deal_type),
-        "form_owner": deal.get("Sales Owner", current_persona()),
-        "form_manager": deal.get("Sales Manager", "Jordan Blake"),
-        "form_terms": deal.get("Payment Terms", "Net 30"),
+        "form_type": safe_option_value(DEAL_TYPE_OPTIONS, saved_deal_type, "Contract Renewal", DEAL_TYPE_ALIASES),
+        "form_owner": safe_option_value([name for name, role in PERSONAS.items() if is_kam_role(role)], deal.get("Sales Owner"), current_persona()),
+        "form_manager": safe_option_value(list(SALES_MANAGER_TEAMS.keys()), deal.get("Sales Manager"), "Jordan Blake"),
+        "form_terms": safe_option_value(PAYMENT_TERMS_OPTIONS, deal.get("Payment Terms"), "Net 30", PAYMENT_TERMS_ALIASES),
         "form_contract": int(safe_float(deal.get("Contract Months"), 24)),
-        "form_billing": deal.get("Billing Frequency", "Annual"),
+        "form_billing": safe_option_value(BILLING_FREQUENCY_OPTIONS, deal.get("Billing Frequency"), "Annual"),
         "form_special": str(deal.get("Special Terms Requested", "False")).lower() in {"true", "yes", "1"},
         "form_special_desc": deal.get("Special Terms Description", ""),
         "form_visibility": normalize_visibility_value(deal.get("Visibility", "Confidential")),
@@ -1502,7 +1711,7 @@ def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
         "form_access_description": deal.get("Access Description", ""),
         "form_tender_name": deal.get("Tender Name", ""),
         "form_tender_id": deal.get("Tender ID", ""),
-        "form_tender_mechanism": deal.get("Tender Mechanism", ""),
+        "form_tender_mechanism": safe_option_value(TENDER_MECHANISM_OPTIONS, deal.get("Tender Mechanism"), "Unknown"),
         "form_tender_closing": saved_date(
             deal.get("Submission Deadline"), date.today() + timedelta(days=28)
         ),
@@ -1518,9 +1727,9 @@ def begin_draft_edit(deal: dict, lines: pd.DataFrame) -> None:
             deal.get("Requested Delivery End"), date.today() + timedelta(days=120)
         ),
         "form_justification": deal.get("Strategic Rationale", ""),
-        "form_kam_risk_assessment": deal.get("KAM Risk Assessment", "Medium"),
-        "form_risk_reason": deal.get("Risk Reason", RISK_REASON_VALUES[0]),
-        "form_included_plan": deal.get("Included In Latest Financial Plan", "Yes"),
+        "form_kam_risk_assessment": safe_option_value(KAM_RISK_LEVELS, deal.get("KAM Risk Assessment"), "Medium"),
+        "form_risk_reason": safe_option_value(RISK_REASON_VALUES, deal.get("Risk Reason"), RISK_REASON_VALUES[0]),
+        "form_included_plan": safe_option_value(INCLUDED_PLAN_OPTIONS, deal.get("Included In Latest Financial Plan"), "Yes"),
     }
     for key, value in field_map.items():
         if value is not None and value != "":
@@ -3365,16 +3574,19 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
     with tabs[0]:
         st.subheader("Deal Context")
+        customer_options = customers["Customer Name"].dropna().astype(str).tolist()
+        normalize_session_option("form_customer", customer_options, customer_options[0] if customer_options else "")
         customer_name = st.selectbox(
             "Customer",
-            customers["Customer Name"].tolist(),
+            customer_options,
             key="form_customer",
             on_change=sync_context_customer_defaults,
         )
         customer = customers[customers["Customer Name"].eq(customer_name)].iloc[0].to_dict()
+        normalize_session_option("form_delivery_model", DELIVERY_MODEL_OPTIONS, "Direct customer delivery")
         delivery_model = st.radio(
             "Delivery Model",
-            ["Direct customer delivery", "Distributor delivery to end account"],
+            DELIVERY_MODEL_OPTIONS,
             horizontal=True,
             key="form_delivery_model",
             on_change=sync_delivery_model,
@@ -3392,15 +3604,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         if "form_title" not in st.session_state:
             st.session_state.form_title = f"{customer_name} - {date.today().isoformat()}"
         deal_title = deal_cols[0].text_input("Deal Title", key="form_title")
+        normalize_session_option("form_type", DEAL_TYPE_OPTIONS, "Contract Renewal", DEAL_TYPE_ALIASES)
         deal_type = deal_cols[0].selectbox(
             "Deal Type",
-            [
-                "New Account Launch",
-                "Tender Bid",
-                "Contract Renewal",
-                "Competitive Defense",
-                "Strategic Opportunity",
-            ],
+            DEAL_TYPE_OPTIONS,
             key="form_type",
         )
         region = str(customer.get("Region", "Region A"))
@@ -3411,7 +3618,8 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             tender_id = tender_cols[1].text_input("Tender ID", value=f"TND-{date.today().year}-{str(customer.get('Customer ID', '000'))[-3:]}", key="form_tender_id")
             tender_closing = tender_cols[2].date_input("Submission Deadline", value=date.today() + timedelta(days=28), key="form_tender_closing")
             award_date = tender_cols[3].date_input("Award Date", value=date.today() + timedelta(days=60), key="form_award_date")
-            tender_mechanism = st.selectbox("Tender Mechanism", ["Winner takes all", "Multi-award", "Framework agreement", "Unknown"], key="form_tender_mechanism")
+            normalize_session_option("form_tender_mechanism", TENDER_MECHANISM_OPTIONS, "Unknown")
+            tender_mechanism = st.selectbox("Tender Mechanism", TENDER_MECHANISM_OPTIONS, key="form_tender_mechanism")
         else:
             tender_name = st.session_state.get("form_tender_name", "")
             tender_id = st.session_state.get("form_tender_id", "")
@@ -3421,8 +3629,11 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         owner_cols = st.columns(4)
         kam_users = [name for name, role in PERSONAS.items() if is_kam_role(role)]
         default_owner = current_persona() if current_persona() in kam_users else kam_users[0]
-        sales_owner = owner_cols[0].selectbox("Sales Owner", kam_users, index=kam_users.index(default_owner), key="form_owner")
-        sales_manager = owner_cols[1].selectbox("Sales Manager", list(SALES_MANAGER_TEAMS.keys()), key="form_manager")
+        normalize_session_option("form_owner", kam_users, default_owner)
+        manager_options = list(SALES_MANAGER_TEAMS.keys())
+        normalize_session_option("form_manager", manager_options, manager_options[0] if manager_options else "")
+        sales_owner = owner_cols[0].selectbox("Sales Owner", kam_users, key="form_owner")
+        sales_manager = owner_cols[1].selectbox("Sales Manager", manager_options, key="form_manager")
         target_close = owner_cols[2].date_input("Commercial Decision Deadline", value=date.today() + timedelta(days=45), key="form_close")
         effective_date = owner_cols[3].date_input("Requested Delivery Start", value=date.today() + timedelta(days=60), key="form_effective")
         requested_delivery_end = st.date_input("Requested Delivery End", value=date.today() + timedelta(days=120), key="form_delivery_end")
@@ -3443,9 +3654,11 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
     with tabs[1]:
         st.subheader("Commercial Terms")
         c1, c2, c3 = st.columns(3)
-        payment_terms = c1.selectbox("Payment Terms", ["Net 30", "Net 45", "Net 60", "Net 90", "Custom"], key="form_terms")
+        normalize_session_option("form_terms", PAYMENT_TERMS_OPTIONS, "Net 30", PAYMENT_TERMS_ALIASES)
+        normalize_session_option("form_billing", BILLING_FREQUENCY_OPTIONS, "Annual")
+        payment_terms = c1.selectbox("Payment Terms", PAYMENT_TERMS_OPTIONS, key="form_terms")
         contract_months = c2.number_input("Contract Duration Months", min_value=1, max_value=72, value=24, step=1, key="form_contract")
-        billing = c3.selectbox("Billing Frequency", ["Annual", "Quarterly", "Monthly", "Milestone"], key="form_billing")
+        billing = c3.selectbox("Billing Frequency", BILLING_FREQUENCY_OPTIONS, key="form_billing")
         special_terms = st.checkbox("Special terms requested", key="form_special")
         if special_terms:
             special_desc = st.text_area("Special Terms Description", key="form_special_desc")
@@ -3456,9 +3669,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             st.session_state.form_special_desc = ""
         st.divider()
         st.subheader("Visibility")
-        st.session_state.form_visibility = normalize_visibility_value(
-            st.session_state.get("form_visibility", "Confidential")
-        )
+        normalize_session_option("form_visibility", VISIBILITY_OPTIONS, "Confidential", VISIBILITY_VALUE_ALIASES)
         visibility = st.radio(
             "Visibility",
             VISIBILITY_OPTIONS,
@@ -3591,24 +3802,30 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         market_left, market_right = st.columns([1, 1])
         with market_left:
             business_justification = st.text_area("Business Justification", height=130, key="form_justification")
+            competitor_options = ["NovaThera", "HelixBio", "Orion Generics", "VitaCore", "MedAxis", "Unknown"]
+            if "form_expected_competitors" not in st.session_state:
+                st.session_state.form_expected_competitors = ["NovaThera"] if st.session_state.get("form_type") == "Tender Bid" else []
+            normalize_session_multiselect("form_expected_competitors", competitor_options)
             expected_competitors = st.multiselect(
                 "Expected competitors",
-                ["NovaThera", "HelixBio", "Orion Generics", "VitaCore", "MedAxis", "Unknown"],
-                default=["NovaThera"] if st.session_state.get("form_type") == "Tender Bid" else [],
+                competitor_options,
                 key="form_expected_competitors",
             )
+            normalize_session_option("form_competitor_type", COMPETITOR_TYPE_OPTIONS, "Unknown")
             competitor_type = st.selectbox(
                 "Competitor type",
-                ["Incumbent", "Aggressive bidder", "Supply constrained", "Unknown"],
+                COMPETITOR_TYPE_OPTIONS,
                 key="form_competitor_type",
             )
-            competitive_situation = st.selectbox("Competitive Situation", ["None known", "Incumbent competitor", "Price pressure", "Feature comparison", "Unknown"], key="form_competitive")
+            normalize_session_option("form_competitive", COMPETITIVE_SITUATION_OPTIONS, "None known")
+            competitive_situation = st.selectbox("Competitive Situation", COMPETITIVE_SITUATION_OPTIONS, key="form_competitive")
             known_competitor = st.text_input("Known Competitor", key="form_competitor")
         with market_right:
             expected_bid_range = st.text_input("Expected bid range", value="8% to 16% below list", key="form_expected_bid_range")
+            normalize_session_option("form_customer_bidding_strategy", CUSTOMER_BIDDING_STRATEGY_OPTIONS, "Unknown")
             customer_bidding_strategy = st.selectbox(
                 "Customer bidding strategy",
-                ["Lowest compliant price", "Balanced price and supply reliability", "Incumbent preference", "Multi-supplier risk mitigation", "Unknown"],
+                CUSTOMER_BIDDING_STRATEGY_OPTIONS,
                 key="form_customer_bidding_strategy",
             )
             margin_retention = st.slider("Margin retention assumption", min_value=0.0, max_value=1.0, value=0.82, step=0.01, key="form_margin_retention")
@@ -3626,12 +3843,15 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         st.divider()
         st.subheader("KAM Risk Assessment")
         risk_cols = st.columns(2)
-        kam_risk_assessment = risk_cols[0].selectbox("KAM Risk Assessment", KAM_RISK_LEVELS, index=1, key="form_kam_risk_assessment")
+        normalize_session_option("form_kam_risk_assessment", KAM_RISK_LEVELS, "Medium")
+        normalize_session_option("form_risk_reason", RISK_REASON_VALUES, RISK_REASON_VALUES[0])
+        kam_risk_assessment = risk_cols[0].selectbox("KAM Risk Assessment", KAM_RISK_LEVELS, key="form_kam_risk_assessment")
         risk_reason = risk_cols[1].selectbox("Risk Reason", RISK_REASON_VALUES, key="form_risk_reason")
 
         st.divider()
         st.subheader("Reconciliation")
-        reconciliation_type = st.radio("Reconciliation type", ["None", "Credit Note", "Chargeback", "Rebate", "Other"], horizontal=True, key="form_reconciliation_type")
+        normalize_session_option("form_reconciliation_type", RECONCILIATION_TYPE_OPTIONS, "None")
+        reconciliation_type = st.radio("Reconciliation type", RECONCILIATION_TYPE_OPTIONS, horizontal=True, key="form_reconciliation_type")
         reconciliation_description = st.text_area(
             "Reconciliation description",
             value="" if reconciliation_type == "None" else "Describe settlement timing, claim evidence, accrual owner, and expected customer documentation.",
@@ -3731,7 +3951,8 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
     with tabs[3]:
         st.subheader("Financial Impact")
         sensitive_data_note()
-        included_value = st.selectbox("Included In Latest Financial Plan", ["Yes", "No"], key="form_included_plan")
+        normalize_session_option("form_included_plan", INCLUDED_PLAN_OPTIONS, "Yes")
+        included_value = st.selectbox("Included In Latest Financial Plan", INCLUDED_PLAN_OPTIONS, key="form_included_plan")
         included_in_plan = included_value == "Yes"
         plan_df = plan_impact_analysis(data, calc_lines, header["Region"], header["Segment"], customer_name)
         incremental_df = incremental_opportunity_analysis(data, calc_lines, customer_name, header["Channel"])
