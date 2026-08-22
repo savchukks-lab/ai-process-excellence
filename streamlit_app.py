@@ -93,6 +93,13 @@ SALES_MANAGER_TEAMS = {
     "Jordan Blake": ["Maya Chen", "Ethan Brooks"],
 }
 
+
+def sales_manager_for_owner(owner: str) -> str:
+    for manager, team in SALES_MANAGER_TEAMS.items():
+        if str(owner) in team:
+            return manager
+    return next(iter(SALES_MANAGER_TEAMS), "")
+
 APPROVAL_STEP_STATUS = {
     "Sales Manager": "Pending Sales Manager",
     "Pricing Governance Owner": "Pending Governance Review",
@@ -363,6 +370,21 @@ def inject_css() -> None:
             color: #475569;
             font-size: 0.86rem;
             margin-bottom: 0.35rem;
+        }
+        .input-legend,
+        .kam-input-hint {
+            background: #f0f7ff;
+            border: 1px solid #cfe4ff;
+            border-radius: 6px;
+            color: #254260;
+            font-size: 0.84rem;
+            padding: 0.48rem 0.62rem;
+            margin: 0.25rem 0 0.55rem;
+        }
+        .system-context-note {
+            color: #64748b;
+            font-size: 0.82rem;
+            margin: 0.1rem 0 0.35rem;
         }
         .page-breadcrumb {
             color: #64748b;
@@ -3538,6 +3560,11 @@ def build_default_line(data: dict[str, pd.DataFrame], sku: str | None = None) ->
 
 def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
     render_header("New Deal Intake", "Create a draft or submit a commercial deal request.")
+    st.markdown(
+        "<div class='input-legend'>Highlighted fields require input from the Requestor. "
+        "Other fields are populated or calculated automatically.</div>",
+        unsafe_allow_html=True,
+    )
     review_comment = str(st.session_state.get("editing_review_comment", "")).strip()
     original_status = str(st.session_state.get("editing_deal_original_status", "")).strip()
     if original_status == "Changes Requested":
@@ -3570,10 +3597,11 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
     st.session_state.line_editor_rows = st.session_state[editor_rows_key].copy()
     st.session_state.deal_edit_active = True
 
-    tabs = st.tabs(["Context", "Commercials", "Customer & Market", "Financial Impact", "Approval Recommendation"])
+    tabs = st.tabs(["Context", "Commercials", "Customer & Market", "Financial Impact", "Case Readiness"])
 
     with tabs[0]:
         st.subheader("Deal Context")
+        st.markdown("<div class='kam-input-hint'>Requestor input: customer, delivery model, deal scenario and key dates.</div>", unsafe_allow_html=True)
         customer_options = customers["Customer Name"].dropna().astype(str).tolist()
         normalize_session_option("form_customer", customer_options, customer_options[0] if customer_options else "")
         customer_name = st.selectbox(
@@ -3611,6 +3639,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             key="form_type",
         )
         region = str(customer.get("Region", "Region A"))
+        deal_cols[1].markdown("<div class='system-context-note'>System-derived customer context</div>", unsafe_allow_html=True)
         deal_cols[1].text_input("Region", value=region, disabled=True)
         if deal_type == "Tender Bid":
             tender_cols = st.columns(4)
@@ -3632,8 +3661,12 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         normalize_session_option("form_owner", kam_users, default_owner)
         manager_options = list(SALES_MANAGER_TEAMS.keys())
         normalize_session_option("form_manager", manager_options, manager_options[0] if manager_options else "")
-        sales_owner = owner_cols[0].selectbox("Sales Owner", kam_users, key="form_owner")
-        sales_manager = owner_cols[1].selectbox("Sales Manager", manager_options, key="form_manager")
+        st.session_state.form_owner = safe_option_value(kam_users, st.session_state.get("form_owner"), default_owner)
+        hierarchy_manager = sales_manager_for_owner(st.session_state.form_owner)
+        if hierarchy_manager:
+            st.session_state.form_manager = hierarchy_manager
+        sales_owner = owner_cols[0].text_input("Sales Owner", value=st.session_state.form_owner, disabled=True)
+        sales_manager = owner_cols[1].text_input("Sales Manager", value=st.session_state.get("form_manager", ""), disabled=True)
         target_close = owner_cols[2].date_input("Commercial Decision Deadline", value=date.today() + timedelta(days=45), key="form_close")
         effective_date = owner_cols[3].date_input("Requested Delivery Start", value=date.today() + timedelta(days=60), key="form_effective")
         requested_delivery_end = st.date_input("Requested Delivery End", value=date.today() + timedelta(days=120), key="form_delivery_end")
@@ -3653,11 +3686,14 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
     with tabs[1]:
         st.subheader("Commercial Terms")
+        st.markdown("<div class='kam-input-hint'>Requestor input: requested commercial terms, visibility, SKU, quantity and requested total discount.</div>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         normalize_session_option("form_terms", PAYMENT_TERMS_OPTIONS, "Net 30", PAYMENT_TERMS_ALIASES)
         normalize_session_option("form_billing", BILLING_FREQUENCY_OPTIONS, "Annual")
         payment_terms = c1.selectbox("Payment Terms", PAYMENT_TERMS_OPTIONS, key="form_terms")
+        c2.markdown("<div class='system-context-note'>Standard term; override only when needed.</div>", unsafe_allow_html=True)
         contract_months = c2.number_input("Contract Duration Months", min_value=1, max_value=72, value=24, step=1, key="form_contract")
+        c3.markdown("<div class='system-context-note'>Standard billing; override only when needed.</div>", unsafe_allow_html=True)
         billing = c3.selectbox("Billing Frequency", BILLING_FREQUENCY_OPTIONS, key="form_billing")
         special_terms = st.checkbox("Special terms requested", key="form_special")
         if special_terms:
@@ -3775,6 +3811,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
     with tabs[2]:
         st.subheader("Customer Health")
+        st.markdown("<div class='system-context-note'>Customer health is populated from customer and historical data.</div>", unsafe_allow_html=True)
         health = demo_customer_health(customer, customer_name)
         health_cols = st.columns(5)
         health_cols[0].metric("Last 12M Revenue", money(health["Revenue last 12 months"]))
@@ -3799,6 +3836,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
 
         st.divider()
         st.subheader("Market Intelligence")
+        st.markdown("<div class='kam-input-hint'>Requestor input: business justification, current competitive context and known market facts.</div>", unsafe_allow_html=True)
         market_left, market_right = st.columns([1, 1])
         with market_left:
             business_justification = st.text_area("Business Justification", height=130, key="form_justification")
@@ -3819,16 +3857,24 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             )
             normalize_session_option("form_competitive", COMPETITIVE_SITUATION_OPTIONS, "None known")
             competitive_situation = st.selectbox("Competitive Situation", COMPETITIVE_SITUATION_OPTIONS, key="form_competitive")
-            known_competitor = st.text_input("Known Competitor", key="form_competitor")
+            show_competitor_detail = deal_type in {"Tender Bid", "Competitive Defense"} or competitive_situation not in {"None known", "Unknown"}
+            known_competitor = (
+                st.text_input("Known Competitor", key="form_competitor")
+                if show_competitor_detail
+                else st.session_state.get("form_competitor", "")
+            )
         with market_right:
-            expected_bid_range = st.text_input("Expected bid range", value="8% to 16% below list", key="form_expected_bid_range")
+            expected_bid_range = (
+                st.text_input("Expected bid range", value="8% to 16% below list", key="form_expected_bid_range")
+                if show_competitor_detail
+                else st.session_state.get("form_expected_bid_range", "")
+            )
             normalize_session_option("form_customer_bidding_strategy", CUSTOMER_BIDDING_STRATEGY_OPTIONS, "Unknown")
             customer_bidding_strategy = st.selectbox(
-                "Customer bidding strategy",
+                "Customer bidding strategy (optional)",
                 CUSTOMER_BIDDING_STRATEGY_OPTIONS,
                 key="form_customer_bidding_strategy",
             )
-            margin_retention = st.slider("Margin retention assumption", min_value=0.0, max_value=1.0, value=0.82, step=0.01, key="form_margin_retention")
             decision_deadline = st.date_input("Customer Decision Deadline", value=date.today() + timedelta(days=30), key="form_deadline")
             expansion_impact = st.text_area("Renewal or Expansion Impact", height=100, key="form_expansion")
 
@@ -3837,8 +3883,8 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         plan_status = "Included" if included_in_plan else "Outside Financial Plan"
         summary_cols = st.columns(3)
         summary_cols[0].info(f"Competitor posture: {competitor_type}")
-        summary_cols[1].info(f"Bid range: {expected_bid_range}")
-        summary_cols[2].info(f"Margin retention: {margin_retention * 100:.0f}%")
+        summary_cols[1].info(f"Bid range: {expected_bid_range or 'Not provided'}")
+        summary_cols[2].info(f"Plan status: {plan_status}")
 
         st.divider()
         st.subheader("KAM Risk Assessment")
@@ -3861,6 +3907,9 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         rec_cols[0].info(f"Selected reconciliation: {reconciliation_type}")
         rec_cols[1].info("Finance should validate accrual treatment before final approval when reconciliation is not None.")
 
+    draft_calc_lines = normalize_lines(st.session_state.draft_lines, data)
+    draft_summary = summarize_lines(draft_calc_lines)
+    derived_margin_retention = safe_float(draft_summary.get("gross_margin_pct", 0))
     header = {
         "Deal Title": st.session_state.get("form_title", ""),
         "Deal Type": st.session_state.get("form_type", ""),
@@ -3920,7 +3969,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Competitor Type": st.session_state.get("form_competitor_type", ""),
         "Expected Bid Range": st.session_state.get("form_expected_bid_range", ""),
         "Customer Bidding Strategy": st.session_state.get("form_customer_bidding_strategy", ""),
-        "Margin Retention Assumption": st.session_state.get("form_margin_retention", 0),
+        "Margin Retention Assumption": derived_margin_retention,
         "Reconciliation Type": st.session_state.get("form_reconciliation_type", "None"),
         "Reconciliation Description": st.session_state.get("form_reconciliation_description", ""),
         "Business Justification": st.session_state.get("form_justification", ""),
@@ -3932,8 +3981,8 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         "Sales Owner": st.session_state.get("form_owner", sales_owner),
         "Sales Manager": st.session_state.get("form_manager", sales_manager),
     }
-    calc_lines = normalize_lines(st.session_state.draft_lines, data)
-    summary = summarize_lines(calc_lines)
+    calc_lines = draft_calc_lines
+    summary = draft_summary
     errors, warnings = validate_deal(header, calc_lines, data)
     if header.get("Special Terms Requested") and not str(header.get("Special Terms Description", "")).strip():
         errors.append("Special Terms Description is required when special terms are requested.")
@@ -4088,7 +4137,7 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             st.success("No blocking commercial validation issues detected.")
 
     with tabs[4]:
-        st.subheader("Approval Recommendation")
+        st.subheader("Case Readiness")
         included_value = st.session_state.get("form_included_plan", "Yes")
         included_in_plan = included_value == "Yes"
         plan_df = plan_impact_analysis(data, calc_lines, header["Region"], header["Segment"], customer_name)
@@ -4119,17 +4168,20 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             errors,
             warnings,
         )
-        recommendation = executive["Recommendation"]
+        readiness_status = "Ready to Submit" if not errors else "Not Ready"
+        if not errors and warnings:
+            readiness_status = "Ready with Reviewer Attention"
+        recommendation = readiness_status
         route_dashboard = approval_route_dashboard(route_df, header, calc_lines, inventory_df, competitor_df, gp_impact)
 
         st.markdown(
             f"""
             <div class="section-card">
-                <div class="section-note">Executive approval view</div>
-                <h3>{executive["Recommendation"]}</h3>
+                <div class="section-note">Submission readiness view</div>
+                <h3>{readiness_status}</h3>
                 <p><strong>{header["Deal Title"]}</strong> for <strong>{customer_name}</strong></p>
-                <p>Decision score: <strong>{total_score}/100</strong> | Proposed value: <strong>{money(summary["total_proposed"])}</strong> | Gross profit impact: <strong>{sensitive_money("Gross Profit Variance", gp_impact["Gross Profit Variance"])}</strong></p>
-                <p>{executive["Key Reason"]}</p>
+                <p>Readiness score: <strong>{total_score}/100</strong> | Proposed value: <strong>{money(summary["total_proposed"])}</strong> | Required reviewers: <strong>{len(route_df)}</strong></p>
+                <p>This section checks completeness, risks and expected review route before submission. It does not recommend an approval decision.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -4137,12 +4189,12 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         sensitive_data_note()
 
         score_cols = st.columns(6)
-        score_cols[0].metric("Decision Score", f"{total_score}/100")
+        score_cols[0].metric("Readiness Score", f"{total_score}/100")
         for idx, component in enumerate(["Margin", "Strategic", "Inventory", "Competitive", "Risk"], start=1):
             value = int(score_df.loc[score_df["Component"].eq(component), "Score"].iloc[0]) if component in set(score_df["Component"]) else 0
             label = "Strategic Value" if component == "Strategic" else "Competitive Position" if component == "Competitive" else component
             score_cols[idx].metric(label, f"{value}/20")
-        st.progress(total_score / 100, text=f"Total Decision Score: {total_score}/100")
+        st.progress(total_score / 100, text=f"Case readiness score: {total_score}/100")
 
         st.markdown("**Score components**")
         score_display = score_df.copy()
@@ -4150,10 +4202,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         st.dataframe(score_display, use_container_width=True, hide_index=True)
 
         reason_cols = st.columns(4)
-        reason_cols[0].info(f"Key Reason: {executive['Key Reason']}")
+        reason_cols[0].info(f"Completeness: {'Blocking items found' if errors else 'Core fields complete'}")
         reason_cols[1].warning(f"Key Risk: {executive['Key Risk']}")
-        reason_cols[2].info(f"Required Condition: {executive['Required Condition']}")
-        reason_cols[3].success(f"Next Action: {executive['Next Action']}")
+        reason_cols[2].info(f"Route: {len(route_df)} reviewer step(s)")
+        reason_cols[3].success(f"Next Action: {'Resolve blocking issues' if errors else 'Submit for review'}")
 
         st.subheader("Approval Route")
         if route_dashboard.empty:
@@ -4704,11 +4756,6 @@ def page_deal_detail(data: dict[str, pd.DataFrame]) -> None:
         st.session_state.current_page = "Deal Request List"
         st.session_state.navigation_warning = "The selected case is no longer available. Returning to Deal Requests."
         st.rerun()
-
-    breadcrumb_cols = st.columns([0.72, 4.6])
-    if breadcrumb_cols[0].button("Deal Requests", key=f"detail_breadcrumb_home_{selected}"):
-        set_current_page("Deal Request List")
-    breadcrumb_cols[1].markdown(f"<div class='page-breadcrumb'>&gt; {selected}</div>", unsafe_allow_html=True)
 
     deal = deals[deals["Deal ID"].astype(str).eq(selected)].iloc[0].to_dict()
     context = build_deal_context(data, selected)
