@@ -282,7 +282,10 @@ def inject_css() -> None:
             margin-bottom: 0.35rem;
         }
         div[data-testid="stExpander"] {
-            margin-top: 0.35rem;
+            margin-top: 0.9rem;
+            border-radius: 10px;
+            border: 1px solid #d7dee8;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
         }
         div[data-testid="stTabs"] {
             margin-top: 0.65rem;
@@ -327,16 +330,39 @@ def inject_css() -> None:
             margin: 0.55rem 0 !important;
         }
         [data-testid="stMetric"] {
-            background: #f6f8fb;
+            background: #ffffff;
             border: 1px solid #d7dee8;
-            border-radius: 8px;
-            padding: 7px 10px;
+            border-radius: 12px;
+            padding: 13px 15px;
+            min-height: 92px;
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.055);
+            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+        }
+        [data-testid="stMetric"]:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+            border-color: #c4cedb;
         }
         [data-testid="stMetric"] label {
-            font-size: 0.76rem;
+            color: #64748b !important;
+            font-size: 0.74rem;
+            font-weight: 650;
+            letter-spacing: 0;
         }
         [data-testid="stMetricValue"] {
-            font-size: 1.18rem;
+            color: #111827;
+            font-size: 1.38rem;
+            font-weight: 720;
+        }
+        div[data-testid="stButton"] button {
+            min-height: 2.34rem;
+            border-radius: 8px;
+            padding: 0.42rem 0.9rem;
+            transition: background 140ms ease, border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+        }
+        div[data-testid="stButton"] button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
         }
         button[kind="primary"] {
             background: #16805d !important;
@@ -352,20 +378,120 @@ def inject_css() -> None:
         }
         div[data-testid="stDataFrame"] {
             border: 1px solid #d7dee8;
-            border-radius: 6px;
+            border-radius: 10px;
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+        }
+        .home-hero {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1rem;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid #d7dee8;
+            border-radius: 14px;
+            padding: 1rem 1.15rem;
+            margin: 0.65rem 0 1.15rem;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+        }
+        .home-hero-eyebrow {
+            color: #16805d;
+            font-size: 0.78rem;
+            font-weight: 720;
+            margin-bottom: 0.18rem;
+        }
+        .home-hero-title {
+            color: #0f172a;
+            font-size: 1.48rem;
+            font-weight: 760;
+            line-height: 1.2;
+            margin: 0;
+        }
+        .home-hero-subtitle,
+        .home-hero-meta {
+            color: #64748b;
+            font-size: 0.9rem;
+            margin-top: 0.22rem;
+        }
+        .home-section-spacer {
+            height: 0.75rem;
+        }
+        .deal-table-header {
+            background: #f8fafc;
+            border: 1px solid #d7dee8;
+            border-radius: 10px 10px 0 0;
+            padding: 0.45rem 0.55rem;
+            color: #475569;
+            font-size: 0.76rem;
+            font-weight: 720;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) {
+            background: #f8fafc;
+            border: 1px solid #d7dee8;
+            border-radius: 10px 10px 0 0;
+            padding: 0.48rem 0.6rem;
+            margin-top: 0.35rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) {
+            border-left: 1px solid #e2e8f0;
+            border-right: 1px solid #e2e8f0;
+            border-bottom: 1px solid #e2e8f0;
+            padding: 0.42rem 0.6rem;
+            transition: background 120ms ease, box-shadow 120ms ease;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.deal-row-marker):hover {
+            background: #f8fafc;
+            box-shadow: inset 3px 0 0 #d5e7df;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.deal-row-selected-marker) {
+            background: #f5faf7;
+            box-shadow: inset 3px 0 0 #16805d;
+        }
+        .deal-cell {
+            color: #1f2937;
+            font-size: 0.84rem;
+            line-height: 1.25;
+            padding-top: 0.12rem;
+        }
+        .deal-cell-muted {
+            color: #64748b;
+            font-size: 0.82rem;
         }
         .status-pill {
             display: inline-block;
-            padding: 0.16rem 0.52rem;
+            padding: 0.16rem 0.54rem;
             border-radius: 999px;
-            font-size: 0.78rem;
+            font-size: 0.74rem;
             font-weight: 650;
             border: 1px solid #cbd5e1;
             background: #f8fafc;
+            color: #334155;
+            white-space: nowrap;
         }
-        .risk-high { color: #991b1b; background: #fee2e2; border-color: #fecaca; }
-        .risk-medium { color: #92400e; background: #fef3c7; border-color: #fde68a; }
-        .risk-low { color: #166534; background: #dcfce7; border-color: #bbf7d0; }
+        .status-under-review { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
+        .status-changes-requested { color: #92400e; background: #fffbeb; border-color: #fde68a; }
+        .status-approved { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+        .status-rejected { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+        .risk-critical { color: #7f1d1d; background: #fef2f2; border-color: #fecaca; }
+        .risk-high { color: #991b1b; background: #fff1f2; border-color: #fecdd3; }
+        .risk-medium { color: #92400e; background: #fffbeb; border-color: #fde68a; }
+        .risk-low { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.preview-shell-marker) {
+            border-radius: 14px;
+            background: #ffffff;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+            margin-top: 1.05rem;
+        }
+        .preview-block-title {
+            color: #0f172a;
+            font-size: 0.92rem;
+            font-weight: 720;
+            margin-bottom: 0.3rem;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.preview-info-block) {
+            border-radius: 12px;
+            box-shadow: none;
+            background: #fbfdff;
+        }
         .section-note {
             color: #475569;
             font-size: 0.86rem;
@@ -821,11 +947,19 @@ def display_timestamp(value: str) -> str:
 
 
 def status_badge(value: str) -> str:
-    return f"<span class='status-pill'>{value}</span>"
+    text = str(value or "")
+    status_class = {
+        "Under Review": "status-under-review",
+        "Changes Requested": "status-changes-requested",
+        "Approved": "status-approved",
+        "Rejected": "status-rejected",
+    }.get(text, "")
+    return f"<span class='status-pill {status_class}'>{text}</span>"
 
 
 def risk_badge(value: str) -> str:
     risk_class = {
+        "Critical": "risk-critical",
         "High": "risk-high",
         "Medium": "risk-medium",
         "Low": "risk-low",
@@ -2954,54 +3088,59 @@ def render_inline_deal_preview(context: dict, compact: bool = False) -> None:
     deal = context["deal"]
     summary = context["summary"]
     role = current_role()
-    st.subheader("Selected Deal Preview")
-    st.caption(
-        f"{deal.get('Deal Title', '')} | {deal.get('Sold-To Customer Name', deal.get('Customer Name', ''))} | "
-        f"{deal.get('Status', '')}"
-    )
-
-    metrics = st.columns(5)
-    metrics[0].metric("Requested Net Revenue", money(summary["total_proposed"]))
-    metrics[1].metric("Requested Discount %", pct(summary["discount_pct"]))
-    margin_label = "Resulting Gross Margin %" if margin_visibility_for_role(role) == "Exact" else "Margin Status"
-    metrics[2].metric(margin_label, landing_margin_display(summary, role))
-    metrics[3].metric("Margin vs Approval Threshold", margin_threshold_display(summary, role))
-    metrics[4].metric("Financial Plan Status", "Included" if context["included_in_plan"] else "Outside Plan")
-
-    context_cols = st.columns(3)
-    with context_cols[0].container(border=True):
-        st.markdown("**Commercial Context**")
-        st.write(
-            short_business_text(
-                deal.get("Strategic Rationale", deal.get("Business Justification", "")),
-                "Commercial rationale is not available.",
-            )
+    with st.container(border=True):
+        st.markdown("<span class='preview-shell-marker'></span>", unsafe_allow_html=True)
+        st.subheader("Selected Deal Preview")
+        st.caption(
+            f"{deal.get('Deal Title', '')} | {deal.get('Sold-To Customer Name', deal.get('Customer Name', ''))} | "
+            f"{deal.get('Status', '')}"
         )
-        st.caption(short_business_text(competitor_summary(context["competitor_df"]), "No material competitor precedent identified.", 150))
-    with context_cols[1].container(border=True):
-        st.markdown("**Financial Impact**")
-        st.write(f"Requested discount: **{pct(summary['discount_pct'])}**")
-        st.write(f"Margin: **{landing_margin_display(summary, role)}**")
-        if context["included_in_plan"]:
-            variance = safe_float(context["gp_impact"].get("Net Revenue Variance"))
-            st.caption(f"Included in plan. Net revenue variance: {money(variance)}.")
-        else:
-            st.caption(f"Incremental opportunity of {money(summary['total_proposed'])} outside the latest financial plan.")
-    with context_cols[2].container(border=True):
-        st.markdown("**Supply & Operations**")
-        st.write(short_business_text(inventory_aging_recommendation(context["inventory_df"], context["aging_df"]), "No supply information available."))
 
-    required_roles = context["route_df"].sort_values("Sequence")["Approver"].astype(str).tolist() if not context["route_df"].empty else []
-    pending_role = current_required_approval_role(str(deal.get("Deal ID", "")), str(deal.get("Status", "")), context["route_df"])
-    pending_match = context["route_df"][context["route_df"]["Role"].astype(str).eq(pending_role)] if pending_role and not context["route_df"].empty else pd.DataFrame()
-    pending_label = str(pending_match.iloc[0].get("Approver", pending_role)) if not pending_match.empty else pending_role
-    route_cols = st.columns([3, 1])
-    route_cols[0].markdown(f"**Required approvals:** {' → '.join(required_roles) if required_roles else 'None'}")
-    route_cols[1].markdown(f"**Pending:** {pending_label if pending_label else 'Complete'}")
+        metrics = st.columns(5)
+        metrics[0].metric("Requested Net Revenue", money(summary["total_proposed"]))
+        metrics[1].metric("Requested Discount %", pct(summary["discount_pct"]))
+        margin_label = "Resulting Gross Margin %" if margin_visibility_for_role(role) == "Exact" else "Margin Status"
+        metrics[2].metric(margin_label, landing_margin_display(summary, role))
+        metrics[3].metric("Margin vs Approval Threshold", margin_threshold_display(summary, role))
+        metrics[4].metric("Financial Plan Status", "Included" if context["included_in_plan"] else "Outside Plan")
 
-    if compact:
-        return
-    st.dataframe(mask_sensitive_dataframe(context["route_triggers"]), use_container_width=True, hide_index=True)
+        context_cols = st.columns(3)
+        with context_cols[0].container(border=True):
+            st.markdown("<span class='preview-info-block'></span>", unsafe_allow_html=True)
+            st.markdown("<div class='preview-block-title'>Commercial</div>", unsafe_allow_html=True)
+            st.write(
+                short_business_text(
+                    deal.get("Strategic Rationale", deal.get("Business Justification", "")),
+                    "Commercial rationale is not available.",
+                )
+            )
+            st.caption(short_business_text(competitor_summary(context["competitor_df"]), "No material competitor precedent identified.", 150))
+        with context_cols[1].container(border=True):
+            st.markdown("<span class='preview-info-block'></span>", unsafe_allow_html=True)
+            st.markdown("<div class='preview-block-title'>Financial</div>", unsafe_allow_html=True)
+            st.write(f"Requested discount: **{pct(summary['discount_pct'])}**")
+            st.write(f"Margin: **{landing_margin_display(summary, role)}**")
+            if context["included_in_plan"]:
+                variance = safe_float(context["gp_impact"].get("Net Revenue Variance"))
+                st.caption(f"Included in plan. Net revenue variance: {money(variance)}.")
+            else:
+                st.caption(f"Incremental opportunity of {money(summary['total_proposed'])} outside the latest financial plan.")
+        with context_cols[2].container(border=True):
+            st.markdown("<span class='preview-info-block'></span>", unsafe_allow_html=True)
+            st.markdown("<div class='preview-block-title'>Supply</div>", unsafe_allow_html=True)
+            st.write(short_business_text(inventory_aging_recommendation(context["inventory_df"], context["aging_df"]), "No supply information available."))
+
+        required_roles = context["route_df"].sort_values("Sequence")["Approver"].astype(str).tolist() if not context["route_df"].empty else []
+        pending_role = current_required_approval_role(str(deal.get("Deal ID", "")), str(deal.get("Status", "")), context["route_df"])
+        pending_match = context["route_df"][context["route_df"]["Role"].astype(str).eq(pending_role)] if pending_role and not context["route_df"].empty else pd.DataFrame()
+        pending_label = str(pending_match.iloc[0].get("Approver", pending_role)) if not pending_match.empty else pending_role
+        route_cols = st.columns([3, 1])
+        route_cols[0].markdown(f"**Approval:** {' → '.join(required_roles) if required_roles else 'None'}")
+        route_cols[1].markdown(f"**Pending:** {pending_label if pending_label else 'Complete'}")
+
+        if compact:
+            return
+        st.dataframe(mask_sensitive_dataframe(context["route_triggers"]), use_container_width=True, hide_index=True)
 
 
 def approval_review_summary(context: dict) -> dict:
@@ -3337,6 +3476,31 @@ def render_header(title: str, subtitle: str = "") -> None:
         st.markdown(f"<div class='section-note'>{subtitle}</div>", unsafe_allow_html=True)
 
 
+def render_home_hero() -> None:
+    role_label = display_role_name(current_role())
+    st.markdown(
+        f"""
+        <div class="home-hero">
+            <div>
+                <div class="home-hero-eyebrow">AI Deal Governance</div>
+                <div class="home-hero-title">Commercial Approval Workspace</div>
+                <div class="home-hero-subtitle">Welcome back, {current_persona()}</div>
+            </div>
+            <div class="home-hero-meta">{role_label}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def deal_cell(value: object, muted: bool = False, limit: int | None = None) -> str:
+    text = str(value or "")
+    if limit:
+        text = short_business_text(text, "", limit)
+    css_class = "deal-cell-muted" if muted else "deal-cell"
+    return f"<div class='{css_class}'>{text}</div>"
+
+
 def render_landing_kpis(cockpit: pd.DataFrame, role: str) -> None:
     kpis = st.columns(5)
     status = cockpit.get("Status", pd.Series(dtype=str)).astype(str)
@@ -3374,7 +3538,7 @@ def render_landing_kpis(cockpit: pd.DataFrame, role: str) -> None:
 
 
 def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
-    render_header("Deal Requests")
+    render_home_hero()
     navigation_warning = str(st.session_state.get("navigation_warning", "")).strip()
     if navigation_warning:
         st.warning(navigation_warning)
@@ -3444,6 +3608,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         return
 
     render_landing_kpis(cockpit, role)
+    st.markdown("<div class='home-section-spacer'></div>", unsafe_allow_html=True)
 
     product_options = sorted({product for values in cockpit["All Products"] for product in values})
     with st.expander("Search & Filters", expanded=False):
@@ -3470,6 +3635,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         st.info("No deals match the current filters.")
         return
 
+    st.markdown("<div class='home-section-spacer'></div>", unsafe_allow_html=True)
     st.caption("Select a deal to preview the commercial, financial and supply context.")
     display_cols = [
         "Deal ID",
@@ -3492,11 +3658,14 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         st.session_state.deal_list_selected_deal_id = None
 
     header_cols = st.columns([0.25, 1.35, 0.85, 1.05, 1.05, 0.9, 0.72, 0.85, 0.55, 0.7, 0.75])
+    header_cols[0].markdown("<span class='deal-table-header-marker'></span>", unsafe_allow_html=True)
     for col, label in zip(header_cols, ["", "Deal", "Requestor", "Customer", "End Account", "Product", "Discount", "Margin", "Risk", "Due", "Status"]):
-        col.markdown(f"**{label}**")
+        col.markdown(f"<div class='deal-table-header'>{label}</div>", unsafe_allow_html=True)
     for _, row in display_df.iterrows():
         deal_id = str(row["Deal ID"])
         row_cols = st.columns([0.25, 1.35, 0.85, 1.05, 1.05, 0.9, 0.72, 0.85, 0.55, 0.7, 0.75])
+        row_marker = "deal-row-selected-marker" if selected_id == deal_id else "deal-row-marker"
+        row_cols[0].markdown(f"<span class='deal-row-marker {row_marker}'></span>", unsafe_allow_html=True)
         row_cols[0].checkbox(
             "Select deal",
             value=selected_id == deal_id,
@@ -3505,16 +3674,16 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
             on_change=set_deal_list_checkbox_selection,
             args=(deal_id, visible_ids),
         )
-        row_cols[1].write(short_business_text(row["Deal"], "", 38))
-        row_cols[2].write(short_business_text(row["Requestor"], "", 18))
-        row_cols[3].write(short_business_text(row["Sold-To Customer"], "", 24))
-        row_cols[4].write(short_business_text(row["End Account"], "", 24))
-        row_cols[5].write(short_business_text(row["Main Product"], "", 22))
-        row_cols[6].write(row["Requested Discount %"])
-        row_cols[7].write(row["Resulting Gross Margin %"])
-        row_cols[8].write(row["Risk"])
-        row_cols[9].write(row["Decision Due"])
-        row_cols[10].write(row["Status"])
+        row_cols[1].markdown(deal_cell(row["Deal"], limit=38), unsafe_allow_html=True)
+        row_cols[2].markdown(deal_cell(row["Requestor"], muted=True, limit=18), unsafe_allow_html=True)
+        row_cols[3].markdown(deal_cell(row["Sold-To Customer"], limit=24), unsafe_allow_html=True)
+        row_cols[4].markdown(deal_cell(row["End Account"], muted=True, limit=24), unsafe_allow_html=True)
+        row_cols[5].markdown(deal_cell(row["Main Product"], muted=True, limit=22), unsafe_allow_html=True)
+        row_cols[6].markdown(deal_cell(row["Requested Discount %"], muted=True), unsafe_allow_html=True)
+        row_cols[7].markdown(deal_cell(row["Resulting Gross Margin %"], muted=True), unsafe_allow_html=True)
+        row_cols[8].markdown(risk_badge(str(row["Risk"])), unsafe_allow_html=True)
+        row_cols[9].markdown(deal_cell(row["Decision Due"], muted=True), unsafe_allow_html=True)
+        row_cols[10].markdown(status_badge(str(row["Status"])), unsafe_allow_html=True)
 
     selected_id = st.session_state.get("deal_list_selected_deal_id")
     if selected_id:
