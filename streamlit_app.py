@@ -265,47 +265,71 @@ def inject_css() -> None:
         }
         h1, h2, h3 {
             letter-spacing: 0;
+            color: #0f172a;
         }
         h1 {
             font-size: 1.55rem !important;
             margin: 0.1rem 0 0.35rem !important;
+            font-weight: 760 !important;
         }
         h2 {
             font-size: 1.16rem !important;
-            margin: 0.55rem 0 0.25rem !important;
+            margin: 0.95rem 0 0.35rem !important;
+            font-weight: 720 !important;
         }
         h3 {
             font-size: 1rem !important;
-            margin: 0.45rem 0 0.2rem !important;
+            margin: 0.75rem 0 0.25rem !important;
+            font-weight: 700 !important;
         }
         div[data-testid="stMarkdownContainer"] p {
             margin-bottom: 0.35rem;
         }
+        .stCaptionContainer,
+        [data-testid="stCaptionContainer"] {
+            color: #64748b !important;
+            font-size: 0.82rem !important;
+            line-height: 1.35;
+        }
         div[data-testid="stExpander"] {
             margin-top: 0.9rem;
-            border-radius: 10px;
+            border-radius: 12px;
             border: 1px solid #d7dee8;
             box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+            overflow: hidden;
+        }
+        div[data-testid="stExpander"] details summary {
+            font-weight: 680;
+            color: #334155;
+            min-height: 2.45rem;
+            align-items: center;
         }
         div[data-testid="stTabs"] {
-            margin-top: 0.65rem;
+            margin-top: 0.9rem;
         }
         div[data-testid="stTabs"] [data-baseweb="tab-list"] {
-            gap: 0.35rem;
+            gap: 0.42rem;
             border-bottom: 1px solid #cbd5e1;
             overflow-x: auto;
             scrollbar-width: thin;
+            padding-top: 0.2rem;
         }
         div[data-testid="stTabs"] button[data-baseweb="tab"] {
             flex: 0 0 auto;
-            min-height: 2.55rem;
-            padding: 0.55rem 0.9rem;
+            min-height: 2.65rem;
+            padding: 0.58rem 1rem;
             color: #334155;
             background: #f8fafc;
             border: 1px solid #d7dee8;
             border-bottom: 0;
-            border-radius: 7px 7px 0 0;
-            font-weight: 600;
+            border-radius: 9px 9px 0 0;
+            font-weight: 680;
+            transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+        }
+        div[data-testid="stTabs"] button[data-baseweb="tab"]:hover {
+            color: #0f513f;
+            background: #ffffff;
+            border-color: #b9c7d5;
         }
         div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
             color: #0f513f;
@@ -318,6 +342,12 @@ def inject_css() -> None:
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.ai-support-marker) {
             background: #f8fbfa;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 12px;
+            border-color: #d7dee8 !important;
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.045);
+            background: #ffffff;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.approval-action-marker) {
             position: sticky;
@@ -335,6 +365,7 @@ def inject_css() -> None:
             border-radius: 12px;
             padding: 13px 15px;
             min-height: 92px;
+            height: 100%;
             box-shadow: 0 8px 22px rgba(15, 23, 42, 0.055);
             transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
@@ -353,16 +384,33 @@ def inject_css() -> None:
             color: #111827;
             font-size: 1.38rem;
             font-weight: 720;
+            line-height: 1.2;
+            overflow-wrap: anywhere;
         }
-        div[data-testid="stButton"] button {
+        div[data-testid="stButton"] button,
+        div[data-testid="stPopover"] button {
             min-height: 2.34rem;
             border-radius: 8px;
             padding: 0.42rem 0.9rem;
+            border-color: #cbd5e1;
+            color: #1f2937;
+            font-weight: 650;
             transition: background 140ms ease, border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
         }
-        div[data-testid="stButton"] button:hover {
+        div[data-testid="stButton"] button:hover,
+        div[data-testid="stPopover"] button:hover {
             transform: translateY(-1px);
+            background: #f8fafc;
+            border-color: #9fb0c2;
             box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+        }
+        div[data-testid="stButton"] button:disabled,
+        div[data-testid="stPopover"] button:disabled {
+            transform: none;
+            box-shadow: none;
+            color: #94a3b8 !important;
+            background: #f8fafc !important;
+            border-color: #e2e8f0 !important;
         }
         button[kind="primary"] {
             background: #16805d !important;
@@ -373,13 +421,83 @@ def inject_css() -> None:
             border-color: #116c4e !important;
         }
         div[data-testid="stSelectbox"] label,
-        div[data-testid="stMultiSelect"] label {
-            font-size: 0.76rem;
+        div[data-testid="stMultiSelect"] label,
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stTextArea"] label,
+        div[data-testid="stNumberInput"] label,
+        div[data-testid="stDateInput"] label,
+        div[data-testid="stRadio"] label,
+        div[data-testid="stCheckbox"] label {
+            color: #475569 !important;
+            font-size: 0.78rem;
+            font-weight: 650;
+            line-height: 1.25;
+        }
+        div[data-baseweb="select"] > div,
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stTextArea"] textarea,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stDateInput"] input {
+            border-radius: 8px !important;
+            border-color: #cbd5e1 !important;
+            background: #ffffff;
+            min-height: 2.45rem;
+        }
+        div[data-baseweb="select"] > div:hover,
+        div[data-testid="stTextInput"] input:hover,
+        div[data-testid="stTextArea"] textarea:hover,
+        div[data-testid="stNumberInput"] input:hover,
+        div[data-testid="stDateInput"] input:hover {
+            border-color: #9fb0c2 !important;
+        }
+        div[data-baseweb="select"] > div:focus-within,
+        div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stTextArea"] textarea:focus,
+        div[data-testid="stNumberInput"] input:focus,
+        div[data-testid="stDateInput"] input:focus {
+            border-color: #16805d !important;
+            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.09) !important;
+        }
+        div[data-testid="stRadio"] {
+            margin: 0.1rem 0 0.6rem;
+        }
+        div[data-testid="stRadio"] label {
+            gap: 0.35rem;
         }
         div[data-testid="stDataFrame"] {
             border: 1px solid #d7dee8;
             border-radius: 10px;
             box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+            overflow: hidden;
+            margin: 0.25rem 0 0.85rem;
+        }
+        div[data-testid="stDataFrame"] [role="columnheader"] {
+            color: #475569;
+            font-weight: 700;
+            background: #f8fafc;
+        }
+        div[data-testid="stDataFrame"] [role="gridcell"] {
+            color: #1f2937;
+        }
+        div[data-testid="stTable"] {
+            border: 1px solid #d7dee8;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+            margin: 0.25rem 0 0.85rem;
+        }
+        div[data-testid="stTable"] table {
+            font-size: 0.84rem;
+        }
+        div[data-testid="stTable"] th {
+            color: #475569;
+            background: #f8fafc;
+            font-weight: 700;
+        }
+        div[data-testid="stTable"] td {
+            color: #1f2937;
+            padding-top: 0.46rem;
+            padding-bottom: 0.46rem;
         }
         .home-hero {
             display: flex;
@@ -415,6 +533,19 @@ def inject_css() -> None:
         .home-section-spacer {
             height: 0.75rem;
         }
+        .enterprise-section-title {
+            color: #0f172a;
+            font-size: 1rem;
+            font-weight: 720;
+            margin: 0.75rem 0 0.35rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.nav-marker) {
+            align-items: flex-end;
+            margin-bottom: 0.6rem;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.nav-marker) div[data-testid="stButton"] button {
+            width: auto;
+        }
         .deal-table-header {
             background: #f8fafc;
             border: 1px solid #d7dee8;
@@ -436,6 +567,8 @@ def inject_css() -> None:
             border-right: 1px solid #e2e8f0;
             border-bottom: 1px solid #e2e8f0;
             padding: 0.42rem 0.6rem;
+            align-items: center;
+            min-height: 3.25rem;
             transition: background 120ms ease, box-shadow 120ms ease;
         }
         div[data-testid="stHorizontalBlock"]:has(.deal-row-marker):hover {
@@ -471,6 +604,7 @@ def inject_css() -> None:
         .status-changes-requested { color: #92400e; background: #fffbeb; border-color: #fde68a; }
         .status-approved { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
         .status-rejected { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+        .status-draft { color: #475569; background: #f8fafc; border-color: #cbd5e1; }
         .risk-critical { color: #7f1d1d; background: #fef2f2; border-color: #fecaca; }
         .risk-high { color: #991b1b; background: #fff1f2; border-color: #fecdd3; }
         .risk-medium { color: #92400e; background: #fffbeb; border-color: #fde68a; }
@@ -488,9 +622,57 @@ def inject_css() -> None:
             margin-bottom: 0.3rem;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.preview-info-block) {
+            min-height: 8.25rem;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.preview-info-block) {
             border-radius: 12px;
             box-shadow: none;
             background: #fbfdff;
+        }
+        .approval-progress {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            margin: 0.45rem 0 0.55rem;
+        }
+        .approval-step {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.38rem;
+            border: 1px solid #d7dee8;
+            border-radius: 999px;
+            background: #f8fafc;
+            color: #475569;
+            font-size: 0.82rem;
+            font-weight: 650;
+            padding: 0.28rem 0.62rem;
+        }
+        .approval-step-completed {
+            background: #f0fdf4;
+            border-color: #bbf7d0;
+            color: #166534;
+        }
+        .approval-step-current {
+            background: #eff6ff;
+            border-color: #93c5fd;
+            color: #1d4ed8;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+        }
+        .approval-step-upcoming {
+            background: #ffffff;
+            color: #64748b;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.approval-history-card-completed) {
+            border-left: 3px solid #22c55e !important;
+            background: #fbfefc;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.approval-history-card-current) {
+            border-left: 3px solid #3b82f6 !important;
+            background: #fbfdff;
+        }
+        div[data-testid="stAlert"] {
+            border-radius: 10px;
+            border-color: #d7dee8;
         }
         .section-note {
             color: #475569;
@@ -953,6 +1135,7 @@ def status_badge(value: str) -> str:
         "Changes Requested": "status-changes-requested",
         "Approved": "status-approved",
         "Rejected": "status-rejected",
+        "Draft": "status-draft",
     }.get(text, "")
     return f"<span class='status-pill {status_class}'>{text}</span>"
 
@@ -4834,13 +5017,16 @@ def render_approval_progress(deal_id: str, deal_status: str, route_df: pd.DataFr
     for role in roles:
         if role in completed:
             marker = "✓"
+            state_class = "approval-step-completed"
         elif role in current:
             marker = "●"
+            state_class = "approval-step-current"
         else:
             marker = "○"
-        items.append(f"**{marker} {role_display_label(data, role)}**")
+            state_class = "approval-step-upcoming"
+        items.append(f"<span class='approval-step {state_class}'>{marker} {role_display_label(data, role)}</span>")
     if items:
-        st.markdown(" &nbsp; ".join(items), unsafe_allow_html=True)
+        st.markdown(f"<div class='approval-progress'>{''.join(items)}</div>", unsafe_allow_html=True)
     st.caption("✓ completed  |  ● current reviewer  |  ○ upcoming reviewer")
     current_names = ", ".join(active_approver_for_role(data, role) for role in current) or "None"
     remaining = [display_role_name(role) for role in roles if role not in completed and role not in current]
@@ -4891,6 +5077,8 @@ def render_approval_history(deal_id: str, deal_status: str, route_df: pd.DataFra
     for row in rows:
         marker = "✓" if row["State"] == "completed" else "⏳"
         with st.container(border=True):
+            state_class = "approval-history-card-completed" if row["State"] == "completed" else "approval-history-card-current"
+            st.markdown(f"<span class='approval-history-card {state_class}'></span>", unsafe_allow_html=True)
             st.markdown(f"**{marker} {row['Reviewer']}**")
             st.write(row["Role"])
             st.markdown(f"**{row['Decision']}**")
