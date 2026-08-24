@@ -630,6 +630,41 @@ def inject_css() -> None:
             background: #fbfdff;
         }
         @media (min-width: 761px) {
+            div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) {
+                align-items: stretch !important;
+                min-height: 40px;
+                padding: 0 !important;
+                overflow: hidden;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) > div[data-testid="stColumn"],
+            div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) > div[data-testid="column"] {
+                display: flex;
+                align-items: stretch;
+                min-height: 40px;
+                min-width: 0;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) div[data-testid="stMarkdownContainer"],
+            div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) div[data-testid="stMarkdownContainer"] p {
+                width: 100%;
+                height: 100%;
+                min-height: 40px;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) .deal-table-header {
+                box-sizing: border-box;
+                display: flex;
+                align-items: center;
+                width: 100%;
+                height: 40px;
+                min-height: 40px;
+                margin: 0 !important;
+                padding: 0 0.55rem !important;
+                border: 0 !important;
+                border-radius: 0 !important;
+                background: transparent !important;
+                line-height: 1.2;
+            }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"],
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"] {
                 display: flex;
@@ -666,6 +701,17 @@ def inject_css() -> None:
                 color: #ffffff !important;
                 font-weight: 700 !important;
             }
+        }
+        div[data-testid="stHorizontalBlock"]:has(.open-detail-button-marker) div[data-testid="stButton"] button,
+        div[data-testid="stHorizontalBlock"]:has(.open-detail-button-marker) div[data-testid="stButton"] button:hover,
+        div[data-testid="stHorizontalBlock"]:has(.open-detail-button-marker) div[data-testid="stButton"] button:focus,
+        div[data-testid="stHorizontalBlock"]:has(.open-detail-button-marker) div[data-testid="stButton"] button:active,
+        div[data-testid="stHorizontalBlock"]:has(.open-detail-button-marker) div[data-testid="stButton"] button *,
+        div[data-testid="stHorizontalBlock"]:has(.open-detail-button-marker) div[data-testid="stButton"] button:hover *,
+        div[data-testid="stHorizontalBlock"]:has(.open-detail-button-marker) div[data-testid="stButton"] button:focus *,
+        div[data-testid="stHorizontalBlock"]:has(.open-detail-button-marker) div[data-testid="stButton"] button:active * {
+            color: #ffffff !important;
+            font-weight: 700 !important;
         }
         .approval-progress {
             display: flex;
