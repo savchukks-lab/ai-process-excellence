@@ -631,40 +631,61 @@ def inject_css() -> None:
         }
         @media (min-width: 761px) {
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) {
-                align-items: stretch !important;
-                min-height: 34px;
+                align-items: center !important;
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
                 padding: 0 !important;
+                background: transparent !important;
+                border: 0 !important;
+                border-radius: 0 !important;
+                box-shadow: none !important;
                 overflow: hidden;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) > div[data-testid="stColumn"],
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) > div[data-testid="column"] {
                 display: flex;
-                align-items: stretch;
-                min-height: 34px;
+                align-items: center;
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
                 min-width: 0;
+                background: transparent !important;
+                border: 0 !important;
+                border-radius: 0 !important;
+                box-shadow: none !important;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) div[data-testid="stMarkdownContainer"],
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) div[data-testid="stMarkdownContainer"] p {
                 width: 100%;
-                height: 100%;
-                min-height: 34px;
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
                 margin: 0 !important;
                 padding: 0 !important;
+                background: transparent !important;
+                border: 0 !important;
+                border-radius: 0 !important;
+                box-shadow: none !important;
             }
+            .deal-table-header,
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) .deal-table-header {
                 box-sizing: border-box;
-                display: flex;
-                align-items: center;
+                display: block !important;
                 width: 100%;
-                height: 34px;
-                min-height: 34px;
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
                 margin: 0 !important;
-                padding: 0 0.45rem !important;
+                padding: 0.28rem 0.45rem !important;
                 border: 0 !important;
                 border-radius: 0 !important;
                 background: transparent !important;
                 box-shadow: none !important;
-                line-height: 1.2;
+                line-height: 1.2 !important;
+                color: #475569;
+                font-size: 0.76rem;
+                font-weight: 720;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"],
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"] {
