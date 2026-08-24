@@ -753,6 +753,85 @@ def inject_css() -> None:
                 position: static;
                 box-shadow: none;
             }
+            div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) {
+                display: none !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) {
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: stretch !important;
+                gap: 0.34rem !important;
+                min-height: 0;
+                margin: 0.72rem 0;
+                padding: 0.72rem 0.78rem;
+                border: 1px solid #d7dee8;
+                border-radius: 12px;
+                background: #ffffff;
+                box-shadow: 0 8px 22px rgba(15, 23, 42, 0.045);
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker):hover {
+                background: #fbfdff;
+                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.065);
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-selected-marker) {
+                background: #f5faf7;
+                border-color: #b7dbc9;
+                box-shadow: inset 3px 0 0 #16805d, 0 8px 22px rgba(15, 23, 42, 0.045);
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"],
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"] {
+                width: 100% !important;
+                flex: 1 1 auto !important;
+                min-width: 0 !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"]:first-child,
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"]:first-child {
+                width: auto !important;
+                align-self: flex-start;
+                margin-bottom: -0.1rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"]:first-child label,
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"]:first-child label {
+                min-height: 1.35rem;
+                margin: 0;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) .deal-cell,
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) .deal-cell-muted {
+                padding-top: 0;
+                line-height: 1.25;
+                overflow-wrap: anywhere;
+                white-space: normal;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(2) .deal-cell {
+                color: #0f172a;
+                font-size: 0.96rem;
+                font-weight: 720;
+                line-height: 1.28;
+                margin-bottom: 0.05rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(n+3)::before {
+                display: block;
+                color: #64748b;
+                font-size: 0.68rem;
+                font-weight: 720;
+                letter-spacing: 0.01em;
+                line-height: 1;
+                margin: 0.16rem 0 0.1rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(3)::before { content: "Requestor"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(4)::before { content: "Customer"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(5)::before { content: "End Account"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(6)::before { content: "Product"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(7)::before { content: "Discount"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(8)::before { content: "Margin"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(9)::before { content: "Risk"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(10)::before { content: "Due Date"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(11)::before { content: "Status"; }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) .status-pill {
+                margin-top: 0.08rem;
+                max-width: 100%;
+                white-space: normal;
+            }
         }
         </style>
         """,
