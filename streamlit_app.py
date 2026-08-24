@@ -632,7 +632,7 @@ def inject_css() -> None:
         @media (min-width: 761px) {
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) {
                 align-items: stretch !important;
-                min-height: 40px;
+                min-height: 34px;
                 padding: 0 !important;
                 overflow: hidden;
             }
@@ -640,14 +640,14 @@ def inject_css() -> None:
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) > div[data-testid="column"] {
                 display: flex;
                 align-items: stretch;
-                min-height: 40px;
+                min-height: 34px;
                 min-width: 0;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) div[data-testid="stMarkdownContainer"],
             div[data-testid="stHorizontalBlock"]:has(.deal-table-header-marker) div[data-testid="stMarkdownContainer"] p {
                 width: 100%;
                 height: 100%;
-                min-height: 40px;
+                min-height: 34px;
                 margin: 0 !important;
                 padding: 0 !important;
             }
@@ -656,13 +656,14 @@ def inject_css() -> None:
                 display: flex;
                 align-items: center;
                 width: 100%;
-                height: 40px;
-                min-height: 40px;
+                height: 34px;
+                min-height: 34px;
                 margin: 0 !important;
-                padding: 0 0.55rem !important;
+                padding: 0 0.45rem !important;
                 border: 0 !important;
                 border-radius: 0 !important;
                 background: transparent !important;
+                box-shadow: none !important;
                 line-height: 1.2;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"],
