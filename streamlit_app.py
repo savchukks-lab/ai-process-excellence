@@ -833,6 +833,55 @@ def inject_css() -> None:
                 white-space: normal;
             }
         }
+        @media (max-width: 600px) and (orientation: portrait) {
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) {
+                gap: 0.5rem !important;
+                height: auto !important;
+                padding-top: 0.82rem;
+                padding-bottom: 0.82rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"],
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"] {
+                height: auto !important;
+                min-height: 0 !important;
+                overflow: visible !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(n+3) {
+                display: block !important;
+                margin-bottom: 0.44rem;
+                padding-bottom: 0.02rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(11) {
+                margin-bottom: 0;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(n+3)::before {
+                line-height: 1.15;
+                margin: 0 0 0.2rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) .deal-cell,
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) .deal-cell-muted {
+                display: block;
+                height: auto !important;
+                min-height: 0 !important;
+                line-height: 1.3;
+                white-space: normal;
+                overflow-wrap: anywhere;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) div[data-testid="stMarkdownContainer"],
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) div[data-testid="stMarkdownContainer"] p {
+                height: auto !important;
+                min-height: 0 !important;
+                margin-bottom: 0 !important;
+                overflow: visible !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(2) {
+                margin-bottom: 0.12rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(2) .deal-cell {
+                white-space: normal;
+                overflow-wrap: anywhere;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
