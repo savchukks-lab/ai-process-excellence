@@ -629,6 +629,44 @@ def inject_css() -> None:
             box-shadow: none;
             background: #fbfdff;
         }
+        @media (min-width: 761px) {
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"],
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"] {
+                display: flex;
+                align-items: center;
+                min-width: 0;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) div[data-testid="stMarkdownContainer"] {
+                width: 100%;
+                background: transparent !important;
+                border: 0 !important;
+                box-shadow: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) div[data-testid="stMarkdownContainer"] p {
+                margin: 0 !important;
+                background: transparent !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) .deal-cell,
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) .deal-cell-muted {
+                display: block;
+                width: 100%;
+                background: transparent !important;
+                border: 0 !important;
+                box-shadow: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            div[data-testid="stColumn"]:has(.open-detail-button-marker) div[data-testid="stButton"] button {
+                color: #ffffff !important;
+                font-weight: 700 !important;
+            }
+            div[data-testid="stColumn"]:has(.open-detail-button-marker) div[data-testid="stButton"] button p {
+                color: #ffffff !important;
+                font-weight: 700 !important;
+            }
+        }
         .approval-progress {
             display: flex;
             flex-wrap: wrap;
@@ -4062,6 +4100,7 @@ def page_deal_list(data: dict[str, pd.DataFrame]) -> None:
         if context:
             render_inline_deal_preview(context, compact=True)
             actions = st.columns([1, 5])
+            actions[0].markdown("<span class='open-detail-button-marker'></span>", unsafe_allow_html=True)
             if actions[0].button("Open Deal Detail", type="primary", key=f"open_deal_detail_{selected_id}"):
                 navigate_to_deal_detail(selected_id, "deal request list row selection")
     else:
