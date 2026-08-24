@@ -837,24 +837,43 @@ def inject_css() -> None:
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) {
                 gap: 0.5rem !important;
                 height: auto !important;
+                min-height: unset !important;
+                max-height: none !important;
+                overflow: visible !important;
                 padding-top: 0.82rem;
                 padding-bottom: 0.82rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) *,
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) *::before,
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) *::after {
+                max-height: none !important;
+                overflow: visible !important;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"],
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"] {
                 height: auto !important;
                 min-height: 0 !important;
+                max-height: none !important;
                 overflow: visible !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"]:first-child,
+            div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"]:first-child {
+                margin-bottom: 0.08rem;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(n+3) {
                 display: block !important;
                 margin-bottom: 0.44rem;
                 padding-bottom: 0.02rem;
+                height: auto !important;
+                min-height: fit-content !important;
+                max-height: none !important;
+                overflow: visible !important;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(11) {
                 margin-bottom: 0;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div:nth-child(n+3)::before {
+                position: static !important;
                 line-height: 1.15;
                 margin: 0 0 0.2rem;
             }
@@ -863,14 +882,18 @@ def inject_css() -> None:
                 display: block;
                 height: auto !important;
                 min-height: 0 !important;
+                max-height: none !important;
                 line-height: 1.3;
                 white-space: normal;
                 overflow-wrap: anywhere;
+                overflow: visible !important;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) div[data-testid="stMarkdownContainer"],
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) div[data-testid="stMarkdownContainer"] p {
+                display: block;
                 height: auto !important;
                 min-height: 0 !important;
+                max-height: none !important;
                 margin-bottom: 0 !important;
                 overflow: visible !important;
             }
@@ -1218,7 +1241,44 @@ def money(value: float | int | None) -> str:
 def pct(value: float | int | None) -> str:
     if value is None or pd.isna(value):
         return "n/a"
-    return f"{float(value) * 100:.1f}%"
+    numeric = float(value)
+    display_value = numeric * 100 if abs(numeric) <= 1 else numeric
+    return f"{display_value:.1f}%"
+
+
+def format_percent_display(value: object) -> object:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text.lower() in {"n/a", "restricted", "margin status only", "above margin target", "below margin target"}:
+            return value
+        if text.endswith("%"):
+            return value
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return value
+    return pct(float(numeric))
+
+
+def is_percent_display_column(column: object) -> bool:
+    name = str(column).strip().lower()
+    return (
+        "%" in name
+        or "percent" in name
+        or "rebate" in name
+        or "discount" in name
+        or "target margin" in name
+        or "trigger margin" in name
+    )
+
+
+def format_percent_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    formatted = df.copy()
+    for col in formatted.columns:
+        if is_percent_display_column(col):
+            formatted[col] = formatted[col].map(format_percent_display)
+    return formatted
 
 
 ROLE_DISPLAY_RENAMES = {
@@ -1461,7 +1521,7 @@ def mask_sensitive_dataframe(df: pd.DataFrame, role: str | None = None, replacem
             continue
         if is_sensitive_field(col) and not can_view_sensitive_field(role_name, col):
             masked[col] = replacement
-    return masked
+    return format_percent_columns(masked)
 
 
 def sensitive_data_note() -> None:
