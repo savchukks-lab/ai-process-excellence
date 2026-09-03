@@ -4290,10 +4290,18 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         deal_cols[1].text_input("Region", value=region, disabled=True)
         if deal_type == "Tender Bid":
             tender_cols = st.columns(4)
-            tender_name = tender_cols[0].text_input("Tender Name", value=f"{customer_name} access tender", key="form_tender_name")
-            tender_id = tender_cols[1].text_input("Tender ID", value=f"TND-{date.today().year}-{str(customer.get('Customer ID', '000'))[-3:]}", key="form_tender_id")
-            tender_closing = tender_cols[2].date_input("Submission Deadline", value=date.today() + timedelta(days=28), key="form_tender_closing")
-            award_date = tender_cols[3].date_input("Award Date", value=date.today() + timedelta(days=60), key="form_award_date")
+            if "form_tender_name" not in st.session_state:
+                st.session_state.form_tender_name = f"{customer_name} access tender"
+            if "form_tender_id" not in st.session_state:
+                st.session_state.form_tender_id = f"TND-{date.today().year}-{str(customer.get('Customer ID', '000'))[-3:]}"
+            if "form_tender_closing" not in st.session_state:
+                st.session_state.form_tender_closing = date.today() + timedelta(days=28)
+            if "form_award_date" not in st.session_state:
+                st.session_state.form_award_date = date.today() + timedelta(days=60)
+            tender_name = tender_cols[0].text_input("Tender Name", key="form_tender_name")
+            tender_id = tender_cols[1].text_input("Tender ID", key="form_tender_id")
+            tender_closing = tender_cols[2].date_input("Submission Deadline", key="form_tender_closing")
+            award_date = tender_cols[3].date_input("Award Date", key="form_award_date")
             normalize_session_option("form_tender_mechanism", TENDER_MECHANISM_OPTIONS, "Unknown")
             tender_mechanism = st.selectbox("Tender Mechanism", TENDER_MECHANISM_OPTIONS, key="form_tender_mechanism")
         else:
@@ -4314,9 +4322,15 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
             st.session_state.form_manager = hierarchy_manager
         sales_owner = owner_cols[0].text_input("Sales Owner", value=st.session_state.form_owner, disabled=True)
         sales_manager = owner_cols[1].text_input("Sales Manager", value=st.session_state.get("form_manager", ""), disabled=True)
-        target_close = owner_cols[2].date_input("Commercial Decision Deadline", value=date.today() + timedelta(days=45), key="form_close")
-        effective_date = owner_cols[3].date_input("Requested Delivery Start", value=date.today() + timedelta(days=60), key="form_effective")
-        requested_delivery_end = st.date_input("Requested Delivery End", value=date.today() + timedelta(days=120), key="form_delivery_end")
+        if "form_close" not in st.session_state:
+            st.session_state.form_close = date.today() + timedelta(days=45)
+        if "form_effective" not in st.session_state:
+            st.session_state.form_effective = date.today() + timedelta(days=60)
+        if "form_delivery_end" not in st.session_state:
+            st.session_state.form_delivery_end = date.today() + timedelta(days=120)
+        target_close = owner_cols[2].date_input("Commercial Decision Deadline", key="form_close")
+        effective_date = owner_cols[3].date_input("Requested Delivery Start", key="form_effective")
+        requested_delivery_end = st.date_input("Requested Delivery End", key="form_delivery_end")
         st.divider()
         cols = st.columns(4)
         cols[0].metric("Customer Type", customer_type(customer))
@@ -4339,7 +4353,9 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         normalize_session_option("form_billing", BILLING_FREQUENCY_OPTIONS, "Annual")
         payment_terms = c1.selectbox("Payment Terms", PAYMENT_TERMS_OPTIONS, key="form_terms")
         c2.markdown("<div class='system-context-note'>Standard term; override only when needed.</div>", unsafe_allow_html=True)
-        contract_months = c2.number_input("Contract Duration Months", min_value=1, max_value=72, value=24, step=1, key="form_contract")
+        if "form_contract" not in st.session_state:
+            st.session_state.form_contract = 24
+        contract_months = c2.number_input("Contract Duration Months", min_value=1, max_value=72, step=1, key="form_contract")
         c3.markdown("<div class='system-context-note'>Standard billing; override only when needed.</div>", unsafe_allow_html=True)
         billing = c3.selectbox("Billing Frequency", BILLING_FREQUENCY_OPTIONS, key="form_billing")
         special_terms = st.checkbox("Special terms requested", key="form_special")
@@ -4361,9 +4377,15 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
         )
         if visibility == "Public":
             pub_cols = st.columns(2)
-            publication_source = pub_cols[0].text_input("Publication source", value="National tender portal", key="form_publication_source")
-            publication_url = pub_cols[1].text_input("Publication URL", value="https://example-tender-portal.local/opportunities", key="form_publication_url")
-            access_description = st.text_area("Access description", value="Publicly accessible tender notice with award criteria and bid submission instructions.", key="form_access_description")
+            if "form_publication_source" not in st.session_state:
+                st.session_state.form_publication_source = "National tender portal"
+            if "form_publication_url" not in st.session_state:
+                st.session_state.form_publication_url = "https://example-tender-portal.local/opportunities"
+            if "form_access_description" not in st.session_state:
+                st.session_state.form_access_description = "Publicly accessible tender notice with award criteria and bid submission instructions."
+            publication_source = pub_cols[0].text_input("Publication source", key="form_publication_source")
+            publication_url = pub_cols[1].text_input("Publication URL", key="form_publication_url")
+            access_description = st.text_area("Access description", key="form_access_description")
         else:
             publication_source = st.session_state.get("form_publication_source", "")
             publication_url = st.session_state.get("form_publication_url", "")
@@ -4511,8 +4533,10 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 else st.session_state.get("form_competitor", "")
             )
         with market_right:
+            if "form_expected_bid_range" not in st.session_state:
+                st.session_state.form_expected_bid_range = "8% to 16% below list"
             expected_bid_range = (
-                st.text_input("Expected bid range", value="8% to 16% below list", key="form_expected_bid_range")
+                st.text_input("Expected bid range", key="form_expected_bid_range")
                 if show_competitor_detail
                 else st.session_state.get("form_expected_bid_range", "")
             )
@@ -4522,7 +4546,9 @@ def page_new_deal(data: dict[str, pd.DataFrame]) -> None:
                 CUSTOMER_BIDDING_STRATEGY_OPTIONS,
                 key="form_customer_bidding_strategy",
             )
-            decision_deadline = st.date_input("Customer Decision Deadline", value=date.today() + timedelta(days=30), key="form_deadline")
+            if "form_deadline" not in st.session_state:
+                st.session_state.form_deadline = date.today() + timedelta(days=30)
+            decision_deadline = st.date_input("Customer Decision Deadline", key="form_deadline")
             expansion_impact = st.text_area("Renewal or Expansion Impact", height=100, key="form_expansion")
 
         st.markdown("**Market summary**")
