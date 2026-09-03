@@ -247,7 +247,7 @@ ROLE_VISIBLE_SENSITIVE_PATTERNS = {
 
 
 st.set_page_config(
-    page_title="Commercial Deal Desk Copilot",
+    page_title="AI Decision Platform",
     page_icon="",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -532,6 +532,79 @@ def inject_css() -> None:
         }
         .home-section-spacer {
             height: 0.75rem;
+        }
+        .platform-hero {
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid #d7dee8;
+            border-radius: 14px;
+            padding: 1.15rem 1.25rem;
+            margin: 0.65rem 0 1.1rem;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+        }
+        .platform-eyebrow {
+            color: #16805d;
+            font-size: 0.78rem;
+            font-weight: 720;
+            margin-bottom: 0.2rem;
+        }
+        .platform-title {
+            color: #0f172a;
+            font-size: 1.7rem;
+            font-weight: 780;
+            line-height: 1.15;
+            margin: 0;
+        }
+        .platform-subtitle {
+            color: #64748b;
+            font-size: 0.96rem;
+            margin-top: 0.32rem;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) {
+            min-height: 15rem;
+            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):hover {
+            transform: translateY(-1px);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-available) {
+            border-color: #9fcfbe !important;
+        }
+        .module-card-title {
+            color: #0f172a;
+            font-size: 1.04rem;
+            font-weight: 740;
+            margin-bottom: 0.28rem;
+        }
+        .module-card-description {
+            color: #334155;
+            font-size: 0.9rem;
+            min-height: 2.6rem;
+            line-height: 1.42;
+        }
+        .module-card-process {
+            color: #64748b;
+            font-size: 0.84rem;
+            margin: 0.65rem 0;
+        }
+        .module-status {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 0.22rem 0.55rem;
+            font-size: 0.74rem;
+            font-weight: 720;
+            margin-bottom: 0.72rem;
+        }
+        .module-status-available {
+            color: #0f513f;
+            background: #e8f5ef;
+            border: 1px solid #b7dfce;
+        }
+        .module-status-soon {
+            color: #475569;
+            background: #f1f5f9;
+            border: 1px solid #d7dee8;
         }
         .enterprise-section-title {
             color: #0f172a;
@@ -840,6 +913,10 @@ def inject_css() -> None:
             [data-testid="stColumn"]:has(.nav-governance-marker),
             [data-testid="column"]:has(.nav-governance-marker) {
                 order: 4;
+            }
+            [data-testid="stColumn"]:has(.nav-platform-marker),
+            [data-testid="column"]:has(.nav-platform-marker) {
+                order: 5;
             }
             h1 {
                 font-size: 1.32rem !important;
@@ -1168,6 +1245,7 @@ def load_demo_data() -> dict[str, pd.DataFrame]:
 
 
 def init_state() -> None:
+    st.session_state.setdefault("current_module", "platform_home")
     st.session_state.setdefault("persona", "Maya Chen")
     st.session_state.setdefault("role", PERSONAS[st.session_state.persona])
     st.session_state.setdefault("runtime_deals", [])
@@ -3970,6 +4048,75 @@ def render_home_hero() -> None:
     )
 
 
+def page_platform_home() -> None:
+    st.markdown(
+        """
+        <div class="platform-hero">
+            <div class="platform-eyebrow">Enterprise AI Decision Workflows</div>
+            <div class="platform-title">AI Decision Platform</div>
+            <div class="platform-subtitle">Enterprise decision workflows powered by AI</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    card_specs = [
+        {
+            "title": "Deal Approval",
+            "description": "Commercial pricing and deal governance",
+            "process": "Prepare -> Enrich -> Review -> Decide",
+            "status": "Available",
+            "status_class": "module-status-available",
+            "marker": "module-card-available",
+            "button": "Open Deal Approval",
+            "enabled": True,
+        },
+        {
+            "title": "Launch Sandbox",
+            "description": "Cross-functional launch planning, readiness and decision preparation",
+            "process": "Collaborate -> Validate -> Build Case -> Decide",
+            "status": "Coming soon",
+            "status_class": "module-status-soon",
+            "marker": "",
+            "button": "Coming soon",
+            "enabled": False,
+        },
+        {
+            "title": "Investment Case",
+            "description": "CAPEX and strategic investment evaluation",
+            "process": "Model -> Stress-test -> Review -> Invest",
+            "status": "Coming soon",
+            "status_class": "module-status-soon",
+            "marker": "",
+            "button": "Coming soon",
+            "enabled": False,
+        },
+    ]
+
+    cols = st.columns(3)
+    for col, spec in zip(cols, card_specs):
+        with col.container(border=True):
+            markers = "module-card-marker"
+            if spec["marker"]:
+                markers = f"{markers} {spec['marker']}"
+            st.markdown(f"<span class='{markers}'></span>", unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div class="module-card-title">{spec["title"]}</div>
+                <div class="module-card-description">{spec["description"]}</div>
+                <div class="module-card-process">{spec["process"]}</div>
+                <div class="module-status {spec["status_class"]}">{spec["status"]}</div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button(spec["button"], key=f"module_card_{spec['title'].lower().replace(' ', '_')}", disabled=not spec["enabled"]):
+                st.session_state.current_module = "deal"
+                st.session_state.current_page = "Deal Request List"
+                st.session_state.selected_deal_id = None
+                st.session_state.deal_list_selected_deal_id = None
+                st.rerun()
+
+
 def deal_cell(value: object, muted: bool = False, limit: int | None = None) -> str:
     text = str(value or "")
     if limit:
@@ -6308,6 +6455,15 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
                 confirm_reset = st.checkbox("I understand and want to reset this demo session.", key="admin_confirm_reset")
                 if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
                     reset_demo_session()
+        nav_cols[4].markdown("<span class='nav-marker nav-platform-marker'></span>", unsafe_allow_html=True)
+        if nav_cols[4].button("Platform Home", key="top_navigation_platform_home"):
+            clear_deal_editor_state()
+            st.session_state.selected_deal_id = None
+            st.session_state.deal_list_selected_deal_id = None
+            st.session_state.approval_queue_selected_deal_id = None
+            st.session_state.current_page = "Deal Request List"
+            st.session_state.current_module = "platform_home"
+            st.rerun()
     return st.session_state.current_page
 
 
@@ -6322,6 +6478,19 @@ def main() -> None:
     data = load_demo_data()
     log_runtime_checkpoint("after demo data load")
     seed_demo_workflow_state(data)
+    current_module = st.session_state.get("current_module", "platform_home")
+    if current_module == "platform_home":
+        page_platform_home()
+        return
+    if current_module == "launch":
+        render_header("Launch Sandbox", "Cross-functional launch planning is coming soon.")
+        st.info("Launch Sandbox will be added in a future module release.")
+        return
+    if current_module == "investment":
+        render_header("Investment Case", "Strategic investment evaluation is coming soon.")
+        st.info("Investment Case will be added in a future module release.")
+        return
+
     page = top_navigation(data)
     if page == "Deal Request List":
         page_deal_list(data)
