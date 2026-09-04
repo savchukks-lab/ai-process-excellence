@@ -1277,6 +1277,8 @@ def init_state() -> None:
     st.session_state.setdefault("role_selector_version", 0)
     st.session_state.setdefault("pending_role_switch", None)
     st.session_state.setdefault("current_page", "Deal Request List")
+    st.session_state.setdefault("launch_page", "Launch Sandbox Home")
+    st.session_state.setdefault("selected_launch_case_id", None)
 
 
 def add_audit(
@@ -4070,16 +4072,18 @@ def page_platform_home() -> None:
             "marker": "module-card-available",
             "button": "Open Deal Approval",
             "enabled": True,
+            "module": "deal",
         },
         {
             "title": "Launch Sandbox",
             "description": "Cross-functional launch planning, readiness and decision preparation",
             "process": "Collaborate -> Validate -> Build Case -> Decide",
-            "status": "Coming soon",
-            "status_class": "module-status-soon",
-            "marker": "",
-            "button": "Coming soon",
-            "enabled": False,
+            "status": "Available",
+            "status_class": "module-status-available",
+            "marker": "module-card-available",
+            "button": "Open Launch Sandbox",
+            "enabled": True,
+            "module": "launch",
         },
         {
             "title": "Investment Case",
@@ -4090,6 +4094,7 @@ def page_platform_home() -> None:
             "marker": "",
             "button": "Coming soon",
             "enabled": False,
+            "module": "investment",
         },
     ]
 
@@ -4110,11 +4115,300 @@ def page_platform_home() -> None:
                 unsafe_allow_html=True,
             )
             if st.button(spec["button"], key=f"module_card_{spec['title'].lower().replace(' ', '_')}", disabled=not spec["enabled"]):
-                st.session_state.current_module = "deal"
+                st.session_state.current_module = spec["module"]
                 st.session_state.current_page = "Deal Request List"
                 st.session_state.selected_deal_id = None
                 st.session_state.deal_list_selected_deal_id = None
+                st.session_state.launch_page = "Launch Sandbox Home"
+                st.session_state.selected_launch_case_id = None
                 st.rerun()
+
+
+def launch_product(products: pd.DataFrame, product_name: str) -> dict[str, object]:
+    if products.empty or "Product Name" not in products.columns:
+        return {"Product Name": product_name, "SKU": ""}
+    match = products[products["Product Name"].astype(str).eq(product_name)]
+    if match.empty:
+        match = products.head(1)
+    return match.iloc[0].to_dict() if not match.empty else {"Product Name": product_name, "SKU": ""}
+
+
+def launch_cases(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    products = data.get("products", pd.DataFrame())
+    rare_product = launch_product(products, "Product Epsilon")
+    broad_product = launch_product(products, "Product Delta")
+    rows = [
+        {
+            "Launch Case ID": "LAUNCH-1001",
+            "Launch Name": "Product Epsilon Specialty Access Launch",
+            "Product": rare_product.get("Product Name", "Product Epsilon"),
+            "SKU(s)": rare_product.get("SKU", "RX-RARE-10"),
+            "Market / Region": "Region A",
+            "Launch Coordinator": "Maya Chen",
+            "Planned Launch Date": "2027-03-15",
+            "Access Archetype": "Reimbursement Dependent",
+            "Case Status": "Planning / Inputs in Progress",
+            "Created Date": "2026-08-10",
+            "Last Updated": "2026-09-02",
+            "Overall Readiness": "58%",
+            "Critical Open Issues": "Coverage timing and eligible population assumptions need validation.",
+        },
+        {
+            "Launch Case ID": "LAUNCH-1002",
+            "Launch Name": "Product Delta Broad Access Expansion",
+            "Product": broad_product.get("Product Name", "Product Delta"),
+            "SKU(s)": broad_product.get("SKU", "RX-CARD-50"),
+            "Market / Region": "Region B",
+            "Launch Coordinator": "Ethan Brooks",
+            "Planned Launch Date": "2027-01-20",
+            "Access Archetype": "Predominantly OOP / Broad Access",
+            "Case Status": "Readiness Review",
+            "Created Date": "2026-08-18",
+            "Last Updated": "2026-09-03",
+            "Overall Readiness": "74%",
+            "Critical Open Issues": "Sales coverage ramp and launch stock allocation need final alignment.",
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def launch_workstreams(case_id: str) -> pd.DataFrame:
+    base = {
+        "LAUNCH-1001": [
+            ("Marketing", "Maya Chen", "65%", "2 awaiting validation", 3, "2026-09-02"),
+            ("Sales", "Jordan Blake", "45%", "In progress", 2, "2026-09-01"),
+            ("Medical", "Priya Nair", "70%", "Clinical assumptions under review", 1, "2026-09-02"),
+            ("Market Access", "Priya Nair", "40%", "Coverage timing open", 3, "2026-09-03"),
+            ("Regulatory", "Sarah Morgan", "80%", "1 open issue", 1, "2026-09-01"),
+            ("Supply / Operations", "Elena Rossi", "60%", "In progress", 2, "2026-09-02"),
+            ("Finance", "Daniel Ortiz", "35%", "Waiting for inputs", 2, "2026-09-03"),
+        ],
+        "LAUNCH-1002": [
+            ("Marketing", "Ethan Brooks", "80%", "Aligned", 0, "2026-09-03"),
+            ("Sales", "Jordan Blake", "70%", "In progress", 1, "2026-09-02"),
+            ("Medical", "Priya Nair", "90%", "Aligned", 0, "2026-09-01"),
+            ("Market Access", "Priya Nair", "65%", "OOP access assumptions in review", 1, "2026-09-03"),
+            ("Regulatory", "Sarah Morgan", "95%", "Aligned", 0, "2026-09-02"),
+            ("Supply / Operations", "Elena Rossi", "72%", "Launch stock plan in progress", 1, "2026-09-02"),
+            ("Finance", "Daniel Ortiz", "55%", "Scenario assumptions pending", 1, "2026-09-03"),
+        ],
+    }
+    rows = base.get(case_id, base["LAUNCH-1001"])
+    return pd.DataFrame(rows, columns=["Workstream", "Owner", "Progress", "Validation Status", "Open Issues", "Last Updated"])
+
+
+def launch_responsibility_matrix() -> pd.DataFrame:
+    rows = [
+        ("Epidemiology", "Marketing", "Medical"),
+        ("Diagnosis Rate", "Marketing", "Medical"),
+        ("Eligible Population", "Medical", "Marketing"),
+        ("Market Share", "Marketing", "Sales"),
+        ("Patient Volume", "Marketing", "Sales"),
+        ("Sales Force HC", "Sales", "Marketing, Finance"),
+        ("Access Rate", "Market Access", "Marketing, Finance"),
+        ("Covered Population", "Market Access", "Medical, Marketing"),
+        ("Target Price", "Market Access", "Finance"),
+        ("COGS", "Finance", "Supply / Operations"),
+        ("Supply Capacity", "Supply / Operations", "Sales"),
+    ]
+    return pd.DataFrame(rows, columns=["Assumption / Input", "Owner", "Required Validators"])
+
+
+def launch_assumptions(case_id: str) -> pd.DataFrame:
+    rows = [
+        ("ASM-001", case_id, "Marketing", "Market Opportunity", "Clinically Addressable Population", "TBD", "Patients", "Y1-Y5", "Marketing", "Medical", "Market research", "Patient flow to be validated.", "Medium", "Draft", "", "2026-09-03"),
+        ("ASM-002", case_id, "Market Access", "Coverage / Reimbursement", "Commercially Accessible Population", "TBD", "Patients", "Y1-Y5", "Market Access", "Medical, Marketing, Finance", "Access plan", "Must remain distinct from clinical eligibility.", "Medium", "Not Started", "", "2026-09-03"),
+        ("ASM-003", case_id, "Market Access", "Access Ramp", "Coverage Rate", "TBD", "%", "Y1-Y5", "Market Access", "Marketing, Finance", "Access scenario", "Supports future multi-year coverage ramp.", "Medium", "Draft", "", "2026-09-03"),
+        ("ASM-004", case_id, "Marketing", "Adoption / Market Share", "Product Share", "TBD", "%", "Y1-Y5", "Marketing", "Sales", "Launch plan", "Adoption should be checked against commercially accessible patients.", "Medium", "Submitted for Validation", "", "2026-09-03"),
+        ("ASM-005", case_id, "Finance", "P&L", "Net Price", "TBD", "Local currency", "Y1-Y5", "Finance", "Market Access", "Pricing reference", "Future model should connect treated patients, units, net price and revenue.", "Medium", "Not Started", "", "2026-09-03"),
+        ("ASM-006", case_id, "Supply / Operations", "Supply Capacity", "Launch Supply Capacity", "TBD", "Units", "Y1-Y5", "Supply / Operations", "Sales", "Supply plan", "Future constraint check compares capacity with unit demand.", "Medium", "Draft", "", "2026-09-03"),
+    ]
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "Assumption ID",
+            "Launch Case ID",
+            "Workstream",
+            "Category",
+            "Assumption Name",
+            "Value",
+            "Unit",
+            "Period / Year",
+            "Owner",
+            "Validators",
+            "Source",
+            "Rationale",
+            "Confidence",
+            "Validation Status",
+            "Comments",
+            "Last Updated",
+        ],
+    )
+
+
+def launch_top_navigation() -> None:
+    nav_cols = st.columns([0.8, 1.1, 1.1, 1.8])
+    if nav_cols[0].button("Platform Home", key="launch_platform_home"):
+        st.session_state.current_module = "platform_home"
+        st.session_state.launch_page = "Launch Sandbox Home"
+        st.session_state.selected_launch_case_id = None
+        st.rerun()
+    if nav_cols[1].button("Launch Sandbox Home", key="launch_home"):
+        st.session_state.launch_page = "Launch Sandbox Home"
+        st.session_state.selected_launch_case_id = None
+        st.rerun()
+    if nav_cols[2].button("New Launch Case", key="launch_new_case"):
+        st.session_state.launch_page = "New Launch Case"
+        st.session_state.selected_launch_case_id = None
+        st.rerun()
+    persona_options = list(PERSONAS.keys())
+    selected_persona = nav_cols[3].selectbox(
+        "Current User",
+        persona_options,
+        index=persona_options.index(current_persona()),
+        key=f"launch_role_selector_{st.session_state.role_selector_version}",
+        format_func=lambda name: f"{name} | {display_role_name(PERSONAS[name])}",
+    )
+    if selected_persona != current_persona():
+        st.session_state.persona = selected_persona
+        st.session_state.role = PERSONAS[selected_persona]
+        st.session_state.role_selector_version += 1
+        st.rerun()
+
+
+def launch_case_overview_card(case: pd.Series) -> None:
+    st.markdown(
+        f"""
+        <div class="home-hero">
+            <div>
+                <div class="home-hero-eyebrow">Launch Sandbox</div>
+                <div class="home-hero-title">{case.get("Launch Name", "")}</div>
+                <div class="home-hero-subtitle">{case.get("Launch Case ID", "")} • {case.get("Product", "")} • {case.get("Market / Region", "")}</div>
+            </div>
+            <div class="home-hero-meta">{case.get("Access Archetype", "")}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(5)
+    cols[0].metric("Case Status", case.get("Case Status", ""))
+    cols[1].metric("Overall Readiness", case.get("Overall Readiness", ""))
+    cols[2].metric("Planned Launch Date", case.get("Planned Launch Date", ""))
+    cols[3].metric("Coordinator", case.get("Launch Coordinator", ""))
+    cols[4].metric("Last Updated", case.get("Last Updated", ""))
+
+
+def page_launch_home(data: dict[str, pd.DataFrame]) -> None:
+    launch_top_navigation()
+    render_header("Launch Sandbox", "Cross-functional launch planning, alignment and decision preparation.")
+    if st.button("New Launch Case", key="launch_home_new_case"):
+        st.session_state.launch_page = "New Launch Case"
+        st.rerun()
+
+    cases = launch_cases(data)
+    st.markdown("<div class='enterprise-section-title'>Launch Cases</div>", unsafe_allow_html=True)
+    st.dataframe(cases[["Launch Case ID", "Launch Name", "Product", "Market / Region", "Access Archetype", "Case Status", "Planned Launch Date", "Overall Readiness"]], use_container_width=True, hide_index=True)
+
+    selected_case = st.selectbox("Select Launch Case", cases["Launch Case ID"].tolist(), format_func=lambda case_id: f"{case_id} • {cases.loc[cases['Launch Case ID'].eq(case_id), 'Launch Name'].iloc[0]}")
+    if st.button("Open Launch Case", key="open_launch_case"):
+        st.session_state.selected_launch_case_id = selected_case
+        st.session_state.launch_page = "Launch Case"
+        st.rerun()
+
+
+def page_launch_new_case(data: dict[str, pd.DataFrame]) -> None:
+    launch_top_navigation()
+    render_header("New Launch Case", "Launch case creation will be enabled in a future skeleton increment.")
+    st.info("This placeholder reserves the future intake flow. It does not create records yet.")
+    products = data.get("products", pd.DataFrame())
+    product_options = products["Product Name"].dropna().astype(str).unique().tolist() if "Product Name" in products.columns else []
+    cols = st.columns(3)
+    cols[0].text_input("Launch Name", value="", disabled=True)
+    cols[1].selectbox("Product", product_options or ["No products available"], disabled=True)
+    cols[2].selectbox("Access Archetype", ["Reimbursement Dependent", "Mixed Access", "Predominantly OOP / Broad Access"], disabled=True)
+
+
+def render_launch_workstream_sections(workstream: str) -> None:
+    sections = {
+        "Marketing": ["Market Opportunity", "Patient Flow", "Addressable Population", "Adoption / Market Share", "Competitive Landscape"],
+        "Sales": ["Target Accounts / Centers", "Sales Force", "Coverage", "Reach / Frequency", "Commercial Ramp-up"],
+        "Medical": ["Treatment Pathway", "Patient Eligibility", "Severity / Segmentation", "Line of Therapy", "Dosing / Duration", "Compliance / Persistence", "Evidence Readiness"],
+        "Market Access": ["Access Pathway", "Coverage / Reimbursement", "Access Timing", "Covered Population", "Eligibility Restrictions", "Geographic / Account Coverage", "Patient Co-pay / OOP", "Access Ramp", "Target Price", "Net Price", "Access Scenarios"],
+        "Regulatory": ["Submission", "Approval Timing", "Expected Label", "Indications", "Regulatory Milestones", "Launch-enabling Dates", "Regulatory Risks"],
+        "Supply / Operations": ["Launch Stock", "Lead Time", "Capacity", "Inventory", "Shelf Life", "Supply Constraints", "Supply Ramp-up"],
+        "Finance": ["COGS", "OPEX", "Launch Investment", "P&L", "Scenario Analysis", "Financial Validation"],
+    }
+    st.markdown(f"<div class='enterprise-section-title'>{workstream}</div>", unsafe_allow_html=True)
+    cols = st.columns(2)
+    for index, section in enumerate(sections.get(workstream, [])):
+        with cols[index % 2].container(border=True):
+            st.markdown(f"**{section}**")
+            st.caption("Structured placeholder for future launch assumptions and validation.")
+
+
+def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
+    launch_top_navigation()
+    cases = launch_cases(data)
+    selected_id = st.session_state.get("selected_launch_case_id")
+    if not selected_id or selected_id not in set(cases["Launch Case ID"]):
+        st.warning("Select a launch case to continue.")
+        st.session_state.launch_page = "Launch Sandbox Home"
+        page_launch_home(data)
+        return
+
+    case = cases[cases["Launch Case ID"].eq(selected_id)].iloc[0]
+    launch_case_overview_card(case)
+    tabs = st.tabs(["Overview", "Workstreams", "Assumptions", "Readiness", "Decision Case"])
+
+    workstreams = launch_workstreams(str(selected_id))
+    assumptions = launch_assumptions(str(selected_id))
+    with tabs[0]:
+        st.markdown("<div class='enterprise-section-title'>Integrated Launch Model</div>", unsafe_allow_html=True)
+        st.write("Epidemiology -> Clinically Addressable Population -> Accessibility / Coverage -> Commercially Accessible Population -> Adoption / Market Share -> Treated Patients -> Utilization -> Units -> Net Price -> Revenue -> COGS / OPEX -> Operating Profit")
+        cols = st.columns(2)
+        with cols[0].container(border=True):
+            st.markdown("**Clinically Addressable Population**")
+            st.caption("Future patient-flow output owned by Marketing and Medical assumptions.")
+        with cols[1].container(border=True):
+            st.markdown("**Commercially Accessible Population**")
+            st.caption("Future access-adjusted population driven by coverage, reimbursement, affordability and access timing.")
+        st.markdown("<div class='enterprise-section-title'>Workstream Progress</div>", unsafe_allow_html=True)
+        st.dataframe(workstreams, use_container_width=True, hide_index=True)
+        st.markdown("<div class='enterprise-section-title'>Critical Open Issues</div>", unsafe_allow_html=True)
+        st.info(str(case.get("Critical Open Issues", "No critical issues recorded.")))
+
+    with tabs[1]:
+        selected_workstream = st.selectbox("Workstream", workstreams["Workstream"].tolist(), key=f"launch_workstream_{selected_id}")
+        render_launch_workstream_sections(selected_workstream)
+
+    with tabs[2]:
+        st.markdown("<div class='enterprise-section-title'>Shared Assumption Register</div>", unsafe_allow_html=True)
+        st.dataframe(assumptions, use_container_width=True, hide_index=True)
+        st.markdown("<div class='enterprise-section-title'>Responsibility Matrix</div>", unsafe_allow_html=True)
+        st.dataframe(launch_responsibility_matrix(), use_container_width=True, hide_index=True)
+        st.caption("Each assumption has one accountable owner and one or more required validators. Future alignment workflow will support confirm or request-change decisions with comments.")
+
+    with tabs[3]:
+        st.markdown("<div class='enterprise-section-title'>Readiness Placeholder</div>", unsafe_allow_html=True)
+        cols = st.columns(3)
+        cols[0].metric("Completeness", "Skeleton")
+        cols[1].metric("Alignment", "Not scored")
+        cols[2].metric("Consistency Checks", "Planned")
+        st.info("Future readiness will combine completeness, cross-functional alignment and consistency checks across access timing, adoption, supply and finance assumptions.")
+
+    with tabs[4]:
+        st.markdown("<div class='enterprise-section-title'>Decision Case Placeholder</div>", unsafe_allow_html=True)
+        st.info("Future Generate Decision Case workflow will consolidate validated launch assumptions into an executive decision package. PowerPoint generation is not implemented in this skeleton.")
+
+
+def page_launch_sandbox(data: dict[str, pd.DataFrame]) -> None:
+    page = st.session_state.get("launch_page", "Launch Sandbox Home")
+    if page == "Launch Case":
+        page_launch_case(data)
+    elif page == "New Launch Case":
+        page_launch_new_case(data)
+    else:
+        page_launch_home(data)
 
 
 def deal_cell(value: object, muted: bool = False, limit: int | None = None) -> str:
@@ -6483,8 +6777,7 @@ def main() -> None:
         page_platform_home()
         return
     if current_module == "launch":
-        render_header("Launch Sandbox", "Cross-functional launch planning is coming soon.")
-        st.info("Launch Sandbox will be added in a future module release.")
+        page_launch_sandbox(data)
         return
     if current_module == "investment":
         render_header("Investment Case", "Strategic investment evaluation is coming soon.")
