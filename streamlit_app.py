@@ -4300,9 +4300,9 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
                 "Supply / Operations": {"FTE": launch_year_values(0.5), "Average Cost per FTE": 130_000},
             },
             "projects": [
-                {"Project / Initiative Name": "Account conversion campaign", "Function": "Marketing", "Category": "One-off Launch OPEX", "Y1": 420_000, "Y2": 260_000, "Y3": 160_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support listing conversion and broad awareness."},
-                {"Project / Initiative Name": "Field enablement and coverage setup", "Function": "Sales", "Category": "Recurring OPEX", "Y1": 280_000, "Y2": 220_000, "Y3": 180_000, "Y4": 160_000, "Y5": 160_000, "Rationale / Business Need": "Prepare target account coverage and launch execution."},
-                {"Project / Initiative Name": "Access affordability evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Y1": 180_000, "Y2": 120_000, "Y3": 80_000, "Y4": 60_000, "Y5": 60_000, "Rationale / Business Need": "Support OOP affordability and payer discussions."},
+                {"Project / Initiative Name": "Account conversion campaign", "Function": "Marketing", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y5", "Owner": "Marketing", "Finance Validation Status": "Draft", "Y1": 420_000, "Y2": 260_000, "Y3": 160_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support listing conversion and broad awareness."},
+                {"Project / Initiative Name": "Field enablement and coverage setup", "Function": "Sales", "Category": "Recurring OPEX", "Start / End": "Y1-Y5", "Owner": "Sales", "Finance Validation Status": "Draft", "Y1": 280_000, "Y2": 220_000, "Y3": 180_000, "Y4": 160_000, "Y5": 160_000, "Rationale / Business Need": "Prepare target account coverage and launch execution."},
+                {"Project / Initiative Name": "Access affordability evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y5", "Owner": "Market Access", "Finance Validation Status": "Draft", "Y1": 180_000, "Y2": 120_000, "Y3": 80_000, "Y4": 60_000, "Y5": 60_000, "Rationale / Business Need": "Support OOP affordability and payer discussions."},
             ],
         }
     return {
@@ -4333,9 +4333,9 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
             "Supply / Operations": {"FTE": launch_year_values(0.7), "Average Cost per FTE": 135_000},
         },
         "projects": [
-            {"Project / Initiative Name": "Reimbursement dossier and access evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Y1": 650_000, "Y2": 340_000, "Y3": 180_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support payer assessment and reimbursement milestone."},
-            {"Project / Initiative Name": "Specialist education program", "Function": "Medical", "Category": "Recurring OPEX", "Y1": 420_000, "Y2": 360_000, "Y3": 300_000, "Y4": 240_000, "Y5": 220_000, "Rationale / Business Need": "Prepare clinical pathway and evidence readiness."},
-            {"Project / Initiative Name": "Launch supply readiness", "Function": "Supply / Operations", "Category": "Inventory Build", "Y1": 500_000, "Y2": 250_000, "Y3": 0, "Y4": 0, "Y5": 0, "Rationale / Business Need": "Initial inventory build displayed separately from operating profit."},
+            {"Project / Initiative Name": "Reimbursement dossier and access evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y5", "Owner": "Market Access", "Finance Validation Status": "Draft", "Y1": 650_000, "Y2": 340_000, "Y3": 180_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support payer assessment and reimbursement milestone."},
+            {"Project / Initiative Name": "Specialist education program", "Function": "Medical", "Category": "Recurring OPEX", "Start / End": "Y1-Y5", "Owner": "Medical", "Finance Validation Status": "Draft", "Y1": 420_000, "Y2": 360_000, "Y3": 300_000, "Y4": 240_000, "Y5": 220_000, "Rationale / Business Need": "Prepare clinical pathway and evidence readiness."},
+            {"Project / Initiative Name": "Launch supply readiness", "Function": "Supply / Operations", "Category": "Inventory Build", "Start / End": "Y1-Y2", "Owner": "Supply / Operations", "Finance Validation Status": "Draft", "Y1": 500_000, "Y2": 250_000, "Y3": 0, "Y4": 0, "Y5": 0, "Rationale / Business Need": "Initial inventory build displayed separately from operating profit."},
         ],
     }
 
@@ -4347,7 +4347,16 @@ def launch_flow_state_key(case_id: str) -> str:
 def get_launch_patient_flow(case_id: str, default_flow: list[dict[str, object]]) -> list[dict[str, object]]:
     key = launch_flow_state_key(case_id)
     if key not in st.session_state:
-        st.session_state[key] = [dict(row) for row in default_flow]
+        prepared_rows = []
+        for row in default_flow:
+            prepared = dict(row)
+            prepared.setdefault("Source Type", "Internal Data")
+            prepared.setdefault("Source", "Launch planning assumption")
+            prepared.setdefault("Rationale / Comment", "")
+            prepared.setdefault("Confidence", "Medium")
+            prepared.setdefault("Validation Status", "Draft")
+            prepared_rows.append(prepared)
+        st.session_state[key] = prepared_rows
     return [dict(row) for row in st.session_state[key]]
 
 
@@ -4358,6 +4367,13 @@ def set_launch_patient_flow(case_id: str, rows: list[dict[str, object]]) -> None
 def calculate_patient_flow(flow_rows: list[dict[str, object]], scenario_multiplier: float) -> pd.DataFrame:
     current = 0.0
     records = []
+    calculated_labels = {
+        "Prevalence / Incidence": "Disease Population",
+        "Diagnosis Rate": "Diagnosed Patients",
+        "Relevant Segment / Severity": "Relevant Segment Patients",
+        "Relevant Line of Therapy": "Relevant Line of Therapy Patients",
+        "Treatment Eligibility": "Clinically Addressable Patients",
+    }
     for row in flow_rows:
         step = str(row.get("Step", "")).strip() or "Custom Step"
         input_type = str(row.get("Input Type", "percentage conversion")).strip()
@@ -4380,6 +4396,20 @@ def calculate_patient_flow(flow_rows: list[dict[str, object]], scenario_multipli
                 "Optional": bool(row.get("Optional", False)),
             }
         )
+        if input_type != "absolute patients":
+            records[-1]["Output Patients"] = None
+            records.append(
+                {
+                    "Step": calculated_labels.get(step, f"{step} Output"),
+                    "Input Type": "calculated output",
+                    "Assumption Value": None,
+                    "Output Patients": round(current),
+                    "Input / Calculated": "CALCULATED",
+                    "Owner": "System",
+                    "Validators": "",
+                    "Optional": bool(row.get("Optional", False)),
+                }
+            )
     return pd.DataFrame(records)
 
 
@@ -4401,6 +4431,30 @@ def launch_year_from_case(case: pd.Series) -> int:
     if pd.isna(planned):
         return date.today().year + 1
     return int(planned.year)
+
+
+def launch_scenario_adjustments(inputs: dict[str, object], scenario: str) -> dict[str, float]:
+    defaults = {
+        "Downside": {"Population": 0.85, "Access Rate": 0.90, "Market Share": 0.85, "Net Price": 0.95, "COGS": 1.05, "Timing Shift Days": 180},
+        "Base": {"Population": 1.0, "Access Rate": 1.0, "Market Share": 1.0, "Net Price": 1.0, "COGS": 1.0, "Timing Shift Days": 0},
+        "Upside": {"Population": 1.08, "Access Rate": 1.05, "Market Share": 1.12, "Net Price": 1.03, "COGS": 0.98, "Timing Shift Days": -60},
+    }
+    configured = inputs.get("scenario_adjustments", {})
+    scenario_values = configured.get(scenario, {}) if isinstance(configured, dict) else {}
+    legacy_population = inputs.get("scenario_multipliers", {})
+    if isinstance(legacy_population, dict) and scenario in legacy_population and "Population" not in scenario_values:
+        scenario_values = {**scenario_values, "Population": legacy_population[scenario]}
+    return {
+        driver: safe_float(scenario_values.get(driver, value))
+        for driver, value in defaults.get(scenario, defaults["Base"]).items()
+    }
+
+
+def shift_launch_date(raw_date: object, days: float) -> str:
+    parsed = pd.to_datetime(raw_date, errors="coerce")
+    if pd.isna(parsed):
+        return str(raw_date or "")
+    return (parsed + pd.Timedelta(days=int(days))).date().isoformat()
 
 
 def launch_project_opex(projects: list[dict[str, object]], include_operating_only: bool = True) -> tuple[pd.DataFrame, dict[str, dict[str, float]], dict[str, float]]:
@@ -4429,7 +4483,17 @@ def launch_projects_state_key(case_id: str) -> str:
 def get_launch_projects(case_id: str, default_projects: list[dict[str, object]]) -> list[dict[str, object]]:
     key = launch_projects_state_key(case_id)
     if key not in st.session_state:
-        st.session_state[key] = [dict(row) for row in default_projects]
+        prepared_projects = []
+        for row in default_projects:
+            prepared = dict(row)
+            prepared.setdefault("Owner", prepared.get("Function", ""))
+            prepared.setdefault("Validator(s)", "Finance")
+            prepared.setdefault("Source Type", "Internal Data")
+            prepared.setdefault("Source", "Functional launch plan")
+            prepared.setdefault("Confidence", "Medium")
+            prepared.setdefault("Finance Validation Status", "Draft")
+            prepared_projects.append(prepared)
+        st.session_state[key] = prepared_projects
     return [dict(row) for row in st.session_state[key]]
 
 
@@ -4441,7 +4505,8 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
     products = data.get("products", pd.DataFrame())
     product = launch_product(products, str(case.get("Product", "")))
     inputs = launch_default_model_inputs(str(case.get("Launch Case ID", "")), case, product)
-    multiplier = safe_float(inputs["scenario_multipliers"].get(scenario, 1.0))
+    adjustments = launch_scenario_adjustments(inputs, scenario)
+    multiplier = adjustments["Population"]
     flow_rows = get_launch_patient_flow(str(case.get("Launch Case ID", "")), inputs["patient_flow"])
     patient_flow = calculate_patient_flow(flow_rows, multiplier)
     clinical_patients = safe_float(patient_flow["Output Patients"].iloc[-1]) if not patient_flow.empty else 0.0
@@ -4454,30 +4519,38 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
     utilization = inputs["utilization"]
     pricing = inputs["pricing"]
     base_price = safe_float(pricing.get("List / Base Price")) or safe_float(product.get("Gross Price"))
-    realized_net_price = base_price * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %")))
-    unit_cost = safe_float(product.get("Standard Cost"))
+    realized_net_price = base_price * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %"))) * adjustments["Net Price"]
+    unit_cost = safe_float(product.get("Standard Cost")) * adjustments["COGS"]
     archetype = str(case.get("Access Archetype", ""))
     planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
     planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
-    commercial_gate_date = max(str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)), planned_launch_date)
+    commercial_gate_date = max(
+        str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)),
+        planned_launch_date,
+        str(supply.get("Earliest Supply Available Date", planned_launch_date)),
+    )
     if archetype == "Reimbursement Dependent":
         commercial_gate_date = max(commercial_gate_date, str(inputs.get("expected_access_date", commercial_gate_date)))
+    commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
 
     forecast_rows = []
     channels = pd.DataFrame(inputs["access_channels"])
-    channel_weight_sum = max(1.0, channels["Accessible Patient %"].sum()) if not channels.empty and "Accessible Patient %" in channels else 1.0
     for index, year in enumerate(LAUNCH_YEARS):
         reg_fraction = launch_availability_fraction(regulatory.get("Expected Regulatory Approval Date"), launch_year, index)
         launch_fraction = launch_availability_fraction(planned_launch_date, launch_year, index)
-        availability_fraction = min(reg_fraction, launch_fraction)
+        availability_fraction = min(
+            reg_fraction,
+            launch_fraction,
+            launch_availability_fraction(commercial_gate_date, launch_year, index),
+        )
         if archetype == "Reimbursement Dependent":
-            availability_fraction = min(availability_fraction, launch_availability_fraction(commercial_gate_date, launch_year, index))
-            accessible_patients = clinical_patients * safe_float(access_rate.get(year)) * availability_fraction
+            accessible_patients = clinical_patients * min(1.0, safe_float(access_rate.get(year)) * adjustments["Access Rate"]) * availability_fraction
         elif archetype == "Mixed Access":
-            accessible_patients = clinical_patients * min(1.0, channels["Accessible Patient %"].sum() if not channels.empty else safe_float(access_rate.get(year))) * availability_fraction
+            channel_access = channels["Accessible Patient %"].sum() if not channels.empty else safe_float(access_rate.get(year))
+            accessible_patients = clinical_patients * min(1.0, safe_float(channel_access) * adjustments["Access Rate"]) * availability_fraction
         else:
-            accessible_patients = clinical_patients * safe_float(access_rate.get(year)) * availability_fraction
-        patients_on_product = accessible_patients * safe_float(market_share.get(year))
+            accessible_patients = clinical_patients * min(1.0, safe_float(access_rate.get(year)) * adjustments["Access Rate"]) * availability_fraction
+        patients_on_product = accessible_patients * min(1.0, safe_float(market_share.get(year)) * adjustments["Market Share"])
         utilization_multiplier = safe_float(utilization.get("Units per Patient"))
         if utilization.get("Compliance Enabled", True):
             utilization_multiplier *= safe_float(utilization.get("Compliance"))
@@ -4594,6 +4667,7 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         "product": product,
         "realized_net_price": realized_net_price,
         "commercial_gate_date": commercial_gate_date,
+        "scenario_adjustments": adjustments,
     }
 
 
@@ -4601,7 +4675,8 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
     products = data.get("products", pd.DataFrame())
     product = launch_product(products, str(case.get("Product", "")))
     inputs = launch_default_model_inputs(str(case.get("Launch Case ID", "")), case, product)
-    multiplier = safe_float(inputs["scenario_multipliers"].get(scenario, 1.0))
+    adjustments = launch_scenario_adjustments(inputs, scenario)
+    multiplier = adjustments["Population"]
     patient_flow = calculate_patient_flow(get_launch_patient_flow(str(case.get("Launch Case ID", "")), inputs["patient_flow"]), multiplier)
     clinical_patients = safe_float(patient_flow["Output Patients"].iloc[-1]) if not patient_flow.empty else 0.0
     launch_year = launch_year_from_case(case)
@@ -4611,13 +4686,19 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
     market_share = inputs["market_share"]
     utilization = inputs["utilization"]
     pricing = inputs["pricing"]
-    realized_net_price = safe_float(pricing.get("List / Base Price")) * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %")))
-    unit_cost = safe_float(product.get("Standard Cost"))
+    base_price = safe_float(pricing.get("List / Base Price")) or safe_float(product.get("Gross Price"))
+    realized_net_price = base_price * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %"))) * adjustments["Net Price"]
+    unit_cost = safe_float(product.get("Standard Cost")) * adjustments["COGS"]
     planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
     planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
-    commercial_gate_date = max(str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)), planned_launch_date)
+    commercial_gate_date = max(
+        str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)),
+        planned_launch_date,
+        str(supply.get("Earliest Supply Available Date", planned_launch_date)),
+    )
     if str(case.get("Access Archetype", "")) == "Reimbursement Dependent":
         commercial_gate_date = max(commercial_gate_date, str(inputs.get("expected_access_date", commercial_gate_date)))
+    commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
     y5_patients = 0.0
     y5_revenue = 0.0
     y5_op = 0.0
@@ -4629,11 +4710,17 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
         availability_fraction = min(
             launch_availability_fraction(regulatory.get("Expected Regulatory Approval Date"), launch_year, index),
             launch_availability_fraction(planned_launch_date, launch_year, index),
+            launch_availability_fraction(commercial_gate_date, launch_year, index),
         )
-        if str(case.get("Access Archetype", "")) == "Reimbursement Dependent":
-            availability_fraction = min(availability_fraction, launch_availability_fraction(commercial_gate_date, launch_year, index))
-        accessible = clinical_patients * safe_float(access_rate.get(year)) * availability_fraction
-        patients = accessible * safe_float(market_share.get(year))
+        archetype = str(case.get("Access Archetype", ""))
+        if archetype == "Mixed Access":
+            channels = pd.DataFrame(inputs.get("access_channels", []))
+            channel_access = channels["Accessible Patient %"].sum() if not channels.empty and "Accessible Patient %" in channels else safe_float(access_rate.get(year))
+            access_fraction = min(1.0, safe_float(channel_access) * adjustments["Access Rate"])
+        else:
+            access_fraction = min(1.0, safe_float(access_rate.get(year)) * adjustments["Access Rate"])
+        accessible = clinical_patients * access_fraction * availability_fraction
+        patients = accessible * min(1.0, safe_float(market_share.get(year)) * adjustments["Market Share"])
         units_per_patient = safe_float(utilization.get("Units per Patient"))
         if utilization.get("Compliance Enabled", True):
             units_per_patient *= safe_float(utilization.get("Compliance"))
@@ -4722,7 +4809,10 @@ def render_launch_patient_flow_config(case_id: str, inputs: dict[str, object]) -
             "Owner": st.column_config.SelectboxColumn("Owner", options=["Marketing", "Medical", "Market Access", "Sales"]),
         },
     )
-    set_launch_patient_flow(case_id, edited.to_dict("records"))
+    edited_rows = edited.fillna("").to_dict("records")
+    if edited_rows != pd.DataFrame(flow_rows).fillna("").to_dict("records"):
+        set_launch_patient_flow(case_id, edited_rows)
+        st.rerun()
     st.caption("Input rows are editable assumptions. Output patient counts are calculated downstream by the integrated model.")
 
 
@@ -4791,6 +4881,13 @@ def render_launch_model_sections(case_id: str, case: pd.Series, data: dict[str, 
                     "Project / Initiative Name": "New initiative",
                     "Function": "Marketing",
                     "Category": "One-off Launch OPEX",
+                    "Start / End": "Y1-Y5",
+                    "Owner": "Marketing",
+                    "Validator(s)": "Finance",
+                    "Source Type": "Internal Data",
+                    "Source": "Functional launch plan",
+                    "Confidence": "Medium",
+                    "Finance Validation Status": "Draft",
                     "Y1": 0,
                     "Y2": 0,
                     "Y3": 0,
@@ -4803,7 +4900,9 @@ def render_launch_model_sections(case_id: str, case: pd.Series, data: dict[str, 
             st.rerun()
         project_df = pd.DataFrame(get_launch_projects(case_id, default_projects))
         edited_projects = st.data_editor(project_df, key=f"launch_projects_editor_{case_id}", hide_index=True, use_container_width=True)
-        set_launch_projects(case_id, edited_projects)
+        if edited_projects.fillna("").to_dict("records") != project_df.fillna("").to_dict("records"):
+            set_launch_projects(case_id, edited_projects)
+            st.rerun()
         st.caption("CAPEX and Inventory Build are displayed separately and are not automatically included in Operating Profit.")
     with resource_tabs[2]:
         supply = inputs["supply"]
@@ -4825,6 +4924,21 @@ def render_launch_model_sections(case_id: str, case: pd.Series, data: dict[str, 
     st.dataframe(format_launch_financial_table(model["pnl"]), use_container_width=True, hide_index=True)
 
     st.markdown("<div class='enterprise-section-title'>Scenarios</div>", unsafe_allow_html=True)
+    scenario_drivers = model.get("scenario_adjustments", {})
+    st.caption("The selected scenario recalculates the same model by varying a transparent set of major drivers.")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Scenario Driver": driver,
+                    "Selected Scenario Value": f"{value:+.0f} days" if driver == "Timing Shift Days" else f"{value:.2f}x",
+                }
+                for driver, value in scenario_drivers.items()
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
     st.dataframe(model["scenario_summary"], use_container_width=True, hide_index=True)
 
     with st.expander("Traceability"):
