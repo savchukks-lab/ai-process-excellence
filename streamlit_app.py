@@ -1279,6 +1279,7 @@ def init_state() -> None:
     st.session_state.setdefault("current_page", "Deal Request List")
     st.session_state.setdefault("launch_page", "Launch Sandbox Home")
     st.session_state.setdefault("selected_launch_case_id", None)
+    st.session_state.setdefault("launch_assumption_overrides", {})
 
 
 def add_audit(
@@ -4214,16 +4215,672 @@ def launch_responsibility_matrix() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["Assumption / Input", "Owner", "Required Validators"])
 
 
+LAUNCH_SOURCE_TYPES = [
+    "Internal Data",
+    "Published Evidence",
+    "Market Research",
+    "Expert Opinion",
+    "Management Assumption",
+    "Other",
+]
+
+LAUNCH_CONFIDENCE_LEVELS = ["High", "Medium", "Low"]
+
+LAUNCH_VALIDATION_STATUSES = [
+    "Not Started",
+    "Draft",
+    "Submitted for Validation",
+    "Aligned",
+    "Alignment Required",
+]
+
+LAUNCH_YEARS = ["Y1", "Y2", "Y3", "Y4", "Y5"]
+LAUNCH_SCENARIOS = ["Downside", "Base", "Upside"]
+
+
+LAUNCH_ROLE_WORKSTREAM = {
+    "KAM North": "Marketing",
+    "KAM South": "Marketing",
+    "Sales Manager": "Sales",
+    "Pricing Governance Owner": "Market Access",
+    "Finance Director": "Finance",
+    "Operations Manager": "Supply / Operations",
+    "General Manager": "Regulatory",
+    "System Administrator": "Platform Administration",
+}
+
+
+def launch_user_workstream() -> str:
+    return LAUNCH_ROLE_WORKSTREAM.get(current_role(), "")
+
+
+def split_validators(value: object) -> list[str]:
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+
+def launch_year_values(value: float, mode: str = "Constant Across Forecast", yearly: list[float] | None = None) -> dict[str, float]:
+    if mode == "By Year" and yearly:
+        values = list(yearly)[: len(LAUNCH_YEARS)]
+        values.extend([values[-1] if values else value] * (len(LAUNCH_YEARS) - len(values)))
+        return dict(zip(LAUNCH_YEARS, [float(item) for item in values]))
+    return {year: float(value) for year in LAUNCH_YEARS}
+
+
+def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str, object]) -> dict[str, object]:
+    if str(case_id) == "LAUNCH-1002":
+        return {
+            "scenario_multipliers": {"Downside": 0.82, "Base": 1.0, "Upside": 1.18},
+            "patient_flow": [
+                {"Step": "Population", "Input Type": "absolute patients", "Value": 1_250_000, "Owner": "Marketing", "Validators": "Medical", "Optional": False},
+                {"Step": "Prevalence / Incidence", "Input Type": "percentage conversion", "Value": 0.018, "Owner": "Marketing", "Validators": "Medical", "Optional": False},
+                {"Step": "Diagnosis Rate", "Input Type": "percentage conversion", "Value": 0.72, "Owner": "Marketing", "Validators": "Medical", "Optional": False},
+                {"Step": "Relevant Segment / Severity", "Input Type": "percentage conversion", "Value": 0.62, "Owner": "Medical", "Validators": "Marketing", "Optional": True},
+                {"Step": "Relevant Line of Therapy", "Input Type": "percentage conversion", "Value": 0.78, "Owner": "Medical", "Validators": "Marketing", "Optional": True},
+                {"Step": "Treatment Eligibility", "Input Type": "percentage conversion", "Value": 0.68, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
+            ],
+            "access_channels": [
+                {"Channel": "OOP / Private", "Accessible Patient %": 0.72, "Pricing Weight": 0.65},
+                {"Channel": "Reimbursed", "Accessible Patient %": 0.18, "Pricing Weight": 0.30},
+                {"Channel": "Other", "Accessible Patient %": 0.08, "Pricing Weight": 0.05},
+            ],
+            "expected_access_date": "2027-01-20",
+            "access_rate": launch_year_values(0.90),
+            "market_share": launch_year_values(0, "By Year", [0.04, 0.10, 0.16, 0.22, 0.27]),
+            "utilization": {"Units per Patient": 8.0, "Compliance": 0.88, "Persistence": 0.92, "Compliance Enabled": True, "Persistence Enabled": True},
+            "pricing": {"Price Mode": "Use Current Price", "List / Base Price": safe_float(product.get("Gross Price", 0)), "Rebate / Discount %": 0.12, "Other GTN %": 0.03},
+            "regulatory": {"Expected Regulatory Approval Date": "2026-12-15", "Expected Label / Indication": "Broad-access launch indication", "Key Regulatory Dependency": "Local label confirmation", "Confidence": "High", "Material Risk": "Low", "Mitigation": "Track final label wording before commercial activation."},
+            "supply": {"Earliest Supply Available Date": "2027-01-10", "Launch Stock Available?": "Yes", "Can Projected Demand Be Supplied?": "Yes", "Major Supply Risk": "Launch allocation balancing", "Mitigation": "Use standard launch allocation cadence.", "Maximum Available Units": launch_year_values(0)},
+            "sales_resources": {"Sales Force HC / FTE": launch_year_values(0, "By Year", [8, 12, 14, 16, 16]), "Target Accounts / Centers": 240, "Coverage %": 0.68, "Reach": "Broad account reach", "Frequency": "Monthly priority touchpoints"},
+            "personnel": {
+                "Marketing": {"FTE": launch_year_values(2.0), "Average Cost per FTE": 145_000},
+                "Sales": {"FTE": None, "Average Cost per FTE": 135_000},
+                "Medical": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 175_000},
+                "Market Access": {"FTE": launch_year_values(1.0), "Average Cost per FTE": 160_000},
+                "Regulatory": {"FTE": launch_year_values(0.5), "Average Cost per FTE": 155_000},
+                "Supply / Operations": {"FTE": launch_year_values(0.5), "Average Cost per FTE": 130_000},
+            },
+            "projects": [
+                {"Project / Initiative Name": "Account conversion campaign", "Function": "Marketing", "Category": "One-off Launch OPEX", "Y1": 420_000, "Y2": 260_000, "Y3": 160_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support listing conversion and broad awareness."},
+                {"Project / Initiative Name": "Field enablement and coverage setup", "Function": "Sales", "Category": "Recurring OPEX", "Y1": 280_000, "Y2": 220_000, "Y3": 180_000, "Y4": 160_000, "Y5": 160_000, "Rationale / Business Need": "Prepare target account coverage and launch execution."},
+                {"Project / Initiative Name": "Access affordability evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Y1": 180_000, "Y2": 120_000, "Y3": 80_000, "Y4": 60_000, "Y5": 60_000, "Rationale / Business Need": "Support OOP affordability and payer discussions."},
+            ],
+        }
+    return {
+        "scenario_multipliers": {"Downside": 0.75, "Base": 1.0, "Upside": 1.22},
+        "patient_flow": [
+            {"Step": "Population", "Input Type": "absolute patients", "Value": 520_000, "Owner": "Marketing", "Validators": "Medical", "Optional": False},
+            {"Step": "Prevalence / Incidence", "Input Type": "percentage conversion", "Value": 0.0035, "Owner": "Marketing", "Validators": "Medical", "Optional": False},
+            {"Step": "Diagnosis Rate", "Input Type": "percentage conversion", "Value": 0.58, "Owner": "Marketing", "Validators": "Medical", "Optional": False},
+            {"Step": "Relevant Segment / Severity", "Input Type": "percentage conversion", "Value": 0.42, "Owner": "Medical", "Validators": "Marketing", "Optional": True},
+            {"Step": "Relevant Line of Therapy", "Input Type": "percentage conversion", "Value": 0.70, "Owner": "Medical", "Validators": "Marketing", "Optional": True},
+            {"Step": "Treatment Eligibility", "Input Type": "percentage conversion", "Value": 0.64, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
+        ],
+        "access_channels": [{"Channel": "Reimbursed", "Accessible Patient %": 1.0, "Pricing Weight": 1.0}],
+        "expected_access_date": "2027-10-01",
+        "access_rate": launch_year_values(0, "By Year", [0.10, 0.25, 0.45, 0.65, 0.75]),
+        "market_share": launch_year_values(0, "By Year", [0.05, 0.12, 0.20, 0.27, 0.31]),
+        "utilization": {"Units per Patient": 10.0, "Compliance": 0.86, "Persistence": 0.90, "Compliance Enabled": True, "Persistence Enabled": True},
+        "pricing": {"Price Mode": "Use Current Price", "List / Base Price": safe_float(product.get("Gross Price", 0)), "Rebate / Discount %": 0.16, "Other GTN %": 0.04},
+        "regulatory": {"Expected Regulatory Approval Date": "2027-02-15", "Expected Label / Indication": "Specialty access launch indication", "Key Regulatory Dependency": "Approval and final access dossier", "Confidence": "Medium", "Material Risk": "Medium", "Mitigation": "Maintain access scenario until final reimbursement decision."},
+        "supply": {"Earliest Supply Available Date": "2027-03-01", "Launch Stock Available?": "At Risk", "Can Projected Demand Be Supplied?": "At Risk", "Major Supply Risk": "Limited launch stock during reimbursement ramp", "Mitigation": "Prioritize validated reimbursed demand during Y1 and Y2.", "Maximum Available Units": launch_year_values(0, "By Year", [1_000, 2_600, 5_000, 8_000, 11_000])},
+        "sales_resources": {"Sales Force HC / FTE": launch_year_values(0, "By Year", [4, 6, 8, 9, 10]), "Target Accounts / Centers": 85, "Coverage %": 0.55, "Reach": "Specialty center focus", "Frequency": "Biweekly launch-phase engagement"},
+        "personnel": {
+            "Marketing": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 150_000},
+            "Sales": {"FTE": None, "Average Cost per FTE": 140_000},
+            "Medical": {"FTE": launch_year_values(2.0), "Average Cost per FTE": 185_000},
+            "Market Access": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 165_000},
+            "Regulatory": {"FTE": launch_year_values(0.8), "Average Cost per FTE": 160_000},
+            "Supply / Operations": {"FTE": launch_year_values(0.7), "Average Cost per FTE": 135_000},
+        },
+        "projects": [
+            {"Project / Initiative Name": "Reimbursement dossier and access evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Y1": 650_000, "Y2": 340_000, "Y3": 180_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support payer assessment and reimbursement milestone."},
+            {"Project / Initiative Name": "Specialist education program", "Function": "Medical", "Category": "Recurring OPEX", "Y1": 420_000, "Y2": 360_000, "Y3": 300_000, "Y4": 240_000, "Y5": 220_000, "Rationale / Business Need": "Prepare clinical pathway and evidence readiness."},
+            {"Project / Initiative Name": "Launch supply readiness", "Function": "Supply / Operations", "Category": "Inventory Build", "Y1": 500_000, "Y2": 250_000, "Y3": 0, "Y4": 0, "Y5": 0, "Rationale / Business Need": "Initial inventory build displayed separately from operating profit."},
+        ],
+    }
+
+
+def launch_flow_state_key(case_id: str) -> str:
+    return f"launch_patient_flow_{case_id}"
+
+
+def get_launch_patient_flow(case_id: str, default_flow: list[dict[str, object]]) -> list[dict[str, object]]:
+    key = launch_flow_state_key(case_id)
+    if key not in st.session_state:
+        st.session_state[key] = [dict(row) for row in default_flow]
+    return [dict(row) for row in st.session_state[key]]
+
+
+def set_launch_patient_flow(case_id: str, rows: list[dict[str, object]]) -> None:
+    st.session_state[launch_flow_state_key(case_id)] = [dict(row) for row in rows]
+
+
+def calculate_patient_flow(flow_rows: list[dict[str, object]], scenario_multiplier: float) -> pd.DataFrame:
+    current = 0.0
+    records = []
+    for row in flow_rows:
+        step = str(row.get("Step", "")).strip() or "Custom Step"
+        input_type = str(row.get("Input Type", "percentage conversion")).strip()
+        raw_value = safe_float(row.get("Value"))
+        if input_type == "absolute patients":
+            current = raw_value * scenario_multiplier
+            output_type = "INPUT"
+        else:
+            current *= raw_value
+            output_type = "CALCULATED"
+        records.append(
+            {
+                "Step": step,
+                "Input Type": input_type,
+                "Assumption Value": raw_value,
+                "Output Patients": round(current),
+                "Input / Calculated": output_type,
+                "Owner": row.get("Owner", ""),
+                "Validators": row.get("Validators", ""),
+                "Optional": bool(row.get("Optional", False)),
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def launch_availability_fraction(raw_date: object, launch_year: int, year_index: int) -> float:
+    availability = pd.to_datetime(raw_date, errors="coerce")
+    forecast_year = launch_year + year_index
+    if pd.isna(availability):
+        return 1.0
+    if availability.year < forecast_year:
+        return 1.0
+    if availability.year > forecast_year:
+        return 0.0
+    day_of_year = int(availability.dayofyear)
+    return max(0.0, min(1.0, (365 - day_of_year + 1) / 365))
+
+
+def launch_year_from_case(case: pd.Series) -> int:
+    planned = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
+    if pd.isna(planned):
+        return date.today().year + 1
+    return int(planned.year)
+
+
+def launch_project_opex(projects: list[dict[str, object]], include_operating_only: bool = True) -> tuple[pd.DataFrame, dict[str, dict[str, float]], dict[str, float]]:
+    project_df = pd.DataFrame(projects)
+    by_function = {}
+    excluded = {year: 0.0 for year in LAUNCH_YEARS}
+    if project_df.empty:
+        return project_df, by_function, excluded
+    for _, row in project_df.iterrows():
+        category = str(row.get("Category", ""))
+        function = str(row.get("Function", "Other"))
+        include_in_op = not include_operating_only or category not in {"CAPEX", "Inventory Build"}
+        for year in LAUNCH_YEARS:
+            value = safe_float(row.get(year))
+            if include_in_op:
+                by_function.setdefault(function, {item: 0.0 for item in LAUNCH_YEARS})[year] += value
+            else:
+                excluded[year] += value
+    return project_df, by_function, excluded
+
+
+def launch_projects_state_key(case_id: str) -> str:
+    return f"launch_projects_{case_id}"
+
+
+def get_launch_projects(case_id: str, default_projects: list[dict[str, object]]) -> list[dict[str, object]]:
+    key = launch_projects_state_key(case_id)
+    if key not in st.session_state:
+        st.session_state[key] = [dict(row) for row in default_projects]
+    return [dict(row) for row in st.session_state[key]]
+
+
+def set_launch_projects(case_id: str, projects: pd.DataFrame) -> None:
+    st.session_state[launch_projects_state_key(case_id)] = projects.fillna("").to_dict("records")
+
+
+def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scenario: str = "Base") -> dict[str, pd.DataFrame | dict[str, object]]:
+    products = data.get("products", pd.DataFrame())
+    product = launch_product(products, str(case.get("Product", "")))
+    inputs = launch_default_model_inputs(str(case.get("Launch Case ID", "")), case, product)
+    multiplier = safe_float(inputs["scenario_multipliers"].get(scenario, 1.0))
+    flow_rows = get_launch_patient_flow(str(case.get("Launch Case ID", "")), inputs["patient_flow"])
+    patient_flow = calculate_patient_flow(flow_rows, multiplier)
+    clinical_patients = safe_float(patient_flow["Output Patients"].iloc[-1]) if not patient_flow.empty else 0.0
+
+    launch_year = launch_year_from_case(case)
+    regulatory = inputs["regulatory"]
+    supply = inputs["supply"]
+    access_rate = inputs["access_rate"]
+    market_share = inputs["market_share"]
+    utilization = inputs["utilization"]
+    pricing = inputs["pricing"]
+    base_price = safe_float(pricing.get("List / Base Price")) or safe_float(product.get("Gross Price"))
+    realized_net_price = base_price * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %")))
+    unit_cost = safe_float(product.get("Standard Cost"))
+    archetype = str(case.get("Access Archetype", ""))
+    planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
+    planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
+    commercial_gate_date = max(str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)), planned_launch_date)
+    if archetype == "Reimbursement Dependent":
+        commercial_gate_date = max(commercial_gate_date, str(inputs.get("expected_access_date", commercial_gate_date)))
+
+    forecast_rows = []
+    channels = pd.DataFrame(inputs["access_channels"])
+    channel_weight_sum = max(1.0, channels["Accessible Patient %"].sum()) if not channels.empty and "Accessible Patient %" in channels else 1.0
+    for index, year in enumerate(LAUNCH_YEARS):
+        reg_fraction = launch_availability_fraction(regulatory.get("Expected Regulatory Approval Date"), launch_year, index)
+        launch_fraction = launch_availability_fraction(planned_launch_date, launch_year, index)
+        availability_fraction = min(reg_fraction, launch_fraction)
+        if archetype == "Reimbursement Dependent":
+            availability_fraction = min(availability_fraction, launch_availability_fraction(commercial_gate_date, launch_year, index))
+            accessible_patients = clinical_patients * safe_float(access_rate.get(year)) * availability_fraction
+        elif archetype == "Mixed Access":
+            accessible_patients = clinical_patients * min(1.0, channels["Accessible Patient %"].sum() if not channels.empty else safe_float(access_rate.get(year))) * availability_fraction
+        else:
+            accessible_patients = clinical_patients * safe_float(access_rate.get(year)) * availability_fraction
+        patients_on_product = accessible_patients * safe_float(market_share.get(year))
+        utilization_multiplier = safe_float(utilization.get("Units per Patient"))
+        if utilization.get("Compliance Enabled", True):
+            utilization_multiplier *= safe_float(utilization.get("Compliance"))
+        if utilization.get("Persistence Enabled", True):
+            utilization_multiplier *= safe_float(utilization.get("Persistence"))
+        demand_units = patients_on_product * utilization_multiplier
+        supply_status = str(supply.get("Can Projected Demand Be Supplied?", "Yes"))
+        max_units = safe_float(supply.get("Maximum Available Units", {}).get(year, 0))
+        sellable_units = min(demand_units, max_units) if supply_status in {"At Risk", "No"} and max_units > 0 else demand_units
+        revenue = sellable_units * realized_net_price
+        cogs = sellable_units * unit_cost
+        gross_profit = revenue - cogs
+        forecast_rows.append(
+            {
+                "Year": year,
+                "Clinical Addressable Patients": round(clinical_patients),
+                "Access Rate": pct(access_rate.get(year)),
+                "Commercially Accessible Patients": round(accessible_patients),
+                "Market Share": pct(market_share.get(year)),
+                "Patients on Product": round(patients_on_product),
+                "Adjusted Units per Patient": round(utilization_multiplier, 2),
+                "Demand Units": round(demand_units),
+                "Sellable Units": round(sellable_units),
+                "Realized Net Price": money(realized_net_price),
+                "Net Revenue": revenue,
+                "COGS": cogs,
+                "Gross Profit": gross_profit,
+                "Gross Margin %": pct(gross_profit / revenue if revenue else 0),
+                "Availability Fraction": pct(availability_fraction),
+            }
+        )
+    forecast = pd.DataFrame(forecast_rows)
+
+    sales_fte = inputs["sales_resources"]["Sales Force HC / FTE"]
+    personnel_records = []
+    for function, resource in inputs["personnel"].items():
+        fte_values = sales_fte if function == "Sales" and resource.get("FTE") is None else resource.get("FTE", launch_year_values(0))
+        cost_per_fte = safe_float(resource.get("Average Cost per FTE"))
+        row = {"Function": function, "Type": "Personnel", "Average Cost per FTE": money(cost_per_fte)}
+        for year in LAUNCH_YEARS:
+            row[year] = safe_float(fte_values.get(year)) * cost_per_fte
+        personnel_records.append(row)
+    personnel = pd.DataFrame(personnel_records)
+    projects, project_opex, excluded_investment = launch_project_opex(get_launch_projects(str(case.get("Launch Case ID", "")), inputs["projects"]))
+
+    pnl_rows = []
+    for metric in [
+        "Net Revenue",
+        "COGS",
+        "Gross Profit",
+        "Gross Margin %",
+        "Marketing Personnel",
+        "Marketing Projects",
+        "Sales Personnel",
+        "Sales Projects",
+        "Medical Personnel",
+        "Medical Projects",
+        "Market Access Personnel",
+        "Market Access Projects",
+        "Regulatory incremental OPEX",
+        "Supply incremental OPEX",
+        "Other approved functional OPEX",
+        "Total OPEX",
+        "Operating Profit",
+        "Operating Margin %",
+        "CAPEX / Inventory Build",
+    ]:
+        pnl_rows.append({"Metric": metric, **{year: 0.0 for year in LAUNCH_YEARS}})
+    pnl = pd.DataFrame(pnl_rows).set_index("Metric")
+    for year in LAUNCH_YEARS:
+        revenue = safe_float(forecast.loc[forecast["Year"].eq(year), "Net Revenue"].iloc[0])
+        cogs = safe_float(forecast.loc[forecast["Year"].eq(year), "COGS"].iloc[0])
+        gross_profit = revenue - cogs
+        pnl.loc["Net Revenue", year] = revenue
+        pnl.loc["COGS", year] = -cogs
+        pnl.loc["Gross Profit", year] = gross_profit
+        pnl.loc["Gross Margin %", year] = gross_profit / revenue if revenue else 0
+        total_opex = 0.0
+        for _, row in personnel.iterrows():
+            function = str(row.get("Function", ""))
+            cost = safe_float(row.get(year))
+            metric = f"{function} Personnel" if function not in {"Regulatory", "Supply / Operations"} else f"{function.split(' / ')[0]} incremental OPEX"
+            if metric in pnl.index:
+                pnl.loc[metric, year] += -cost
+                total_opex += cost
+        for function, values in project_opex.items():
+            cost = safe_float(values.get(year))
+            metric = f"{function} Projects" if function not in {"Regulatory", "Supply / Operations"} else f"{function.split(' / ')[0]} incremental OPEX"
+            if metric in pnl.index:
+                pnl.loc[metric, year] += -cost
+            else:
+                pnl.loc["Other approved functional OPEX", year] += -cost
+            total_opex += cost
+        pnl.loc["Total OPEX", year] = -total_opex
+        pnl.loc["Operating Profit", year] = gross_profit - total_opex
+        pnl.loc["Operating Margin %", year] = (gross_profit - total_opex) / revenue if revenue else 0
+        pnl.loc["CAPEX / Inventory Build", year] = excluded_investment.get(year, 0.0)
+    pnl = pnl.reset_index()
+
+    scenario_records = []
+    for scenario_name in LAUNCH_SCENARIOS:
+        scenario_model = calculate_launch_model_no_scenarios(data, case, scenario_name)
+        scenario_records.append(scenario_model)
+
+    return {
+        "inputs": inputs,
+        "patient_flow": patient_flow,
+        "forecast": forecast,
+        "channels": channels,
+        "personnel": personnel,
+        "projects": projects,
+        "pnl": pnl,
+        "scenario_summary": pd.DataFrame(scenario_records),
+        "product": product,
+        "realized_net_price": realized_net_price,
+        "commercial_gate_date": commercial_gate_date,
+    }
+
+
+def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.Series, scenario: str) -> dict[str, object]:
+    products = data.get("products", pd.DataFrame())
+    product = launch_product(products, str(case.get("Product", "")))
+    inputs = launch_default_model_inputs(str(case.get("Launch Case ID", "")), case, product)
+    multiplier = safe_float(inputs["scenario_multipliers"].get(scenario, 1.0))
+    patient_flow = calculate_patient_flow(get_launch_patient_flow(str(case.get("Launch Case ID", "")), inputs["patient_flow"]), multiplier)
+    clinical_patients = safe_float(patient_flow["Output Patients"].iloc[-1]) if not patient_flow.empty else 0.0
+    launch_year = launch_year_from_case(case)
+    regulatory = inputs["regulatory"]
+    supply = inputs["supply"]
+    access_rate = inputs["access_rate"]
+    market_share = inputs["market_share"]
+    utilization = inputs["utilization"]
+    pricing = inputs["pricing"]
+    realized_net_price = safe_float(pricing.get("List / Base Price")) * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %")))
+    unit_cost = safe_float(product.get("Standard Cost"))
+    planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
+    planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
+    commercial_gate_date = max(str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)), planned_launch_date)
+    if str(case.get("Access Archetype", "")) == "Reimbursement Dependent":
+        commercial_gate_date = max(commercial_gate_date, str(inputs.get("expected_access_date", commercial_gate_date)))
+    y5_patients = 0.0
+    y5_revenue = 0.0
+    y5_op = 0.0
+    cumulative_revenue = 0.0
+    cumulative_op = 0.0
+    sales_fte = inputs["sales_resources"]["Sales Force HC / FTE"]
+    project_df, project_opex, _ = launch_project_opex(get_launch_projects(str(case.get("Launch Case ID", "")), inputs["projects"]))
+    for index, year in enumerate(LAUNCH_YEARS):
+        availability_fraction = min(
+            launch_availability_fraction(regulatory.get("Expected Regulatory Approval Date"), launch_year, index),
+            launch_availability_fraction(planned_launch_date, launch_year, index),
+        )
+        if str(case.get("Access Archetype", "")) == "Reimbursement Dependent":
+            availability_fraction = min(availability_fraction, launch_availability_fraction(commercial_gate_date, launch_year, index))
+        accessible = clinical_patients * safe_float(access_rate.get(year)) * availability_fraction
+        patients = accessible * safe_float(market_share.get(year))
+        units_per_patient = safe_float(utilization.get("Units per Patient"))
+        if utilization.get("Compliance Enabled", True):
+            units_per_patient *= safe_float(utilization.get("Compliance"))
+        if utilization.get("Persistence Enabled", True):
+            units_per_patient *= safe_float(utilization.get("Persistence"))
+        demand_units = patients * units_per_patient
+        max_units = safe_float(supply.get("Maximum Available Units", {}).get(year, 0))
+        sellable = min(demand_units, max_units) if str(supply.get("Can Projected Demand Be Supplied?", "Yes")) in {"At Risk", "No"} and max_units > 0 else demand_units
+        revenue = sellable * realized_net_price
+        gross_profit = revenue - sellable * unit_cost
+        opex = 0.0
+        for function, resource in inputs["personnel"].items():
+            fte_values = sales_fte if function == "Sales" and resource.get("FTE") is None else resource.get("FTE", launch_year_values(0))
+            opex += safe_float(fte_values.get(year)) * safe_float(resource.get("Average Cost per FTE"))
+        for values in project_opex.values():
+            opex += safe_float(values.get(year))
+        operating_profit = gross_profit - opex
+        cumulative_revenue += revenue
+        cumulative_op += operating_profit
+        if year == "Y5":
+            y5_patients = patients
+            y5_revenue = revenue
+            y5_op = operating_profit
+    return {
+        "Scenario": scenario,
+        "Y5 Patients": round(y5_patients),
+        "Y5 Revenue": money(y5_revenue),
+        "5Y Cumulative Revenue": money(cumulative_revenue),
+        "Y5 Operating Profit": money(y5_op),
+        "5Y Cumulative Operating Profit": money(cumulative_op),
+    }
+
+
+def format_launch_financial_table(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for _, row in df.iterrows():
+        metric = str(row.get("Metric", ""))
+        display_row = {"Metric": metric}
+        for year in LAUNCH_YEARS:
+            value = row.get(year)
+            display_row[year] = pct(value) if "%" in metric else money(value)
+        rows.append(display_row)
+    return pd.DataFrame(rows)
+
+
+def format_launch_forecast_table(df: pd.DataFrame) -> pd.DataFrame:
+    formatted = df.copy()
+    for column in ["Net Revenue", "COGS", "Gross Profit"]:
+        if column in formatted:
+            formatted[column] = formatted[column].map(money)
+    return formatted
+
+
+def render_launch_patient_flow_config(case_id: str, inputs: dict[str, object]) -> None:
+    st.markdown("<div class='enterprise-section-title'>Configurable Patient Flow</div>", unsafe_allow_html=True)
+    flow_rows = get_launch_patient_flow(case_id, inputs["patient_flow"])
+    action_cols = st.columns([0.8, 1, 0.8, 0.8, 0.8, 1.2])
+    optional_steps = [row["Step"] for row in flow_rows if row.get("Optional")]
+    selected_step = action_cols[1].selectbox("Optional Step", optional_steps or ["No optional steps"], key=f"launch_remove_step_{case_id}")
+    if action_cols[0].button("Add Step", key=f"launch_add_step_{case_id}"):
+        flow_rows.append({"Step": "Custom Step", "Input Type": "percentage conversion", "Value": 1.0, "Owner": "Marketing", "Validators": "Medical", "Optional": True})
+        set_launch_patient_flow(case_id, flow_rows)
+        st.rerun()
+    if action_cols[2].button("Remove", key=f"launch_remove_step_button_{case_id}", disabled=not optional_steps):
+        set_launch_patient_flow(case_id, [row for row in flow_rows if row.get("Step") != selected_step])
+        st.rerun()
+    if action_cols[3].button("Move Up", key=f"launch_move_step_up_{case_id}", disabled=not optional_steps):
+        index = next((idx for idx, row in enumerate(flow_rows) if row.get("Step") == selected_step), None)
+        if index is not None and index > 0:
+            flow_rows[index - 1], flow_rows[index] = flow_rows[index], flow_rows[index - 1]
+            set_launch_patient_flow(case_id, flow_rows)
+            st.rerun()
+    if action_cols[4].button("Move Down", key=f"launch_move_step_down_{case_id}", disabled=not optional_steps):
+        index = next((idx for idx, row in enumerate(flow_rows) if row.get("Step") == selected_step), None)
+        if index is not None and index < len(flow_rows) - 1:
+            flow_rows[index + 1], flow_rows[index] = flow_rows[index], flow_rows[index + 1]
+            set_launch_patient_flow(case_id, flow_rows)
+            st.rerun()
+    edited = st.data_editor(
+        pd.DataFrame(flow_rows),
+        key=f"launch_patient_flow_editor_{case_id}",
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Input Type": st.column_config.SelectboxColumn("Input Type", options=["percentage conversion", "absolute patients"]),
+            "Owner": st.column_config.SelectboxColumn("Owner", options=["Marketing", "Medical", "Market Access", "Sales"]),
+        },
+    )
+    set_launch_patient_flow(case_id, edited.to_dict("records"))
+    st.caption("Input rows are editable assumptions. Output patient counts are calculated downstream by the integrated model.")
+
+
+def render_launch_model_sections(case_id: str, case: pd.Series, data: dict[str, pd.DataFrame], model: dict[str, object]) -> None:
+    inputs = model["inputs"]
+    forecast = model["forecast"]
+    st.markdown("<div class='enterprise-section-title'>Patient Opportunity</div>", unsafe_allow_html=True)
+    render_launch_patient_flow_config(case_id, inputs)
+    st.dataframe(model["patient_flow"], use_container_width=True, hide_index=True)
+
+    st.markdown("<div class='enterprise-section-title'>Access</div>", unsafe_allow_html=True)
+    access_cols = st.columns(3)
+    access_cols[0].metric("Access Archetype", case.get("Access Archetype", ""))
+    access_cols[1].metric("Commercial Gate Date", model.get("commercial_gate_date", ""))
+    access_cols[2].metric("Y5 Commercially Accessible", f"{safe_float(forecast.loc[forecast['Year'].eq('Y5'), 'Commercially Accessible Patients'].iloc[0]):,.0f}")
+    st.caption(f"Expected access / reimbursement date: {inputs.get('expected_access_date', 'Not constrained')}")
+    st.dataframe(model["channels"], use_container_width=True, hide_index=True)
+
+    st.markdown("<div class='enterprise-section-title'>Adoption & Utilization</div>", unsafe_allow_html=True)
+    adoption_view = forecast[["Year", "Commercially Accessible Patients", "Market Share", "Patients on Product", "Adjusted Units per Patient", "Demand Units", "Sellable Units", "Availability Fraction"]]
+    st.dataframe(adoption_view, use_container_width=True, hide_index=True)
+    sales_resources = inputs["sales_resources"]
+    resource_view = pd.DataFrame(
+        [
+            {"Resource Assumption": "Sales Force HC / FTE", **{year: f"{safe_float(value):,.1f}" for year, value in sales_resources["Sales Force HC / FTE"].items()}},
+            {"Resource Assumption": "Target Accounts / Centers", **{year: f"{safe_float(value):,.0f}" for year, value in launch_year_values(safe_float(sales_resources["Target Accounts / Centers"])).items()}},
+            {"Resource Assumption": "Coverage %", **{year: pct(sales_resources["Coverage %"]) for year in LAUNCH_YEARS}},
+            {"Resource Assumption": "Reach", **{year: sales_resources["Reach"] for year in LAUNCH_YEARS}},
+            {"Resource Assumption": "Frequency", **{year: sales_resources["Frequency"] for year in LAUNCH_YEARS}},
+        ]
+    )
+    st.dataframe(resource_view, use_container_width=True, hide_index=True)
+
+    st.markdown("<div class='enterprise-section-title'>Pricing & Revenue</div>", unsafe_allow_html=True)
+    product = model["product"]
+    pricing = inputs["pricing"]
+    pricing_view = pd.DataFrame(
+        [
+            {
+                "SKU": product.get("SKU", ""),
+                "Product": product.get("Product Name", case.get("Product", "")),
+                "Price Mode": pricing.get("Price Mode", ""),
+                "Current List Price": money(product.get("List Price")),
+                "Current Gross Price": money(product.get("Gross Price")),
+                "Launch List / Base Price": money(pricing.get("List / Base Price")),
+                "Rebate / Discount %": pct(pricing.get("Rebate / Discount %")),
+                "Other GTN %": pct(pricing.get("Other GTN %")),
+                "Realized Net Price": money(model.get("realized_net_price")),
+            }
+        ]
+    )
+    st.dataframe(pricing_view, use_container_width=True, hide_index=True)
+    st.dataframe(format_launch_forecast_table(forecast[["Year", "Sellable Units", "Realized Net Price", "Net Revenue", "COGS", "Gross Profit", "Gross Margin %"]]), use_container_width=True, hide_index=True)
+
+    st.markdown("<div class='enterprise-section-title'>Resources</div>", unsafe_allow_html=True)
+    resource_tabs = st.tabs(["Personnel", "Projects", "Supply"])
+    with resource_tabs[0]:
+        st.dataframe(model["personnel"], use_container_width=True, hide_index=True)
+        st.caption("Sales Personnel FTE is fed by the Sales Force HC assumption and is not entered twice.")
+    with resource_tabs[1]:
+        default_projects = inputs["projects"]
+        if st.button("Add Project", key=f"launch_add_project_{case_id}"):
+            projects = get_launch_projects(case_id, default_projects)
+            projects.append(
+                {
+                    "Project / Initiative Name": "New initiative",
+                    "Function": "Marketing",
+                    "Category": "One-off Launch OPEX",
+                    "Y1": 0,
+                    "Y2": 0,
+                    "Y3": 0,
+                    "Y4": 0,
+                    "Y5": 0,
+                    "Rationale / Business Need": "",
+                }
+            )
+            st.session_state[launch_projects_state_key(case_id)] = projects
+            st.rerun()
+        project_df = pd.DataFrame(get_launch_projects(case_id, default_projects))
+        edited_projects = st.data_editor(project_df, key=f"launch_projects_editor_{case_id}", hide_index=True, use_container_width=True)
+        set_launch_projects(case_id, edited_projects)
+        st.caption("CAPEX and Inventory Build are displayed separately and are not automatically included in Operating Profit.")
+    with resource_tabs[2]:
+        supply = inputs["supply"]
+        supply_view = pd.DataFrame(
+            [
+                {"Supply Assumption": "Earliest Supply Available Date", "Value": supply.get("Earliest Supply Available Date", "")},
+                {"Supply Assumption": "Launch Stock Available?", "Value": supply.get("Launch Stock Available?", "")},
+                {"Supply Assumption": "Can Projected Demand Be Supplied?", "Value": supply.get("Can Projected Demand Be Supplied?", "")},
+                {"Supply Assumption": "Major Supply Risk", "Value": supply.get("Major Supply Risk", "")},
+                {"Supply Assumption": "Mitigation", "Value": supply.get("Mitigation", "")},
+            ]
+        )
+        st.dataframe(supply_view, use_container_width=True, hide_index=True)
+        if supply.get("Can Projected Demand Be Supplied?") in {"At Risk", "No"}:
+            capacity_view = pd.DataFrame([{"Capacity Metric": "Maximum Available Units", **supply.get("Maximum Available Units", {})}])
+            st.dataframe(capacity_view, use_container_width=True, hide_index=True)
+
+    st.markdown("<div class='enterprise-section-title'>5-Year P&L</div>", unsafe_allow_html=True)
+    st.dataframe(format_launch_financial_table(model["pnl"]), use_container_width=True, hide_index=True)
+
+    st.markdown("<div class='enterprise-section-title'>Scenarios</div>", unsafe_allow_html=True)
+    st.dataframe(model["scenario_summary"], use_container_width=True, hide_index=True)
+
+    with st.expander("Traceability"):
+        st.write("Revenue is calculated through: Patient Population -> Clinical Eligibility -> Access -> Market Share -> Patients on Product -> Utilization -> Units -> Net Price -> Revenue -> COGS / OPEX -> Operating Profit.")
+
+
+def apply_launch_assumption_overrides(case_id: str, assumptions: pd.DataFrame) -> pd.DataFrame:
+    overrides = st.session_state.get("launch_assumption_overrides", {})
+    case_overrides = overrides.get(case_id, {}) if isinstance(overrides, dict) else {}
+    if assumptions.empty or not case_overrides:
+        return assumptions
+    updated = assumptions.copy()
+    for assumption_id, fields in case_overrides.items():
+        mask = updated["Assumption ID"].astype(str).eq(str(assumption_id))
+        if not mask.any() or not isinstance(fields, dict):
+            continue
+        for column in ["Validation Status", "Comments", "Last Updated"]:
+            if column in fields:
+                updated.loc[mask, column] = fields[column]
+    return updated
+
+
+def update_launch_assumption(case_id: str, assumption_id: str, validation_status: str, comment: str) -> None:
+    overrides = dict(st.session_state.get("launch_assumption_overrides", {}))
+    case_overrides = dict(overrides.get(case_id, {}))
+    current = dict(case_overrides.get(assumption_id, {}))
+    current.update(
+        {
+            "Validation Status": validation_status,
+            "Comments": comment,
+            "Last Updated": date.today().isoformat(),
+        }
+    )
+    case_overrides[assumption_id] = current
+    overrides[case_id] = case_overrides
+    st.session_state.launch_assumption_overrides = overrides
+    add_audit(
+        case_id,
+        "Launch Assumption Updated",
+        entity="Launch Assumption",
+        details=f"{assumption_id} set to {validation_status}.",
+        comment=comment,
+        approval_step="Launch Sandbox",
+    )
+
+
 def launch_assumptions(case_id: str) -> pd.DataFrame:
     rows = [
-        ("ASM-001", case_id, "Marketing", "Market Opportunity", "Clinically Addressable Population", "TBD", "Patients", "Y1-Y5", "Marketing", "Medical", "Market research", "Patient flow to be validated.", "Medium", "Draft", "", "2026-09-03"),
-        ("ASM-002", case_id, "Market Access", "Coverage / Reimbursement", "Commercially Accessible Population", "TBD", "Patients", "Y1-Y5", "Market Access", "Medical, Marketing, Finance", "Access plan", "Must remain distinct from clinical eligibility.", "Medium", "Not Started", "", "2026-09-03"),
-        ("ASM-003", case_id, "Market Access", "Access Ramp", "Coverage Rate", "TBD", "%", "Y1-Y5", "Market Access", "Marketing, Finance", "Access scenario", "Supports future multi-year coverage ramp.", "Medium", "Draft", "", "2026-09-03"),
-        ("ASM-004", case_id, "Marketing", "Adoption / Market Share", "Product Share", "TBD", "%", "Y1-Y5", "Marketing", "Sales", "Launch plan", "Adoption should be checked against commercially accessible patients.", "Medium", "Submitted for Validation", "", "2026-09-03"),
-        ("ASM-005", case_id, "Finance", "P&L", "Net Price", "TBD", "Local currency", "Y1-Y5", "Finance", "Market Access", "Pricing reference", "Future model should connect treated patients, units, net price and revenue.", "Medium", "Not Started", "", "2026-09-03"),
-        ("ASM-006", case_id, "Supply / Operations", "Supply Capacity", "Launch Supply Capacity", "TBD", "Units", "Y1-Y5", "Supply / Operations", "Sales", "Supply plan", "Future constraint check compares capacity with unit demand.", "Medium", "Draft", "", "2026-09-03"),
+        ("ASM-001", case_id, "Marketing", "Market Opportunity", "Clinically Addressable Population", "TBD", "Patients", "Y1-Y5", "Marketing", "Medical", "Market Research", "Market research", "Patient flow to be validated by Medical before it feeds access and revenue scenarios.", "Medium", "Draft", "", "2026-09-03"),
+        ("ASM-002", case_id, "Market Access", "Coverage / Reimbursement", "Commercially Accessible Population", "TBD", "Patients", "Y1-Y5", "Market Access", "Medical, Marketing, Finance", "Management Assumption", "Access plan", "Must remain distinct from clinical eligibility and driven by coverage, access restrictions and affordability.", "Medium", "Not Started", "", "2026-09-03"),
+        ("ASM-003", case_id, "Market Access", "Access Ramp", "Coverage Rate", "TBD", "%", "Y1-Y5", "Market Access", "Marketing, Finance", "Expert Opinion", "Access scenario", "Supports future multi-year coverage ramp rather than a single static launch assumption.", "Medium", "Draft", "", "2026-09-03"),
+        ("ASM-004", case_id, "Marketing", "Adoption / Market Share", "Product Share", "TBD", "%", "Y1-Y5", "Marketing", "Sales", "Market Research", "Launch plan", "Adoption should be checked against commercially accessible patients and future sales coverage assumptions.", "Medium", "Submitted for Validation", "", "2026-09-03"),
+        ("ASM-005", case_id, "Finance", "P&L", "Net Price", "TBD", "Local currency", "Y1-Y5", "Finance", "Market Access", "Internal Data", "Pricing reference", "Future model should connect treated patients, units, net price and revenue without manual revenue re-entry.", "Medium", "Not Started", "", "2026-09-03"),
+        ("ASM-006", case_id, "Supply / Operations", "Supply Capacity", "Launch Supply Capacity", "TBD", "Units", "Y1-Y5", "Supply / Operations", "Sales", "Internal Data", "Supply plan", "Future constraint check compares supply capacity with forecast unit demand.", "Medium", "Draft", "", "2026-09-03"),
     ]
-    return pd.DataFrame(
+    assumptions = pd.DataFrame(
         rows,
         columns=[
             "Assumption ID",
@@ -4236,14 +4893,16 @@ def launch_assumptions(case_id: str) -> pd.DataFrame:
             "Period / Year",
             "Owner",
             "Validators",
+            "Source Type",
             "Source",
-            "Rationale",
+            "Rationale / Comment",
             "Confidence",
             "Validation Status",
             "Comments",
             "Last Updated",
         ],
     )
+    return apply_launch_assumption_overrides(case_id, assumptions)
 
 
 def launch_top_navigation() -> None:
@@ -4330,13 +4989,13 @@ def page_launch_new_case(data: dict[str, pd.DataFrame]) -> None:
 
 def render_launch_workstream_sections(workstream: str) -> None:
     sections = {
-        "Marketing": ["Market Opportunity", "Patient Flow", "Addressable Population", "Adoption / Market Share", "Competitive Landscape"],
+        "Marketing": ["Market Opportunity", "Patient Flow", "Adoption / Market Share", "Competitive Landscape"],
         "Sales": ["Target Accounts / Centers", "Sales Force", "Coverage", "Reach / Frequency", "Commercial Ramp-up"],
-        "Medical": ["Treatment Pathway", "Patient Eligibility", "Severity / Segmentation", "Line of Therapy", "Dosing / Duration", "Compliance / Persistence", "Evidence Readiness"],
-        "Market Access": ["Access Pathway", "Coverage / Reimbursement", "Access Timing", "Covered Population", "Eligibility Restrictions", "Geographic / Account Coverage", "Patient Co-pay / OOP", "Access Ramp", "Target Price", "Net Price", "Access Scenarios"],
-        "Regulatory": ["Submission", "Approval Timing", "Expected Label", "Indications", "Regulatory Milestones", "Launch-enabling Dates", "Regulatory Risks"],
-        "Supply / Operations": ["Launch Stock", "Lead Time", "Capacity", "Inventory", "Shelf Life", "Supply Constraints", "Supply Ramp-up"],
-        "Finance": ["COGS", "OPEX", "Launch Investment", "P&L", "Scenario Analysis", "Financial Validation"],
+        "Medical": ["Treatment Pathway", "Patient Eligibility", "Line of Therapy", "Dosing / Duration", "Compliance / Persistence", "Evidence Readiness"],
+        "Market Access": ["Access Pathway", "Coverage / Reimbursement", "Access Timing", "Covered Population", "OOP / Co-pay", "Target Price", "Net Price", "Access Scenarios"],
+        "Regulatory": ["Approval Timing", "Expected Label", "Key Regulatory Dependencies", "Material Risks"],
+        "Supply / Operations": ["Earliest Supply Available Date", "Launch Stock Available?", "Can projected demand be supplied?", "Major Supply Risk", "Mitigation", "Incremental Supply Investment / Projects"],
+        "Finance": ["COGS", "Functional Personnel", "Functional Projects", "Launch Investment", "P&L placeholder", "Scenario Analysis placeholder"],
     }
     st.markdown(f"<div class='enterprise-section-title'>{workstream}</div>", unsafe_allow_html=True)
     cols = st.columns(2)
@@ -4362,6 +5021,8 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
 
     workstreams = launch_workstreams(str(selected_id))
     assumptions = launch_assumptions(str(selected_id))
+    scenario = st.selectbox("Scenario", LAUNCH_SCENARIOS, index=1, key=f"launch_scenario_{selected_id}")
+    model = calculate_launch_model(data, case, scenario)
     with tabs[0]:
         st.markdown("<div class='enterprise-section-title'>Integrated Launch Model</div>", unsafe_allow_html=True)
         st.write("Epidemiology -> Clinically Addressable Population -> Accessibility / Coverage -> Commercially Accessible Population -> Adoption / Market Share -> Treated Patients -> Utilization -> Units -> Net Price -> Revenue -> COGS / OPEX -> Operating Profit")
@@ -4372,6 +5033,22 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
         with cols[1].container(border=True):
             st.markdown("**Commercially Accessible Population**")
             st.caption("Future access-adjusted population driven by coverage, reimbursement, affordability and access timing.")
+        st.markdown("<div class='enterprise-section-title'>Assumption Input Modes</div>", unsafe_allow_html=True)
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Assumption": "Population", "Mode": "Constant Across Forecast", "Owner": "Marketing", "Validator(s)": "Medical"},
+                    {"Assumption": "Access / Coverage Rate", "Mode": "By Year", "Owner": "Market Access", "Validator(s)": "Marketing, Finance"},
+                    {"Assumption": "Market Share", "Mode": "By Year", "Owner": "Marketing", "Validator(s)": "Sales"},
+                    {"Assumption": "Sales Force HC / FTE", "Mode": "By Year", "Owner": "Sales", "Validator(s)": "Marketing, Finance"},
+                    {"Assumption": "Average Cost per FTE", "Mode": "Constant Across Forecast", "Owner": "Finance", "Validator(s)": "Functional Owner"},
+                    {"Assumption": "Utilization per Patient", "Mode": "Constant Across Forecast", "Owner": "Medical", "Validator(s)": "Marketing, Finance"},
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        render_launch_model_sections(str(selected_id), case, data, model)
         st.markdown("<div class='enterprise-section-title'>Workstream Progress</div>", unsafe_allow_html=True)
         st.dataframe(workstreams, use_container_width=True, hide_index=True)
         st.markdown("<div class='enterprise-section-title'>Critical Open Issues</div>", unsafe_allow_html=True)
@@ -4383,7 +5060,67 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
 
     with tabs[2]:
         st.markdown("<div class='enterprise-section-title'>Shared Assumption Register</div>", unsafe_allow_html=True)
-        st.dataframe(assumptions, use_container_width=True, hide_index=True)
+        compact_assumptions = assumptions[
+            [
+                "Assumption ID",
+                "Workstream",
+                "Category",
+                "Assumption Name",
+                "Value",
+                "Unit",
+                "Period / Year",
+                "Owner",
+                "Validators",
+                "Source Type",
+                "Confidence",
+                "Validation Status",
+                "Last Updated",
+            ]
+        ]
+        st.dataframe(compact_assumptions, use_container_width=True, hide_index=True)
+
+        selected_assumption_id = st.selectbox(
+            "Assumption Detail",
+            assumptions["Assumption ID"].tolist(),
+            key=f"launch_assumption_detail_{selected_id}",
+            format_func=lambda assumption_id: f"{assumption_id} • {assumptions.loc[assumptions['Assumption ID'].eq(assumption_id), 'Assumption Name'].iloc[0]}",
+        )
+        selected_assumption = assumptions[assumptions["Assumption ID"].eq(selected_assumption_id)].iloc[0]
+        with st.expander("Rationale, comments and validation", expanded=True):
+            detail_cols = st.columns(3)
+            detail_cols[0].metric("Owner", selected_assumption.get("Owner", ""))
+            detail_cols[1].metric("Validators", selected_assumption.get("Validators", ""))
+            detail_cols[2].metric("Status", selected_assumption.get("Validation Status", ""))
+            st.markdown("**Rationale / Comment**")
+            st.write(str(selected_assumption.get("Rationale / Comment", "")))
+            existing_comments = str(selected_assumption.get("Comments", "") or "").strip()
+            if existing_comments:
+                st.markdown("**Validation Comments**")
+                st.write(existing_comments)
+
+            user_workstream = launch_user_workstream()
+            owner = str(selected_assumption.get("Owner", ""))
+            validators = split_validators(selected_assumption.get("Validators", ""))
+            is_owner = user_workstream == owner or current_role() == "System Administrator"
+            is_validator = user_workstream in validators or current_role() == "System Administrator"
+            if is_owner:
+                st.info("You are the accountable owner for this assumption. One owner remains accountable for the value.")
+            if is_validator:
+                validation_comment = st.text_area(
+                    "Validator Comment",
+                    key=f"launch_validation_comment_{selected_id}_{selected_assumption_id}",
+                    placeholder="Add a concise validation comment.",
+                )
+                action_cols = st.columns(2)
+                if action_cols[0].button("Confirm", key=f"launch_confirm_{selected_id}_{selected_assumption_id}"):
+                    update_launch_assumption(str(selected_id), str(selected_assumption_id), "Aligned", validation_comment)
+                    st.success("Assumption confirmed.")
+                if action_cols[1].button("Request Change", key=f"launch_request_change_{selected_id}_{selected_assumption_id}"):
+                    update_launch_assumption(str(selected_id), str(selected_assumption_id), "Alignment Required", validation_comment)
+                    st.success("Change request captured.")
+            elif not is_owner:
+                st.caption("This user can view the assumption register. Validation actions are shown to the required validators.")
+
         st.markdown("<div class='enterprise-section-title'>Responsibility Matrix</div>", unsafe_allow_html=True)
         st.dataframe(launch_responsibility_matrix(), use_container_width=True, hide_index=True)
         st.caption("Each assumption has one accountable owner and one or more required validators. Future alignment workflow will support confirm or request-change decisions with comments.")
