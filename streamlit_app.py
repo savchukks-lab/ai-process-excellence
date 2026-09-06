@@ -4257,6 +4257,10 @@ def launch_is_coordinator() -> bool:
 
 def on_launch_role_change() -> None:
     st.session_state.launch_case_section = "Workstreams"
+    if st.session_state.get("launch_current_role") == "Marketing · Launch Coordinator":
+        case_id = str(st.session_state.get("selected_launch_case_id") or "")
+        if case_id:
+            st.session_state[f"launch_coordinator_workspace_{case_id}"] = "Marketing"
 
 
 def split_validators(value: object) -> list[str]:
@@ -4500,6 +4504,7 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
                 row["Value"] = safe_float(value(assumption_name, row.get("Value", 0)))
     updated["market_share"] = years("Market Share / Adoption", updated["market_share"])
     updated["access_rate"] = years("Access Ramp", updated["access_rate"])
+    updated["access_archetype"] = str(value("Access Archetype", ""))
     updated["expected_access_date"] = str(value("Expected Access / Reimbursement Date", updated.get("expected_access_date", "")))
     updated["sales_resources"]["Sales Force HC / FTE"] = years("Sales Force FTE", updated["sales_resources"]["Sales Force HC / FTE"])
     updated["sales_resources"]["Target Accounts / Centers"] = safe_float(value("Target Accounts / Centers", updated["sales_resources"]["Target Accounts / Centers"]))
@@ -4700,7 +4705,7 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
     inputs = apply_launch_assumptions_to_inputs(inputs, assumption_records)
     adjustments = launch_scenario_adjustments(inputs, scenario)
     multiplier = adjustments["Population"]
-    flow_rows = get_launch_patient_flow(str(case.get("Launch Case ID", "")), inputs["patient_flow"])
+    flow_rows = [dict(row) for row in inputs["patient_flow"]]
     patient_flow = calculate_patient_flow(flow_rows, multiplier)
     clinical_patients = safe_float(patient_flow["Output Patients"].iloc[-1]) if not patient_flow.empty else 0.0
 
@@ -4714,7 +4719,7 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
     base_price = safe_float(pricing.get("List / Base Price")) or safe_float(product.get("Gross Price"))
     realized_net_price = base_price * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %"))) * adjustments["Net Price"]
     unit_cost = (safe_float(inputs.get("cogs_per_unit")) or safe_float(product.get("Standard Cost"))) * adjustments["COGS"]
-    archetype = str(case.get("Access Archetype", ""))
+    archetype = str(inputs.get("access_archetype") or case.get("Access Archetype", ""))
     planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
     planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
     commercial_gate_date = max(
@@ -4872,7 +4877,7 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
     inputs = apply_launch_assumptions_to_inputs(inputs, assumption_records)
     adjustments = launch_scenario_adjustments(inputs, scenario)
     multiplier = adjustments["Population"]
-    patient_flow = calculate_patient_flow(get_launch_patient_flow(str(case.get("Launch Case ID", "")), inputs["patient_flow"]), multiplier)
+    patient_flow = calculate_patient_flow([dict(row) for row in inputs["patient_flow"]], multiplier)
     clinical_patients = safe_float(patient_flow["Output Patients"].iloc[-1]) if not patient_flow.empty else 0.0
     launch_year = launch_year_from_case(case)
     regulatory = inputs["regulatory"]
@@ -4891,7 +4896,8 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
         planned_launch_date,
         str(supply.get("Earliest Supply Available Date", planned_launch_date)),
     )
-    if str(case.get("Access Archetype", "")) == "Reimbursement Dependent":
+    archetype = str(inputs.get("access_archetype") or case.get("Access Archetype", ""))
+    if archetype == "Reimbursement Dependent":
         commercial_gate_date = max(commercial_gate_date, str(inputs.get("expected_access_date", commercial_gate_date)))
     commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
     y5_patients = 0.0
@@ -4907,7 +4913,6 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
             launch_availability_fraction(planned_launch_date, launch_year, index),
             launch_availability_fraction(commercial_gate_date, launch_year, index),
         )
-        archetype = str(case.get("Access Archetype", ""))
         if archetype == "Mixed Access":
             channels = pd.DataFrame(inputs.get("access_channels", []))
             channel_access = channels["Accessible Patient %"].sum() if not channels.empty and "Accessible Patient %" in channels else safe_float(access_rate.get(year))
@@ -4971,44 +4976,8 @@ def format_launch_forecast_table(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_launch_patient_flow_config(case_id: str, inputs: dict[str, object]) -> None:
     st.markdown("<div class='enterprise-section-title'>Configurable Patient Flow</div>", unsafe_allow_html=True)
-    flow_rows = get_launch_patient_flow(case_id, inputs["patient_flow"])
-    action_cols = st.columns([0.8, 1, 0.8, 0.8, 0.8, 1.2])
-    optional_steps = [row["Step"] for row in flow_rows if row.get("Optional")]
-    selected_step = action_cols[1].selectbox("Optional Step", optional_steps or ["No optional steps"], key=f"launch_remove_step_{case_id}")
-    if action_cols[0].button("Add Step", key=f"launch_add_step_{case_id}"):
-        flow_rows.append({"Step": "Custom Step", "Input Type": "percentage conversion", "Value": 1.0, "Owner": "Marketing", "Validators": "Medical", "Optional": True})
-        set_launch_patient_flow(case_id, flow_rows)
-        st.rerun()
-    if action_cols[2].button("Remove", key=f"launch_remove_step_button_{case_id}", disabled=not optional_steps):
-        set_launch_patient_flow(case_id, [row for row in flow_rows if row.get("Step") != selected_step])
-        st.rerun()
-    if action_cols[3].button("Move Up", key=f"launch_move_step_up_{case_id}", disabled=not optional_steps):
-        index = next((idx for idx, row in enumerate(flow_rows) if row.get("Step") == selected_step), None)
-        if index is not None and index > 0:
-            flow_rows[index - 1], flow_rows[index] = flow_rows[index], flow_rows[index - 1]
-            set_launch_patient_flow(case_id, flow_rows)
-            st.rerun()
-    if action_cols[4].button("Move Down", key=f"launch_move_step_down_{case_id}", disabled=not optional_steps):
-        index = next((idx for idx, row in enumerate(flow_rows) if row.get("Step") == selected_step), None)
-        if index is not None and index < len(flow_rows) - 1:
-            flow_rows[index + 1], flow_rows[index] = flow_rows[index], flow_rows[index + 1]
-            set_launch_patient_flow(case_id, flow_rows)
-            st.rerun()
-    edited = st.data_editor(
-        pd.DataFrame(flow_rows),
-        key=f"launch_patient_flow_editor_{case_id}",
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Input Type": st.column_config.SelectboxColumn("Input Type", options=["percentage conversion", "absolute patients"]),
-            "Owner": st.column_config.SelectboxColumn("Owner", options=["Marketing", "Medical", "Market Access", "Sales"]),
-        },
-    )
-    edited_rows = edited.fillna("").to_dict("records")
-    if edited_rows != pd.DataFrame(flow_rows).fillna("").to_dict("records"):
-        set_launch_patient_flow(case_id, edited_rows)
-        st.rerun()
-    st.caption("Input rows are editable assumptions. Output patient counts are calculated downstream by the integrated model.")
+    st.dataframe(pd.DataFrame(inputs["patient_flow"]), hide_index=True, use_container_width=True)
+    st.caption("Patient-flow assumptions are edited by their owners in Workstreams and calculated through the shared assumption register.")
 
 
 def render_launch_model_sections(case_id: str, case: pd.Series, data: dict[str, pd.DataFrame], model: dict[str, object]) -> None:
@@ -5185,18 +5154,27 @@ def launch_assumptions(data: dict[str, pd.DataFrame], case: pd.Series, model: di
     return updated
 
 
+def clear_launch_case_selection() -> None:
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("launch_case_selected_"):
+            del st.session_state[key]
+
+
 def launch_top_navigation() -> None:
     nav_cols = st.columns([0.9, 1.2, 1.1, 2.2])
     if nav_cols[0].button("Platform Home", key="launch_platform_home"):
+        clear_launch_case_selection()
         st.session_state.current_module = "platform_home"
         st.session_state.launch_page = "Launch Sandbox Home"
         st.session_state.selected_launch_case_id = None
         st.rerun()
     if nav_cols[1].button("Launch Sandbox Home", key="launch_home"):
+        clear_launch_case_selection()
         st.session_state.launch_page = "Launch Sandbox Home"
         st.session_state.selected_launch_case_id = None
         st.rerun()
     if nav_cols[2].button("New Launch Case", key="launch_new_case", disabled=not launch_is_coordinator()):
+        clear_launch_case_selection()
         st.session_state.launch_page = "New Launch Case"
         st.session_state.selected_launch_case_id = None
         st.rerun()
@@ -5289,7 +5267,7 @@ def page_launch_home(data: dict[str, pd.DataFrame]) -> None:
     preview_cols[3].metric("Access", selected_case.get("Access Archetype", ""))
     if st.button("Open Launch Case", key="open_launch_case"):
         st.session_state.launch_page = "Launch Case"
-        st.session_state.launch_case_section = "Overview"
+        st.session_state.launch_case_section = "Workstreams"
         st.rerun()
 
 
@@ -5351,6 +5329,22 @@ def launch_assumption_permission(assumption: pd.Series | dict[str, object]) -> s
     if role_workstream in validators:
         permissions.add("VALIDATE")
     return permissions
+
+
+def launch_assumption_display_value(assumption: pd.Series | dict[str, object]) -> str:
+    value_type = str(assumption.get("Value Type", ""))
+    if value_type.startswith("Yearly"):
+        is_percentage = value_type == "Yearly Percentage"
+        values = []
+        for year in LAUNCH_YEARS:
+            value = safe_float(assumption.get(year))
+            values.append(f"{year} {pct(value) if is_percentage else f'{value:,.1f}'}")
+        return " · ".join(values)
+    if value_type == "Percentage":
+        return pct(assumption.get("Value"))
+    if value_type == "Number":
+        return f"{safe_float(assumption.get('Value')):,.2f}"
+    return str(assumption.get("Value", ""))
 
 
 def update_launch_assumption_record(case_id: str, assumption_id: str, updates: dict[str, object]) -> None:
@@ -5444,34 +5438,41 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
     case_id = str(case.get("Launch Case ID", ""))
     assumptions = launch_assumptions(data, case)
     owned = assumptions[(assumptions["Owner"].eq(workspace)) & (~assumptions["Calculated"].astype(bool))]
-    if workspace == "Supply / Operations":
-        feasibility = assumptions[assumptions["Assumption Name"].eq("Can Projected Demand Be Supplied?")]
-        show_capacity = not feasibility.empty and str(feasibility.iloc[0].get("Value")) in {"At Risk", "No"}
-        if not show_capacity:
-            owned = owned[~owned["Assumption Name"].eq("Maximum Available Units")]
     st.markdown(f"<div class='enterprise-section-title'>{workspace.upper()}</div>", unsafe_allow_html=True)
     st.markdown("### My Inputs")
     if owned.empty:
         st.info("No owned inputs are configured for this workstream.")
     else:
         for _, assumption in owned.iterrows():
+            if workspace == "Supply / Operations" and assumption.get("Assumption Name") == "Maximum Available Units":
+                current = launch_assumptions(data, case)
+                feasibility = current[current["Assumption Name"].eq("Can Projected Demand Be Supplied?")]
+                if feasibility.empty or str(feasibility.iloc[0].get("Value")) not in {"At Risk", "No"}:
+                    continue
             with st.container(border=True):
                 render_launch_assumption_input(case_id, assumption)
 
     refreshed = launch_assumptions(data, case)
+    refreshed = refreshed.copy()
+    refreshed["Display Value"] = refreshed.apply(launch_assumption_display_value, axis=1)
     validators_mask = refreshed["Validators"].astype(str).map(lambda value: workspace in split_validators(value))
     to_validate = refreshed[validators_mask & ~refreshed["Owner"].eq(workspace)]
     st.markdown("### To Validate")
     if to_validate.empty:
         st.caption("No assumptions currently require this function's validation.")
     else:
-        st.dataframe(to_validate[["Assumption Name", "Owner", "Value", "Unit", "Rationale / Comment", "Validation Status"]], use_container_width=True, hide_index=True)
+        st.dataframe(to_validate[["Assumption Name", "Owner", "Display Value", "Unit", "Rationale / Comment", "Validation Status"]], use_container_width=True, hide_index=True)
     model = calculate_launch_model(data, case, "Base")
     st.markdown("### Key Outputs / Dependencies")
     launch_key_outputs(workspace, model)
     if workspace == "Finance":
         st.caption("Revenue is system-calculated. Finance owns cost inputs and validates the integrated financial result.")
         st.dataframe(format_launch_financial_table(model["pnl"]), use_container_width=True, hide_index=True)
+        with st.expander("Personnel and project inputs"):
+            st.dataframe(model["personnel"], use_container_width=True, hide_index=True)
+            st.dataframe(model["projects"], use_container_width=True, hide_index=True)
+        with st.expander("Scenario analysis"):
+            st.dataframe(model["scenario_summary"], use_container_width=True, hide_index=True)
 
 
 def update_launch_responsibility_matrix(case_id: str, edited: pd.DataFrame) -> None:
@@ -5524,8 +5525,10 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
         render_launch_workspace(case, data, workspace)
     elif section == "Assumptions":
         st.markdown("<div class='enterprise-section-title'>Shared Assumption Register</div>", unsafe_allow_html=True)
+        register = assumptions.copy()
+        register["Value"] = register.apply(launch_assumption_display_value, axis=1)
         register_columns = ["Assumption ID", "Workstream", "Category", "Assumption Name", "Value", "Unit", "Owner", "Validators", "Source Type", "Confidence", "Validation Status", "Last Updated"]
-        st.dataframe(assumptions[register_columns], use_container_width=True, hide_index=True)
+        st.dataframe(register[register_columns], use_container_width=True, hide_index=True)
         st.markdown("<div class='enterprise-section-title'>Responsibility Matrix</div>", unsafe_allow_html=True)
         matrix = launch_responsibility_matrix(assumptions[~assumptions["Calculated"].astype(bool)])
         if launch_is_coordinator():
