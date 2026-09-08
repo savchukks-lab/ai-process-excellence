@@ -1282,7 +1282,6 @@ def init_state() -> None:
     st.session_state.setdefault("selected_launch_case_id", None)
     st.session_state.setdefault("launch_assumption_overrides", {})
     st.session_state.setdefault("launch_current_role", "Marketing · Launch Coordinator")
-    st.session_state.setdefault("launch_case_section", "Overview")
     st.session_state.setdefault("launch_runtime_cases", [])
 
 
@@ -4245,6 +4244,38 @@ LAUNCH_SCENARIOS = ["Downside", "Base", "Upside"]
 LAUNCH_WORKSTREAMS = ["Marketing", "Sales", "Medical", "Market Access", "Regulatory", "Supply / Operations", "Finance"]
 LAUNCH_ROLES = ["Marketing · Launch Coordinator", "Sales", "Medical", "Market Access", "Regulatory", "Supply / Operations", "Finance"]
 
+CENTRAL_REFERENCE_LIBRARY = {
+    "Population": {
+        "Region A": {
+            "Reference": "Region A Population",
+            "Reference Year": 2026,
+            "Last Updated": "2026-09-01",
+            "Values": {"Y1": 520_000, "Y2": 522_100, "Y3": 524_200, "Y4": 526_300, "Y5": 528_400},
+        },
+        "Region B": {
+            "Reference": "Region B Population",
+            "Reference Year": 2026,
+            "Last Updated": "2026-09-01",
+            "Values": {"Y1": 1_250_000, "Y2": 1_257_500, "Y3": 1_265_000, "Y4": 1_272_600, "Y5": 1_280_200},
+        },
+        "Region C": {
+            "Reference": "Region C Population",
+            "Reference Year": 2026,
+            "Last Updated": "2026-09-01",
+            "Values": {"Y1": 870_000, "Y2": 874_400, "Y3": 878_800, "Y4": 883_200, "Y5": 887_600},
+        },
+    }
+}
+
+
+def central_population_reference(case: pd.Series) -> dict[str, object]:
+    market = str(case.get("Market / Region", "Region A"))
+    references = CENTRAL_REFERENCE_LIBRARY["Population"]
+    reference = deepcopy(references.get(market, references["Region A"]))
+    reference["Source"] = "Central Reference Data"
+    reference["Market / Region"] = market
+    return reference
+
 
 def launch_user_workstream() -> str:
     role = str(st.session_state.get("launch_current_role", LAUNCH_ROLES[0]))
@@ -4367,6 +4398,7 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
         calculated: bool = False,
         assumption_type: str = "MANAGEMENT / FUNCTIONAL",
         enabled: bool = True,
+        owner: str | None = None,
     ) -> None:
         row: dict[str, object] = {
             "Assumption ID": f"ASM-{len(records) + 1:03d}",
@@ -4378,7 +4410,7 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
             "Value Type": value_type,
             "Unit": unit,
             "Forecast Mode": "By Year" if yearly is not None else "Constant Across Forecast",
-            "Owner": "System" if calculated else workstream,
+            "Owner": "System" if calculated else (owner or workstream),
             "Validators": validators,
             "Source Type": "Internal Data",
             "Source": source,
@@ -4396,21 +4428,32 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
             row[year] = safe_float((yearly or {}).get(year)) if yearly is not None else None
         records.append(row)
 
-    population = safe_float(flow.get("Population", {}).get("Value", 0))
+    population_reference = central_population_reference(case)
+    population_values = {year: safe_float(population_reference["Values"].get(year)) for year in LAUNCH_YEARS}
     prevalence = safe_float(flow.get("Prevalence", flow.get("Prevalence / Incidence", {})).get("Value", 0))
     diagnosis_rate = safe_float(flow.get("Diagnosis Rate", {}).get("Value", 0))
     treatment_rate = safe_float(flow.get("Treatment Rate / Treatment Eligibility", flow.get("Treatment Eligibility", {})).get("Value", 0))
-    treated_patients = population * prevalence * diagnosis_rate * treatment_rate
-    market_accessible = launch_year_values(treated_patients * 0.90)
-
-    add("Marketing", "Market Opportunity", "Population", "", "Yearly Integer", "People", yearly=launch_year_values(population), assumption_type="MASTER DATA", source="Public population reference", confidence="")
+    add("Reference Data", "Market Opportunity", "Population", "", "Yearly Integer", "People", yearly=population_values, assumption_type="MASTER DATA", source="Central Reference Data", confidence="", owner="Central Reference Data")
+    records[-1].update(
+        {
+            "Reference": population_reference["Reference"],
+            "Reference Year": population_reference["Reference Year"],
+            "Reference Last Updated": population_reference["Last Updated"],
+            "Reference Values": deepcopy(population_values),
+            "Case Snapshot": deepcopy(population_values),
+            "Override Enabled": False,
+            "Override Values": {},
+            "Override Rationale": "",
+        }
+    )
     add("Medical", "Market Opportunity", "Prevalence", "", "Yearly Percentage", "%", "Marketing", launch_year_values(prevalence), assumption_type="EVIDENCE-BASED", source="Published epidemiology evidence")
     add("System", "Calculated Funnel", "Disease Population", "Calculated", "Calculated", "People", calculated=True)
     add("Medical", "Market Opportunity", "Diagnosis Rate", "", "Yearly Percentage", "%", "Marketing", launch_year_values(diagnosis_rate), assumption_type="EVIDENCE-BASED", source="Published diagnosis evidence")
     add("System", "Calculated Funnel", "Diagnosed Patients", "Calculated", "Calculated", "Patients", calculated=True)
     add("Medical", "Market Opportunity", "Treatment Rate / Treatment Eligibility", "", "Yearly Percentage", "%", "Marketing", launch_year_values(treatment_rate), assumption_type="EVIDENCE-BASED", source="Treatment pathway evidence")
     add("System", "Calculated Funnel", "Treated Patients", "Calculated", "Calculated", "Patients", calculated=True)
-    add("Market Access", "Access", "Market Accessible Patients", "", "Yearly Integer", "Patients", "Marketing", market_accessible, assumption_type="EVIDENCE-BASED", source="Category access estimate")
+    add("Market Access", "Access", "Market Accessibility Rate", "", "Yearly Percentage", "%", "Marketing", launch_year_values(0.90), assumption_type="EVIDENCE-BASED", source="Category access estimate")
+    add("System", "Calculated Funnel", "Market Accessible Patients", "Calculated", "Calculated", "Patients", calculated=True)
     add("Market Access", "Access", "Product Access Rate", "", "Yearly Percentage", "%", "Marketing", inputs["access_rate"], assumption_type="MANAGEMENT / FUNCTIONAL", rationale="Product access ramp based on expected market access milestones.")
     add("System", "Calculated Funnel", "Product Accessible Patients", "Calculated", "Calculated", "Patients", calculated=True)
     add("Marketing", "Adoption", "Share Within Accessible Segment", "", "Yearly Percentage", "%", "Sales", inputs["market_share"], assumption_type="MANAGEMENT / FUNCTIONAL", rationale="Adoption share within the population that can access the product.")
@@ -4503,6 +4546,7 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
         "Treatment Rate / Treatment Eligibility": ["Treatment Rate / Treatment Eligibility", "Treatment Eligibility"],
         "Share Within Accessible Segment": ["Share Within Accessible Segment", "Market Share / Adoption"],
         "Product Access Rate": ["Product Access Rate", "Access Ramp"],
+        "Market Accessibility Rate": ["Market Accessibility Rate"],
         "Sales FTE": ["Sales FTE", "Sales Force FTE"],
         "Population-weighted Geographic Coverage %": ["Population-weighted Geographic Coverage %", "Coverage %"],
         "Sales Execution Strategy": ["Sales Execution Strategy", "Commercial Ramp-up"],
@@ -4516,7 +4560,7 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
             normalized.append(deepcopy(default))
             continue
         merged = deepcopy(default)
-        for field in ["Value", "Forecast Mode", "Source Type", "Source", "Rationale / Comment", "Confidence", "Validation Status", "Enabled", "Validation History", "Last Updated"]:
+        for field in ["Value", "Forecast Mode", "Source Type", "Source", "Rationale / Comment", "Confidence", "Validation Status", "Enabled", "Validation History", "Last Updated", "Case Snapshot", "Override Enabled", "Override Values", "Override Rationale"]:
             if field in existing:
                 merged[field] = deepcopy(existing[field])
         if str(default.get("Value Type", "")).startswith("Yearly"):
@@ -4563,7 +4607,7 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
                 row["Value"] = safe_float(assumption.get("Y1", value(assumption_name, row.get("Value", 0))))
     updated["market_share"] = years("Share Within Accessible Segment", updated["market_share"])
     updated["access_rate"] = years("Product Access Rate", updated["access_rate"])
-    updated["market_accessible_patients"] = years("Market Accessible Patients", launch_year_values(0))
+    updated["market_accessibility_rate"] = years("Market Accessibility Rate", launch_year_values(0.90))
     updated["access_archetype"] = str(value("Access Archetype", ""))
     updated["expected_access_date"] = str(value("Expected Access / Reimbursement Date", updated.get("expected_access_date", "")))
     updated["sales_resources"]["Sales Force HC / FTE"] = years("Sales FTE", updated["sales_resources"]["Sales Force HC / FTE"])
@@ -4689,7 +4733,8 @@ def calculate_launch_funnel(records: list[dict[str, object]], adjustments: dict[
         diagnosed_patients = disease_population * diagnosis_rate
         treatment_rate = yearly("Treatment Rate / Treatment Eligibility", year)
         treated_patients = diagnosed_patients * treatment_rate
-        market_accessible = yearly("Market Accessible Patients", year) * safe_float(adjustments.get("Population", 1.0))
+        market_accessibility_rate = min(1.0, yearly("Market Accessibility Rate", year))
+        market_accessible = treated_patients * market_accessibility_rate
         product_access_rate = min(1.0, yearly("Product Access Rate", year) * safe_float(adjustments.get("Access Rate", 1.0)))
         product_accessible = market_accessible * product_access_rate
         accessible_share = min(1.0, yearly("Share Within Accessible Segment", year) * safe_float(adjustments.get("Market Share", 1.0)))
@@ -4705,6 +4750,7 @@ def calculate_launch_funnel(records: list[dict[str, object]], adjustments: dict[
                 "Diagnosed Patients": round(diagnosed_patients),
                 "Treatment Rate / Treatment Eligibility": treatment_rate,
                 "Treated Patients": round(treated_patients),
+                "Market Accessibility Rate": market_accessibility_rate,
                 "Market Accessible Patients": round(market_accessible),
                 "Product Access Rate": product_access_rate,
                 "Product Accessible Patients": round(product_accessible),
@@ -5241,7 +5287,7 @@ def launch_assumptions(data: dict[str, pd.DataFrame], case: pd.Series, model: di
     clinical_value = safe_float(patient_flow["Output Patients"].dropna().iloc[-1]) if isinstance(patient_flow, pd.DataFrame) and not patient_flow.empty else 0
     set_calculated("Clinically Addressable Population", round(clinical_value))
     if isinstance(funnel, pd.DataFrame) and not funnel.empty:
-        for name in ["Disease Population", "Diagnosed Patients", "Treated Patients", "Product Accessible Patients", "Patients on Product", "Overall Market Share"]:
+        for name in ["Disease Population", "Diagnosed Patients", "Treated Patients", "Market Accessible Patients", "Product Accessible Patients", "Patients on Product", "Overall Market Share"]:
             yearly = {str(row["Year"]): row.get(name, 0) for _, row in funnel.iterrows()}
             set_calculated(name, yearly.get("Y5", 0), yearly)
     if isinstance(forecast, pd.DataFrame) and not forecast.empty:
@@ -5370,7 +5416,6 @@ def page_launch_home(data: dict[str, pd.DataFrame]) -> None:
     preview_cols[3].metric("Access", selected_case.get("Access Archetype", ""))
     if st.button("Open Launch Case", key="open_launch_case"):
         st.session_state.launch_page = "Launch Case"
-        st.session_state.launch_case_section = "Workstreams"
         st.rerun()
 
 
@@ -5418,7 +5463,6 @@ def page_launch_new_case(data: dict[str, pd.DataFrame]) -> None:
         set_launch_assumption_records(case_id, build_launch_case_assumptions(case_series, product))
         st.session_state.selected_launch_case_id = case_id
         st.session_state.launch_page = "Launch Case"
-        st.session_state.launch_case_section = "Workstreams"
         st.rerun()
 
 
@@ -5465,11 +5509,16 @@ def update_launch_assumption_record(case_id: str, assumption_id: str, updates: d
         if actual_updates:
             old_values = {field: record.get(field) for field in actual_updates}
             history = [deepcopy(item) for item in record.get("Validation History", []) if isinstance(item, dict)]
+            action = "Updated assumption"
+            if actual_updates.get("Override Enabled") is True:
+                action = "Overrode reference data"
+            elif actual_updates.get("Override Enabled") is False and record.get("Override Enabled") is True:
+                action = "Restored reference value"
             history.append(
                 {
                     "Role": launch_user_workstream(),
-                    "Action": "Updated assumption",
-                    "Comment": str(actual_updates.get("Rationale / Comment", "")),
+                    "Action": action,
+                    "Comment": str(actual_updates.get("Override Rationale", actual_updates.get("Rationale / Comment", ""))),
                     "Old Value": old_values,
                     "New Value": deepcopy(actual_updates),
                     "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -5523,12 +5572,41 @@ def render_launch_validation_history(assumption: pd.Series | dict[str, object]) 
         return
     with st.expander("Validation History"):
         for event in history:
-            st.markdown(f"**{event.get('Role', '')} — {event.get('Action', '')}**")
+            st.markdown(f"**{str(event.get('Role', '')).upper()} {str(event.get('Action', '')).upper()}**")
             if event.get("Comment"):
-                st.write(str(event.get("Comment")))
-            if event.get("Old Value") not in ("", None, {}) or event.get("New Value") not in ("", None, {}):
-                st.caption(f"Previous: {event.get('Old Value', '')} · Updated: {event.get('New Value', '')}")
-            st.caption(str(event.get("Timestamp", "")))
+                st.write(f'“{event.get("Comment")}”')
+            old_values = event.get("Old Value") if isinstance(event.get("Old Value"), dict) else {}
+            new_values = event.get("New Value") if isinstance(event.get("New Value"), dict) else {}
+            old_events = old_values.get("Value") if isinstance(old_values.get("Value"), list) else []
+            new_events = new_values.get("Value") if isinstance(new_values.get("Value"), list) else []
+            if old_events or new_events:
+                old_by_name = {str(item.get("Competitor / Event Name", "")): item for item in old_events if isinstance(item, dict)}
+                new_by_name = {str(item.get("Competitor / Event Name", "")): item for item in new_events if isinstance(item, dict)}
+                for name in sorted(new_by_name.keys() - old_by_name.keys()):
+                    item = new_by_name[name]
+                    st.write(f"Added: {name} · {item.get('Event Type', '')} · {item.get('Expected Year', '')} · {item.get('Expected Impact', '')}")
+                for name in sorted(old_by_name.keys() - new_by_name.keys()):
+                    st.write(f"Removed: {name}")
+                for name in sorted(old_by_name.keys() & new_by_name.keys()):
+                    if old_by_name[name] != new_by_name[name]:
+                        st.write(f"Changed: {name}")
+            else:
+                value_type = str(assumption.get("Value Type", ""))
+                for field, new_value in new_values.items():
+                    if field in {"Rationale / Comment", "Override Rationale", "Validation History", "Last Updated"}:
+                        continue
+                    old_value = old_values.get(field)
+                    if field in LAUNCH_YEARS:
+                        old_text = pct(old_value) if value_type == "Yearly Percentage" else f"{safe_float(old_value):,.0f}"
+                        new_text = pct(new_value) if value_type == "Yearly Percentage" else f"{safe_float(new_value):,.0f}"
+                        st.write(f"{field}: {old_text} → {new_text}")
+                    elif field == "Value" and not isinstance(new_value, (dict, list)):
+                        st.write(f"Value: {old_value or 'Not set'} → {new_value}")
+                    elif field == "Override Enabled":
+                        st.write("Case-specific override enabled." if new_value else "Central reference value restored.")
+            parsed_timestamp = pd.to_datetime(event.get("Timestamp"), errors="coerce")
+            timestamp = parsed_timestamp.strftime("%d %b %Y · %H:%M") if not pd.isna(parsed_timestamp) else str(event.get("Timestamp", ""))
+            st.caption(timestamp)
 
 
 def render_competitive_events_input(case_id: str, assumption: pd.Series) -> None:
@@ -5558,6 +5636,68 @@ def render_competitive_events_input(case_id: str, assumption: pd.Series) -> None
             st.success("Competitive event added.")
             st.rerun()
     render_launch_validation_history(assumption)
+
+
+def render_population_reference(case_id: str, assumption: pd.Series) -> None:
+    snapshot = {year: safe_float(assumption.get("Case Snapshot", {}).get(year, assumption.get(year, 0))) for year in LAUNCH_YEARS}
+    current_reference = {year: safe_float(assumption.get("Reference Values", {}).get(year, snapshot[year])) for year in LAUNCH_YEARS}
+    with st.container(border=True):
+        st.markdown("**Population** · REFERENCE DATA")
+        st.caption(
+            f"Reference: {assumption.get('Reference', 'Population reference')} · "
+            f"Source: Central Reference Data · Reference Year: {assumption.get('Reference Year', '')} · "
+            f"Last Updated: {assumption.get('Reference Last Updated', '')}"
+        )
+        st.table(pd.DataFrame([{"Basis": "Case Snapshot", **{year: f"{snapshot[year]:,.0f}" for year in LAUNCH_YEARS}}]).set_index("Basis"))
+        if current_reference != snapshot:
+            st.info("A newer central population reference is available. This case continues to use its saved snapshot unless explicitly updated.")
+        basis = st.radio(
+            "Population basis",
+            ["Use Reference Value", "Override for This Case"],
+            index=1 if bool(assumption.get("Override Enabled", False)) else 0,
+            key=f"launch_population_basis_{case_id}",
+            horizontal=True,
+        )
+        if basis == "Use Reference Value":
+            if bool(assumption.get("Override Enabled", False)) or any(safe_float(assumption.get(year)) != snapshot[year] for year in LAUNCH_YEARS):
+                update_launch_assumption_record(
+                    case_id,
+                    str(assumption.get("Assumption ID", "")),
+                    {"Override Enabled": False, "Override Values": {}, **snapshot},
+                )
+            st.caption("The case uses its saved central-reference snapshot. Central data is not modified.")
+        else:
+            year_columns = st.columns(5)
+            override_values = {}
+            for index, year in enumerate(LAUNCH_YEARS):
+                override_values[year] = year_columns[index].number_input(
+                    year,
+                    min_value=0,
+                    value=int(round(safe_float(assumption.get(year, snapshot[year])))),
+                    step=1,
+                    key=f"launch_population_override_{case_id}_{year}",
+                )
+            rationale = st.text_area(
+                "Override Rationale *",
+                value=str(assumption.get("Override Rationale", "")),
+                key=f"launch_population_override_rationale_{case_id}",
+                height=80,
+            )
+            if rationale.strip():
+                update_launch_assumption_record(
+                    case_id,
+                    str(assumption.get("Assumption ID", "")),
+                    {
+                        "Override Enabled": True,
+                        "Override Values": deepcopy(override_values),
+                        "Override Rationale": rationale.strip(),
+                        **override_values,
+                    },
+                )
+                st.caption("Case override saved. The central reference remains unchanged.")
+            else:
+                st.warning("A rationale is required before the case-specific override is applied.")
+        render_launch_validation_history(assumption)
 
 
 def render_launch_assumption_input(case_id: str, assumption: pd.Series) -> None:
@@ -5698,6 +5838,7 @@ def render_launch_funnel(model: dict[str, object], assumptions: pd.DataFrame) ->
         "Diagnosed Patients",
         "Treatment Rate / Treatment Eligibility",
         "Treated Patients",
+        "Market Accessibility Rate",
         "Market Accessible Patients",
         "Product Access Rate",
         "Product Accessible Patients",
@@ -5705,23 +5846,24 @@ def render_launch_funnel(model: dict[str, object], assumptions: pd.DataFrame) ->
         "Patients on Product",
         "Overall Market Share",
     ]
-    percentage_rows = {"Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility", "Product Access Rate", "Share Within Accessible Segment", "Overall Market Share"}
+    percentage_rows = {"Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility", "Market Accessibility Rate", "Product Access Rate", "Share Within Accessible Segment", "Overall Market Share"}
     rows = []
     for metric in funnel_order:
         values = {year: funnel.loc[funnel["Year"].eq(year), metric].iloc[0] for year in LAUNCH_YEARS}
         rows.append(
             {
                 "Funnel Step": metric,
+                "Type": "REFERENCE DATA" if metric == "Population" else "CALCULATED OUTPUT" if ownership.get(metric, "System") == "System" else "INPUT ASSUMPTION",
                 "Owner": ownership.get(metric, "System"),
                 **{year: pct(values[year]) if metric in percentage_rows else f"{safe_float(values[year]):,.0f}" for year in LAUNCH_YEARS},
             }
         )
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.table(pd.DataFrame(rows).set_index("Funnel Step"))
 
 
 def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, workspace: str) -> None:
     allowed = {
-        "Marketing": {"Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility", "Market Accessible Patients", "Product Access Rate"},
+        "Marketing": {"Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility", "Market Accessibility Rate", "Product Access Rate"},
         "Sales": {"Share Within Accessible Segment", "Competitive Landscape", "Product Accessible Patients"},
     }
     validators_mask = assumptions["Validators"].astype(str).map(lambda value: workspace in split_validators(value))
@@ -5734,24 +5876,39 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
     can_validate = launch_user_workstream() == workspace
     for _, assumption in queue.iterrows():
         assumption_id = str(assumption.get("Assumption ID", ""))
-        with st.container(border=True):
-            st.markdown(f"**{assumption.get('Assumption Name', '')}**")
-            st.caption(f"Owner: {assumption.get('Owner', '')} · Status: {assumption.get('Validation Status', 'Draft')}")
-            st.write(launch_assumption_display_value(assumption))
+        summary = launch_assumption_display_value(assumption)
+        compact_summary = short_business_text(summary, "Not set", 90)
+        title = (
+            f"{assumption.get('Assumption Name', '')} · Owner: {assumption.get('Owner', '')} · "
+            f"Status: {assumption.get('Validation Status', 'Draft')} · {compact_summary}"
+        )
+        with st.expander(title, expanded=False):
+            if str(assumption.get("Value Type", "")) == "Structured Events":
+                events = [item for item in assumption.get("Value", []) if isinstance(item, dict)]
+                if events:
+                    st.table(pd.DataFrame(events))
+                else:
+                    st.caption("No competitive events recorded.")
+            else:
+                st.write(summary)
+            if assumption.get("Source"):
+                st.caption(f"Source: {assumption.get('Source')}")
+            if assumption.get("Rationale / Comment"):
+                st.caption(f"Rationale: {assumption.get('Rationale / Comment')}")
             comment = st.text_area("Validation comment", key=f"launch_validation_comment_{case_id}_{assumption_id}", height=70)
             actions = st.columns(3)
-            if actions[0].button("Confirm", key=f"launch_confirm_{case_id}_{assumption_id}", disabled=not can_validate):
+            if actions[0].button("Confirm", type="primary", key=f"launch_confirm_{case_id}_{assumption_id}", disabled=not can_validate):
                 update_launch_validation(case_id, assumption_id, "Confirmed", comment)
                 st.success("Assumption aligned.")
                 st.rerun()
-            if actions[1].button("Request Change", key=f"launch_request_change_{case_id}_{assumption_id}", disabled=not can_validate):
+            if actions[1].button("Request Change", type="primary", key=f"launch_request_change_{case_id}_{assumption_id}", disabled=not can_validate):
                 if not comment.strip():
                     st.warning("A comment is required to request a change.")
                 else:
                     update_launch_validation(case_id, assumption_id, "Requested Change", comment)
                     st.success("Change requested from the assumption owner.")
                     st.rerun()
-            if actions[2].button("Add Comment", key=f"launch_add_comment_{case_id}_{assumption_id}", disabled=not can_validate or not comment.strip()):
+            if actions[2].button("Add Comment", type="secondary", key=f"launch_add_comment_{case_id}_{assumption_id}", disabled=not can_validate or not comment.strip()):
                 update_launch_validation(case_id, assumption_id, "Added Comment", comment)
                 st.success("Comment added.")
                 st.rerun()
@@ -5760,40 +5917,116 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
 
 def render_marketing_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
     case_id = str(case.get("Launch Case ID", ""))
-    model = calculate_launch_model(data, case, "Base")
-    st.markdown("### Launch Funnel")
-    st.caption("Marketing sees the integrated funnel while each assumption remains controlled by its configured owner and validators.")
-    render_launch_funnel(model, launch_assumptions(data, case, model))
+    population = assumptions[assumptions["Assumption Name"].eq("Population")]
+    st.markdown("### Reference Data")
+    if not population.empty:
+        render_population_reference(case_id, population.iloc[0])
     st.markdown("### My Inputs")
-    owned_names = {"Population", "Share Within Accessible Segment", "Competitive Landscape"}
+    owned_names = {"Share Within Accessible Segment", "Competitive Landscape"}
     owned = assumptions[assumptions["Assumption Name"].isin(owned_names) & assumptions["Owner"].eq("Marketing")]
     for _, assumption in owned.iterrows():
         with st.container(border=True):
             render_launch_assumption_input(case_id, assumption)
+    model = calculate_launch_model(data, case, "Base")
+    refreshed_assumptions = launch_assumptions(data, case, model)
+    st.markdown("### Launch Funnel")
+    st.caption("Marketing sees the integrated funnel while each assumption remains controlled by its configured owner and validators.")
+    render_launch_funnel(model, refreshed_assumptions)
     st.markdown("### To Validate")
-    render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Marketing")
-    st.markdown("### Key Outputs / Dependencies")
-    launch_key_outputs("Marketing", model)
+    render_launch_validation_queue(case_id, refreshed_assumptions, "Marketing")
 
 
 def render_sales_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
     case_id = str(case.get("Launch Case ID", ""))
     st.markdown("### Sales Force & Coverage Plan")
     coverage = assumptions[assumptions["Category"].eq("Sales Force & Coverage Plan") & assumptions["Owner"].eq("Sales")]
+    can_edit = launch_user_workstream() == "Sales"
+    optional_names = ["Regions Covered", "Population-weighted Geographic Coverage %", "Target Account / Center Coverage %", "Target Accounts / Centers"]
+    selector_columns = st.columns(4)
+    enabled_by_name: dict[str, bool] = {"Sales FTE": True}
+    for column, name in zip(selector_columns, optional_names):
+        match = coverage[coverage["Assumption Name"].eq(name)]
+        if match.empty:
+            continue
+        assumption = match.iloc[0]
+        enabled = column.checkbox(name, value=bool(assumption.get("Enabled", True)), key=f"launch_sales_metric_{case_id}_{assumption.get('Assumption ID')}", disabled=not can_edit)
+        enabled_by_name[name] = enabled
+        if can_edit:
+            update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Enabled": enabled})
+
+    table_rows = []
+    percentage_metrics = {"Population-weighted Geographic Coverage %", "Target Account / Center Coverage %"}
     for _, assumption in coverage.iterrows():
-        with st.container(border=True):
-            render_launch_assumption_input(case_id, assumption)
+        name = str(assumption.get("Assumption Name", ""))
+        if name != "Sales FTE" and not enabled_by_name.get(name, bool(assumption.get("Enabled", True))):
+            continue
+        table_rows.append(
+            {
+                "Metric": name,
+                **{year: safe_float(assumption.get(year)) * (100 if name in percentage_metrics else 1) for year in LAUNCH_YEARS},
+            }
+        )
+    table_source = pd.DataFrame(table_rows)
+    enabled_signature = "_".join(re.sub(r"[^A-Za-z0-9]+", "_", str(row["Metric"])) for row in table_rows)
+    editor_key = f"launch_sales_coverage_editor_{case_id}_{enabled_signature}"
+    editor_source = apply_data_editor_state(table_source, st.session_state.get(editor_key))
+    column_config = {
+        "Metric": st.column_config.TextColumn("Metric", disabled=True),
+        **{
+            year: st.column_config.NumberColumn(year, min_value=0.0, step=1.0, format="%.0f")
+            for year in LAUNCH_YEARS
+        },
+    }
+    edited = st.data_editor(
+        editor_source,
+        key=editor_key,
+        hide_index=True,
+        use_container_width=True,
+        disabled=True if not can_edit else ["Metric"],
+        column_config=column_config,
+    )
+    updated_table = apply_data_editor_state(edited.copy(), st.session_state.get(editor_key))
+    if can_edit:
+        by_name = {str(row.get("Assumption Name", "")): row for _, row in coverage.iterrows()}
+        for _, row in updated_table.iterrows():
+            name = str(row.get("Metric", ""))
+            assumption = by_name.get(name)
+            if assumption is None:
+                continue
+            updates = {
+                year: safe_float(row.get(year)) / 100 if name in percentage_metrics else float(round(safe_float(row.get(year))))
+                for year in LAUNCH_YEARS
+            }
+            update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), updates)
+
+    sales_fte = coverage[coverage["Assumption Name"].eq("Sales FTE")]
+    rationale = ""
+    if not sales_fte.empty:
+        sales_fte_record = sales_fte.iloc[0]
+        rationale = st.text_area(
+            "Coverage & Resourcing Rationale *",
+            value=str(sales_fte_record.get("Rationale / Comment", "")),
+            key=f"launch_sales_plan_rationale_{case_id}",
+            disabled=not can_edit,
+            height=90,
+        )
+        if can_edit:
+            update_launch_assumption_record(case_id, str(sales_fte_record.get("Assumption ID", "")), {"Rationale / Comment": rationale})
+    if st.button("Submit Coverage Plan for Validation", key=f"launch_sales_plan_submit_{case_id}", disabled=not can_edit or not rationale.strip()):
+        for _, assumption in coverage.iterrows():
+            name = str(assumption.get("Assumption Name", ""))
+            if name == "Sales FTE" or enabled_by_name.get(name, bool(assumption.get("Enabled", True))):
+                update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Submitted for Validation")
+        st.success("Coverage plan submitted for validation.")
+        st.rerun()
     st.markdown("### Sales Execution Strategy")
     st.caption("Describe target regions/accounts, reach model, engagement frequency and how the field force ramps with launch adoption.")
     strategy = assumptions[assumptions["Assumption Name"].eq("Sales Execution Strategy") & assumptions["Owner"].eq("Sales")]
     for _, assumption in strategy.iterrows():
-        with st.container(border=True):
-            render_launch_assumption_input(case_id, assumption)
+        render_launch_assumption_input(case_id, assumption)
     model = calculate_launch_model(data, case, "Base")
     st.markdown("### To Validate")
     render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Sales")
-    st.markdown("### Key Outputs / Dependencies")
-    launch_key_outputs("Sales", model)
 
 
 def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], workspace: str) -> None:
@@ -5866,19 +6099,14 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
         return
     case = selected.iloc[0]
     launch_case_overview_card(case)
-    if not launch_is_coordinator():
-        render_launch_workspace(case, data, launch_user_workstream())
-        return
     sections = ["Overview", "Workstreams", "Assumptions", "Readiness", "Decision Case"]
-    if st.session_state.get("launch_case_section") not in sections:
-        st.session_state.launch_case_section = "Overview"
-    section = st.radio("Launch case area", sections, horizontal=True, key="launch_case_section", label_visibility="collapsed")
     scenario = "Base"
     model = calculate_launch_model(data, case, scenario)
     assumptions = launch_assumptions(data, case, model)
     workstreams = launch_workstreams(selected_id, assumptions)
+    primary_tabs = st.tabs(sections)
 
-    if section == "Overview":
+    with primary_tabs[0]:
         scenario = st.selectbox("Scenario", LAUNCH_SCENARIOS, index=1, key=f"launch_scenario_{selected_id}")
         model = calculate_launch_model(data, case, scenario)
         st.markdown("<div class='enterprise-section-title'>Integrated Launch Model</div>", unsafe_allow_html=True)
@@ -5888,17 +6116,25 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
         st.dataframe(workstreams, use_container_width=True, hide_index=True)
         st.markdown("<div class='enterprise-section-title'>Critical Open Issues</div>", unsafe_allow_html=True)
         st.info(str(case.get("Critical Open Issues", "No critical issues recorded.")))
-    elif section == "Workstreams":
-        workspace = st.radio("Workstream", LAUNCH_WORKSTREAMS, horizontal=True, key=f"launch_coordinator_workspace_{selected_id}")
-        render_launch_workspace(case, data, workspace)
-    elif section == "Assumptions":
+
+    with primary_tabs[1]:
+        if launch_is_coordinator():
+            workstream_tabs = st.tabs(LAUNCH_WORKSTREAMS)
+            for tab, workspace in zip(workstream_tabs, LAUNCH_WORKSTREAMS):
+                with tab:
+                    render_launch_workspace(case, data, workspace)
+        else:
+            render_launch_workspace(case, data, launch_user_workstream())
+
+    with primary_tabs[2]:
         st.markdown("<div class='enterprise-section-title'>Shared Assumption Register</div>", unsafe_allow_html=True)
-        register = assumptions.copy()
+        register = launch_assumptions(data, case, calculate_launch_model(data, case, scenario)).copy()
         register["Value"] = register.apply(launch_assumption_display_value, axis=1)
-        register_columns = ["Assumption ID", "Workstream", "Category", "Assumption Name", "Value", "Unit", "Owner", "Validators", "Source Type", "Confidence", "Validation Status", "Last Updated"]
+        register_columns = ["Assumption ID", "Assumption Type", "Workstream", "Category", "Assumption Name", "Value", "Unit", "Owner", "Validators", "Source Type", "Confidence", "Validation Status", "Last Updated"]
         st.dataframe(register[register_columns], use_container_width=True, hide_index=True)
         st.markdown("<div class='enterprise-section-title'>Responsibility Matrix</div>", unsafe_allow_html=True)
-        matrix = launch_responsibility_matrix(assumptions[~assumptions["Calculated"].astype(bool)])
+        configurable_assumptions = assumptions[(~assumptions["Calculated"].astype(bool)) & (~assumptions["Assumption Type"].eq("MASTER DATA"))]
+        matrix = launch_responsibility_matrix(configurable_assumptions)
         if launch_is_coordinator():
             edited = st.data_editor(
                 matrix,
@@ -5912,11 +6148,13 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
             st.caption("Changes apply only to this launch case. The default responsibility template remains unchanged.")
         else:
             st.dataframe(matrix, use_container_width=True, hide_index=True)
-    elif section == "Readiness":
+
+    with primary_tabs[3]:
         st.markdown("<div class='enterprise-section-title'>Readiness</div>", unsafe_allow_html=True)
         st.metric("Overall Readiness", "Not Assessed")
         st.info("Readiness assessment will be implemented in a future phase.")
-    else:
+
+    with primary_tabs[4]:
         st.markdown("<div class='enterprise-section-title'>Decision Case</div>", unsafe_allow_html=True)
         st.info("Decision Case generation will be implemented in a future phase.")
 
