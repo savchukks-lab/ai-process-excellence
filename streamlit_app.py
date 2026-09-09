@@ -4328,7 +4328,30 @@ CENTRAL_REFERENCE_LIBRARY = {
             "Last Updated": "2026-09-01",
             "Values": {"Y1": 870_000, "Y2": 874_400, "Y3": 878_800, "Y4": 883_200, "Y5": 887_600},
         },
-    }
+    },
+    "Dosing": {
+        "Product Alpha": {
+            "Reference": "Product Alpha dosing reference",
+            "Last Updated": "2026-09-01",
+            "Dose per Administration": 1.0,
+            "Administration Frequency": 1.0,
+            "Frequency Unit": "Administrations / month",
+        },
+        "Product Beta": {
+            "Reference": "Product Beta dosing reference",
+            "Last Updated": "2026-09-01",
+            "Dose per Administration": 1.0,
+            "Administration Frequency": 1.0,
+            "Frequency Unit": "Administrations / month",
+        },
+        "Default": {
+            "Reference": "Standard product dosing reference",
+            "Last Updated": "2026-09-01",
+            "Dose per Administration": 1.0,
+            "Administration Frequency": 1.0,
+            "Frequency Unit": "Administrations / month",
+        },
+    },
 }
 
 
@@ -4349,6 +4372,10 @@ def central_population_reference(case: pd.Series) -> dict[str, object]:
     return reference
 
 
+def central_dosing_reference(case: pd.Series) -> dict[str, object]:
+    return central_reference("Dosing", str(case.get("Product", "")), "Default")
+
+
 LAUNCH_DEFINITIONS = {
     "Population": "The total population in the selected market or region for the relevant year.",
     "Prevalence": "The proportion of the total population living with the disease in the relevant year.",
@@ -4356,6 +4383,7 @@ LAUNCH_DEFINITIONS = {
     "Diagnosis Rate": "The percentage of the disease population that is diagnosed.",
     "Diagnosed Patients": "Disease Population multiplied by Diagnosis Rate.",
     "Treatment Rate / Treatment Eligibility": "The percentage of diagnosed patients who receive or are eligible for the relevant treatment.",
+    "Treatment Eligibility / Treatment Rate": "The percentage of diagnosed patients who meet the clinical criteria for, or receive, the relevant treatment.",
     "Treated Patients": "Diagnosed Patients multiplied by Treatment Rate / Treatment Eligibility.",
     "Market Access Rate": "The percentage of treated patients who can access our product in the relevant year.",
     "Accessible Patients": "Treated Patients multiplied by Market Access Rate.",
@@ -4363,6 +4391,17 @@ LAUNCH_DEFINITIONS = {
     "Patients on Product": "Accessible Patients multiplied by Market Share.",
     "Overall Market Share": "Patients on Product divided by total Treated Patients.",
     "Sales FTE": "The field-force capacity assigned to execute the launch plan in each year.",
+    "Treatment Eligibility": "Share of diagnosed patients who meet the clinical criteria for the target treatment population.",
+    "Target Segment / Severity": "The clinically relevant patient segment or disease severity included in the launch case.",
+    "Line of Therapy": "The treatment line in which the product is expected to be used, for example first, second or later line.",
+    "Treatment Duration": "The expected period over which an eligible patient receives treatment in the launch case.",
+    "Compliance": "The share of planned treatment administrations expected to be taken as intended.",
+    "Persistence": "The share of patients expected to remain on treatment for the modeled duration.",
+    "Dose per Administration": "The number of product units used at each treatment administration.",
+    "Administration Frequency": "The number of treatment administrations expected per month.",
+    "Theoretical Units per Patient": "Dose per administration multiplied by the administrations expected over the treatment duration.",
+    "Adjusted Units per Patient": "Theoretical units per patient adjusted for compliance and, when enabled, persistence.",
+    "Clinical Evidence Status": "The maturity of the evidence available to support the launch assumption or clinical positioning.",
 }
 
 
@@ -4424,8 +4463,6 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
                 {"Step": "Population", "Input Type": "absolute population", "Value": 1_250_000, "Owner": "Central Reference Data", "Validators": "", "Optional": False},
                 {"Step": "Prevalence", "Input Type": "percentage conversion", "Value": 0.018, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
                 {"Step": "Diagnosis Rate", "Input Type": "percentage conversion", "Value": 0.72, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
-                {"Step": "Relevant Segment / Severity", "Input Type": "percentage conversion", "Value": 0.62, "Owner": "Medical", "Validators": "Marketing", "Optional": True},
-                {"Step": "Relevant Line of Therapy", "Input Type": "percentage conversion", "Value": 0.78, "Owner": "Medical", "Validators": "Marketing", "Optional": True},
                 {"Step": "Treatment Rate / Treatment Eligibility", "Input Type": "percentage conversion", "Value": 0.68, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
             ],
             "access_channels": [
@@ -4436,7 +4473,7 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
             "expected_access_date": "2027-01-20",
             "access_rate": launch_year_values(0.90),
             "market_share": launch_year_values(0, "By Year", [0.04, 0.10, 0.16, 0.22, 0.27]),
-            "utilization": {"Units per Patient": 8.0, "Compliance": 0.88, "Persistence": 0.92, "Compliance Enabled": True, "Persistence Enabled": True},
+            "utilization": {"Units per Patient": 8.0, "Compliance": 0.88, "Persistence": 0.92, "Compliance Enabled": True, "Persistence Enabled": True, "Treatment Duration": 8.0, "Treatment Duration Unit": "months"},
             "pricing": {"Price Mode": "Use Current Price", "List / Base Price": safe_float(product.get("Gross Price", 0)), "Rebate / Discount %": 0.12, "Other GTN %": 0.03},
             "regulatory": {"Expected Regulatory Approval Date": "2026-12-15", "Expected Label / Indication": "Broad-access launch indication", "Key Regulatory Dependency": "Local label confirmation", "Confidence": "High", "Material Risk": "Low", "Mitigation": "Track final label wording before commercial activation."},
             "supply": {"Earliest Supply Available Date": "2027-01-10", "Launch Stock Available?": "Yes", "Can Projected Demand Be Supplied?": "Yes", "Major Supply Risk": "Launch allocation balancing", "Mitigation": "Use standard launch allocation cadence.", "Maximum Available Units": launch_year_values(0)},
@@ -4461,15 +4498,13 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
                 {"Step": "Population", "Input Type": "absolute population", "Value": 520_000, "Owner": "Central Reference Data", "Validators": "", "Optional": False},
                 {"Step": "Prevalence", "Input Type": "percentage conversion", "Value": 0.0035, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
                 {"Step": "Diagnosis Rate", "Input Type": "percentage conversion", "Value": 0.58, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
-            {"Step": "Relevant Segment / Severity", "Input Type": "percentage conversion", "Value": 0.42, "Owner": "Medical", "Validators": "Marketing", "Optional": True},
-            {"Step": "Relevant Line of Therapy", "Input Type": "percentage conversion", "Value": 0.70, "Owner": "Medical", "Validators": "Marketing", "Optional": True},
             {"Step": "Treatment Rate / Treatment Eligibility", "Input Type": "percentage conversion", "Value": 0.64, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
         ],
         "access_channels": [{"Channel": "Reimbursed", "Accessible Patient %": 1.0, "Pricing Weight": 1.0}],
         "expected_access_date": "2027-10-01",
         "access_rate": launch_year_values(0, "By Year", [0.10, 0.25, 0.45, 0.65, 0.75]),
         "market_share": launch_year_values(0, "By Year", [0.05, 0.12, 0.20, 0.27, 0.31]),
-        "utilization": {"Units per Patient": 10.0, "Compliance": 0.86, "Persistence": 0.90, "Compliance Enabled": True, "Persistence Enabled": True},
+        "utilization": {"Units per Patient": 10.0, "Compliance": 0.86, "Persistence": 0.90, "Compliance Enabled": True, "Persistence Enabled": True, "Treatment Duration": 10.0, "Treatment Duration Unit": "months"},
         "pricing": {"Price Mode": "Use Current Price", "List / Base Price": safe_float(product.get("Gross Price", 0)), "Rebate / Discount %": 0.16, "Other GTN %": 0.04},
         "regulatory": {"Expected Regulatory Approval Date": "2027-02-15", "Expected Label / Indication": "Specialty access launch indication", "Key Regulatory Dependency": "Approval and final access dossier", "Confidence": "Medium", "Material Risk": "Medium", "Mitigation": "Maintain access scenario until final reimbursement decision."},
         "supply": {"Earliest Supply Available Date": "2027-03-01", "Launch Stock Available?": "At Risk", "Can Projected Demand Be Supplied?": "At Risk", "Major Supply Risk": "Limited launch stock during reimbursement ramp", "Mitigation": "Prioritize validated reimbursed demand during Y1 and Y2.", "Maximum Available Units": launch_year_values(0, "By Year", [1_000, 2_600, 5_000, 8_000, 11_000])},
@@ -4542,6 +4577,7 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
             "Options": options or [],
             "Last Updated": date.today().isoformat(),
             "Alignment Schema Version": 2,
+            "Medical Schema Version": 2 if workstream == "Medical" else None,
         }
         for year in LAUNCH_YEARS:
             row[year] = safe_float((yearly or {}).get(year)) if yearly is not None else None
@@ -4608,15 +4644,42 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("Sales", "Sales Coverage & Execution Plan", "Target Accounts / Centers", "", "Yearly Integer", "Accounts", "Marketing", yearly=launch_year_values(safe_float(sales["Target Accounts / Centers"])), assumption_type="MANAGEMENT / FUNCTIONAL", rationale=sales_rationale, enabled=False)
 
     utilization = inputs["utilization"]
-    add("Medical", "Treatment Pathway", "Treatment Pathway", "Defined launch treatment pathway", "Text", validators="Marketing")
-    add("Medical", "Patient Eligibility", "Severity / Segment", flow.get("Relevant Segment / Severity", {}).get("Value", 1), "Percentage", "%", "Marketing")
-    add("Medical", "Patient Eligibility", "Line of Therapy", flow.get("Relevant Line of Therapy", {}).get("Value", 1), "Percentage", "%", "Marketing")
-    add("Medical", "Utilization", "Dose per Administration", 1.0, "Number", "Dose", "Finance")
-    add("Medical", "Utilization", "Administration Frequency", safe_float(utilization.get("Units per Patient")), "Number", "Units / patient", "Marketing, Finance")
-    add("Medical", "Utilization", "Treatment Duration", 12.0, "Number", "Months", "Marketing")
-    add("Medical", "Utilization", "Compliance", utilization.get("Compliance", 1), "Percentage", "%", "Marketing, Finance")
-    add("Medical", "Utilization", "Persistence", utilization.get("Persistence", 1), "Percentage", "%", "Marketing, Finance")
-    add("Medical", "Evidence", "Clinical Evidence / Rationale", "Clinical assumptions supported by launch evidence plan", "Text", validators="Marketing")
+    add("Medical", "Target Patient & Treatment Positioning", "Disease / Indication", "Launch indication aligned to the expected label", "Text", validators="Marketing, Regulatory")
+    add("Medical", "Target Patient & Treatment Positioning", "Target Segment / Severity", "Clinically appropriate target segment", "Text", validators="Marketing")
+    add("Medical", "Target Patient & Treatment Positioning", "Line of Therapy", "First or later line according to final label", "Text", validators="Marketing, Regulatory")
+    add("Medical", "Target Patient & Treatment Positioning", "Biomarker / Prior Treatment / Clinical Restriction", "No additional restriction assumed", "Text", validators="Regulatory")
+    add("Medical", "Target Patient & Treatment Positioning", "Short Treatment Pathway Description", "Diagnosed eligible patients progress to the modeled treatment population.", "Text", validators="Marketing")
+    add("Medical", "Target Patient & Treatment Positioning", "Other Population-defining Criteria", "", "Text", validators="Marketing")
+
+    dosing_reference = central_dosing_reference(case)
+    add("Medical", "Treatment & Utilization", "Dose per Administration", dosing_reference.get("Dose per Administration", 1.0), "Number", "Units / administration", "", source="Central Reference Data", confidence="High", assumption_type="MASTER DATA", owner="Medical")
+    records[-1].update({"Reference": dosing_reference.get("Reference", "Product dosing reference"), "Reference Last Updated": dosing_reference.get("Last Updated", ""), "Reference Value": safe_float(dosing_reference.get("Dose per Administration", 1.0)), "Override Enabled": False, "Override Rationale": ""})
+    add("Medical", "Treatment & Utilization", "Administration Frequency", dosing_reference.get("Administration Frequency", 1.0), "Number", dosing_reference.get("Frequency Unit", "Administrations / month"), "", source="Central Reference Data", confidence="High", assumption_type="MASTER DATA", owner="Medical")
+    records[-1].update({"Reference": dosing_reference.get("Reference", "Product dosing reference"), "Reference Last Updated": dosing_reference.get("Last Updated", ""), "Reference Value": safe_float(dosing_reference.get("Administration Frequency", 1.0)), "Override Enabled": False, "Override Rationale": ""})
+    add("Medical", "Treatment & Utilization", "Treatment Duration", safe_float(utilization.get("Treatment Duration", utilization.get("Units per Patient", 0))), "Number", str(utilization.get("Treatment Duration Unit", "months")), "Marketing", rationale="Expected treatment duration for the modeled target patient.")
+    records[-1]["Duration Unit"] = str(utilization.get("Treatment Duration Unit", "months"))
+    add("Medical", "Treatment & Utilization", "Compliance", utilization.get("Compliance", 1), "Percentage", "%", "Marketing", rationale="Expected share of planned administrations taken as intended.")
+    add("Medical", "Treatment & Utilization", "Persistence", utilization.get("Persistence", 1), "Percentage", "%", "Marketing", rationale="Optional adjustment for patients remaining on treatment.", enabled=bool(utilization.get("Persistence Enabled", False)))
+    add("Medical", "Treatment & Utilization", "Theoretical Units per Patient", "Calculated", "Calculated", "Units", calculated=True)
+    add("Medical", "Treatment & Utilization", "Adjusted Units per Patient", "Calculated", "Calculated", "Units", calculated=True)
+
+    evidence_items = [
+        {
+            "Study / Trial Name": "Pivotal launch study",
+            "Phase": "Phase III",
+            "Population / Setting": "Target indication population",
+            "Primary Endpoint": "Primary efficacy endpoint",
+            "Key Primary Result": "Clinically meaningful improvement versus comparator",
+            "Key Secondary Result(s)": "Consistent benefit across key secondary measures",
+            "Safety / Key Limitation": "Long-term follow-up remains limited",
+            "Evidence Status": "Available",
+            "Expected Readout Date": "",
+            "Source / Reference": "Clinical study report",
+            "Comment / Rationale": "Supports the proposed target patient and treatment positioning.",
+        }
+    ]
+    add("Medical", "Clinical Evidence", "Clinical Evidence", evidence_items, "Structured Evidence", validators="Marketing, Regulatory", assumption_type="EVIDENCE-BASED", source="Clinical evidence plan", rationale="Decision-relevant evidence supporting the launch case.")
+    add("Medical", "Clinical Evidence", "Key Clinical Evidence Gap / Risk", "Long-term evidence maturity should be monitored through launch readiness.", "Text", validators="Marketing, Regulatory", rationale="Primary evidence uncertainty that may affect positioning or readiness.")
 
     pricing = inputs["pricing"]
     add("Market Access", "Access", "Access Archetype", case.get("Access Archetype", "Reimbursement Dependent"), "Choice", validators="Marketing, Finance", options=["Reimbursement Dependent", "Mixed Access", "Predominantly OOP / Broad Access"])
@@ -4707,7 +4770,12 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
     for default in defaults:
         name = str(default.get("Assumption Name", ""))
         existing = next((existing_by_name[candidate] for candidate in legacy_names.get(name, [name]) if candidate in existing_by_name), None)
-        if existing is None or bool(default.get("Calculated", False)):
+        legacy_medical_utilization = (
+            str(default.get("Workstream")) == "Medical"
+            and name in {"Dose per Administration", "Administration Frequency", "Treatment Duration", "Compliance", "Persistence"}
+            and safe_float((existing or {}).get("Medical Schema Version")) < 2
+        )
+        if existing is None or bool(default.get("Calculated", False)) or legacy_medical_utilization:
             normalized.append(deepcopy(default))
             continue
         merged = deepcopy(default)
@@ -4715,7 +4783,7 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
             merged["Owner"] = str(existing["Owner"])
         if safe_float(existing.get("Alignment Schema Version")) >= 2 and "Validators" in existing:
             merged["Validators"] = str(existing["Validators"])
-        for field in ["Value", "Forecast Mode", "Source Type", "Source", "Rationale / Comment", "Confidence", "Validation Status", "Enabled", "Validation History", "Last Updated", "Case Snapshot", "Override Enabled", "Override Values", "Override Rationale"]:
+        for field in ["Value", "Forecast Mode", "Source Type", "Source", "Rationale / Comment", "Confidence", "Validation Status", "Enabled", "Validation History", "Last Updated", "Case Snapshot", "Override Enabled", "Override Values", "Override Rationale", "Duration Unit", "Reference", "Reference Value", "Reference Last Updated", "Medical Schema Version"]:
             if field in existing:
                 merged[field] = deepcopy(existing[field])
         merged["Validation Status"] = launch_alignment_status(merged.get("Validation Status", "Draft"))
@@ -4754,8 +4822,6 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
         "Population": "Population",
         "Prevalence": "Prevalence",
         "Diagnosis Rate": "Diagnosis Rate",
-        "Severity / Segment": "Relevant Segment / Severity",
-        "Line of Therapy": "Relevant Line of Therapy",
         "Treatment Rate / Treatment Eligibility": "Treatment Rate / Treatment Eligibility",
     }
     for assumption_name, step_name in flow_names.items():
@@ -4774,9 +4840,29 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
     updated["sales_resources"]["Target Accounts / Centers"] = years("Target Accounts / Centers", launch_year_values(safe_float(updated["sales_resources"]["Target Accounts / Centers"])))
     updated["sales_resources"]["Sales Execution Strategy"] = str(by_name.get("Sales FTE", {}).get("Rationale / Comment", ""))
     updated["sales_resources"]["Coverage %"] = safe_float(updated["sales_resources"]["Population-weighted Geographic Coverage %"].get("Y5"))
-    updated["utilization"]["Units per Patient"] = safe_float(value("Administration Frequency", updated["utilization"]["Units per Patient"]))
+    dose = safe_float(value("Dose per Administration", 1.0))
+    frequency = safe_float(value("Administration Frequency", 1.0))
+    duration = safe_float(value("Treatment Duration", updated["utilization"].get("Treatment Duration", 0)))
+    duration_record = by_name.get("Treatment Duration", {})
+    duration_unit = str(duration_record.get("Duration Unit", duration_record.get("Unit", "months"))).lower()
+    if duration_unit == "days":
+        administrations = (duration / 30.0) * frequency
+    elif duration_unit == "weeks":
+        administrations = (duration / 4.345) * frequency
+    elif duration_unit == "administrations":
+        administrations = duration
+    else:
+        administrations = duration * frequency
+    updated["utilization"]["Units per Patient"] = dose * administrations
+    updated["utilization"]["Dose per Administration"] = dose
+    updated["utilization"]["Administration Frequency"] = frequency
+    updated["utilization"]["Treatment Duration"] = duration
+    updated["utilization"]["Treatment Duration Unit"] = duration_unit
     updated["utilization"]["Compliance"] = safe_float(value("Compliance", updated["utilization"]["Compliance"]))
+    persistence_record = by_name.get("Persistence", {})
     updated["utilization"]["Persistence"] = safe_float(value("Persistence", updated["utilization"]["Persistence"]))
+    updated["utilization"]["Compliance Enabled"] = True
+    updated["utilization"]["Persistence Enabled"] = bool(persistence_record.get("Enabled", False))
     updated["pricing"]["List / Base Price"] = safe_float(value("Target / Launch Price", updated["pricing"]["List / Base Price"]))
     updated["pricing"]["Rebate / Discount %"] = safe_float(value("Rebate / Discount", updated["pricing"]["Rebate / Discount %"]))
     updated["pricing"]["Other GTN %"] = safe_float(value("Other GTN", updated["pricing"]["Other GTN %"]))
@@ -5448,9 +5534,13 @@ def launch_assumptions(data: dict[str, pd.DataFrame], case: pd.Series, model: di
     if isinstance(forecast, pd.DataFrame) and not forecast.empty:
         accessible = {row["Year"]: row["Commercially Accessible Patients"] for _, row in forecast.iterrows()}
         revenues = {row["Year"]: row["Net Revenue"] for _, row in forecast.iterrows()}
+        adjusted_units = {row["Year"]: row["Adjusted Units per Patient"] for _, row in forecast.iterrows()}
         set_calculated("Commercially Accessible Population", accessible.get("Y5", 0), accessible)
         set_calculated("Realized Net Price", model.get("realized_net_price", 0), {year: model.get("realized_net_price", 0) for year in LAUNCH_YEARS})
         set_calculated("Net Revenue", revenues.get("Y5", 0), revenues)
+        theoretical_units = safe_float(model.get("inputs", {}).get("utilization", {}).get("Units per Patient", 0))
+        set_calculated("Theoretical Units per Patient", round(theoretical_units, 2), {year: round(theoretical_units, 2) for year in LAUNCH_YEARS})
+        set_calculated("Adjusted Units per Patient", round(adjusted_units.get("Y5", 0), 2), adjusted_units)
     if isinstance(pnl, pd.DataFrame) and not pnl.empty:
         operating = pnl[pnl["Metric"].eq("Operating Profit")]
         if not operating.empty:
@@ -5646,6 +5736,9 @@ def launch_assumption_display_value(assumption: pd.Series | dict[str, object]) -
     if value_type == "Structured Events":
         events = [item for item in assumption.get("Value", []) if isinstance(item, dict)]
         return f"{len(events)} competitive event{'s' if len(events) != 1 else ''}"
+    if value_type == "Structured Evidence":
+        evidence = [item for item in assumption.get("Value", []) if isinstance(item, dict)]
+        return f"{len(evidence)} evidence item{'s' if len(evidence) != 1 else ''}"
     if value_type == "Percentage":
         return pct(assumption.get("Value"))
     if value_type == "Number":
@@ -5740,7 +5833,14 @@ def render_launch_validation_history(assumption: pd.Series | dict[str, object]) 
             new_values = event.get("New Value") if isinstance(event.get("New Value"), dict) else {}
             old_events = old_values.get("Value") if isinstance(old_values.get("Value"), list) else []
             new_events = new_values.get("Value") if isinstance(new_values.get("Value"), list) else []
-            if old_events or new_events:
+            if str(assumption.get("Value Type", "")) == "Structured Evidence" and (old_events or new_events):
+                old_names = {str(item.get("Study / Trial Name", "")) for item in old_events if isinstance(item, dict)}
+                new_names = {str(item.get("Study / Trial Name", "")) for item in new_events if isinstance(item, dict)}
+                if old_names != new_names:
+                    st.write(f"Clinical evidence register: {len(old_events)} → {len(new_events)} items")
+                else:
+                    st.write("Clinical evidence details updated.")
+            elif old_events or new_events:
                 old_by_name = {str(item.get("Competitor / Event Name", "")): item for item in old_events if isinstance(item, dict)}
                 new_by_name = {str(item.get("Competitor / Event Name", "")): item for item in new_events if isinstance(item, dict)}
                 for name in sorted(new_by_name.keys() - old_by_name.keys()):
@@ -5908,6 +6008,9 @@ def render_launch_assumption_input(case_id: str, assumption: pd.Series) -> None:
     if value_type == "Structured Events":
         render_competitive_events_input(case_id, assumption, editable)
         return
+    if value_type == "Structured Evidence":
+        st.info("Structured clinical evidence is maintained in the Medical workspace.")
+        return
     if "Enabled" in assumption and str(assumption.get("Category")) == "Sales Coverage & Execution Plan" and str(assumption.get("Assumption Name")) != "Sales FTE":
         enabled = st.checkbox("Use this coverage metric", value=bool(assumption.get("Enabled", True)), key=f"{key_base}_enabled", disabled=not editable)
         updates["Enabled"] = enabled
@@ -5992,7 +6095,7 @@ def launch_key_outputs(workstream: str, model: dict[str, object]) -> None:
     metrics = {
         "Marketing": [("Disease Population", f"{safe_float(funnel_y5.get('Disease Population')):,.0f}"), ("Treated Patients", f"{safe_float(funnel_y5.get('Treated Patients')):,.0f}"), ("Y5 Patients on Product", f"{safe_float(funnel_y5.get('Patients on Product')):,.0f}")],
         "Sales": [("Y5 Sales FTE", f"{safe_float(sales_resources.get('Sales Force HC / FTE', {}).get('Y5', 0)):,.0f}"), ("Y5 Coverage %", pct(primary_coverage)), ("Y5 Patients on Product", f"{safe_float(funnel_y5.get('Patients on Product')):,.0f}")],
-        "Medical": [("Clinical Opportunity", f"{safe_float(y5.get('Clinical Addressable Patients')):,.0f}"), ("Adjusted Units / Patient", y5.get("Adjusted Units per Patient", "Not calculated")), ("Y5 Demand Units", f"{safe_float(y5.get('Demand Units')):,.0f}")],
+        "Medical": [("Y5 Treated / Target Patients", f"{safe_float(funnel_y5.get('Treated Patients')):,.0f}"), ("Adjusted Units / Patient", y5.get("Adjusted Units per Patient", "Not calculated")), ("Y5 Demand Units", f"{safe_float(y5.get('Demand Units')):,.0f}")],
         "Market Access": [("Clinical Opportunity", f"{safe_float(y5.get('Clinical Addressable Patients')):,.0f}"), ("Commercially Accessible", f"{safe_float(y5.get('Commercially Accessible Patients')):,.0f}"), ("Realized Net Price", money(model.get("realized_net_price", 0)))],
         "Regulatory": [("Commercial Gate Date", model.get("commercial_gate_date", "Not calculated")), ("Y1 Availability", forecast.iloc[0].get("Availability Fraction", "Not calculated") if isinstance(forecast, pd.DataFrame) and not forecast.empty else "Not calculated")],
         "Supply / Operations": [("Y5 Demand Units", f"{safe_float(y5.get('Demand Units')):,.0f}"), ("Y5 Sellable Units", f"{safe_float(y5.get('Sellable Units')):,.0f}"), ("Supply Constraint", "Active" if safe_float(y5.get("Sellable Units")) < safe_float(y5.get("Demand Units")) else "No constraint")],
@@ -6060,8 +6163,21 @@ def render_launch_funnel(model: dict[str, object], assumptions: pd.DataFrame) ->
 
 def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, workspace: str) -> None:
     allowed = {
-        "Marketing": {"Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility", "Market Access Rate"},
+        "Marketing": {
+            "Prevalence",
+            "Diagnosis Rate",
+            "Treatment Rate / Treatment Eligibility",
+            "Disease / Indication",
+            "Target Segment / Severity",
+            "Line of Therapy",
+            "Short Treatment Pathway Description",
+            "Other Population-defining Criteria",
+            "Clinical Evidence",
+            "Key Clinical Evidence Gap / Risk",
+            "Market Access Rate",
+        },
         "Sales": {"Market Share", "Competitive Landscape"},
+        "Medical": {"Expected Label / Indication", "Eligibility Restrictions"},
     }
     validators_mask = assumptions["Validators"].astype(str).map(lambda value: workspace in split_validators(value))
     queue = assumptions[validators_mask & ~assumptions["Owner"].eq(workspace)]
@@ -6102,7 +6218,7 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
             comment = st.text_area("Alignment comment", key=f"launch_validation_comment_{case_id}_{assumption_id}", height=70)
             actions = st.columns(3)
             actions[0].markdown("<span class='launch-confirm-marker'></span>", unsafe_allow_html=True)
-            can_decide = can_validate and alignment_status == "Shared for Alignment"
+            can_decide = can_validate and alignment_status in {"Shared for Alignment", "Alignment Required"}
             can_comment = can_validate and alignment_status not in {"Draft", "Not Started"}
             if actions[0].button("Confirm Alignment", type="primary", key=f"launch_confirm_{case_id}_{assumption_id}", disabled=not can_decide):
                 update_launch_validation(case_id, assumption_id, "Confirmed Alignment", comment)
@@ -6346,6 +6462,293 @@ def render_sales_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assum
     render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Sales")
 
 
+def medical_assumption(assumptions: pd.DataFrame, name: str) -> pd.Series | None:
+    matches = assumptions[assumptions["Assumption Name"].eq(name)]
+    return None if matches.empty else matches.iloc[0]
+
+
+def render_medical_package_history(assumptions: pd.DataFrame) -> None:
+    events: list[tuple[str, str, str, dict[str, object]]] = []
+    for _, assumption in assumptions.iterrows():
+        name = str(assumption.get("Assumption Name", ""))
+        value_type = str(assumption.get("Value Type", ""))
+        for event in assumption.get("Validation History", []):
+            if isinstance(event, dict):
+                events.append((str(event.get("Timestamp", "")), name, value_type, event))
+    if not events:
+        return
+    with st.expander("Alignment History", expanded=False):
+        for timestamp_text, name, value_type, event in sorted(events, reverse=True)[:20]:
+            action = {
+                "Submitted for Validation": "Shared for Alignment",
+                "Confirmed": "Confirmed Alignment",
+            }.get(str(event.get("Action", "")), str(event.get("Action", "")))
+            st.markdown(f"**MEDICAL {action.upper()} · {name.upper()}**")
+            old_values = event.get("Old Value") if isinstance(event.get("Old Value"), dict) else {}
+            new_values = event.get("New Value") if isinstance(event.get("New Value"), dict) else {}
+            changes = []
+            for field, new_value in new_values.items():
+                if field in {"Validation History", "Last Updated", "Rationale / Comment"}:
+                    continue
+                old_value = old_values.get(field)
+                if field in LAUNCH_YEARS:
+                    old_text = pct(old_value) if value_type == "Yearly Percentage" else f"{safe_float(old_value):,.1f}"
+                    new_text = pct(new_value) if value_type == "Yearly Percentage" else f"{safe_float(new_value):,.1f}"
+                    changes.append(f"{field}: {old_text} → {new_text}")
+                elif field == "Value" and value_type == "Structured Evidence":
+                    old_count = len(old_value) if isinstance(old_value, list) else 0
+                    new_count = len(new_value) if isinstance(new_value, list) else 0
+                    changes.append(f"Clinical evidence register: {old_count} → {new_count} items")
+                elif field == "Value" and not isinstance(new_value, (dict, list)):
+                    changes.append(f"Value: {old_value or 'Not set'} → {new_value}")
+                elif field == "Source":
+                    changes.append(f"Source: {old_value or 'Not set'} → {new_value}")
+                elif field == "Enabled" and name == "Persistence":
+                    changes.append("Persistence adjustment enabled" if new_value else "Persistence adjustment disabled")
+            for change in changes:
+                st.write(change)
+            if event.get("Comment"):
+                st.write(f'“{event.get("Comment")}”')
+            parsed_timestamp = pd.to_datetime(timestamp_text, errors="coerce")
+            shown_timestamp = parsed_timestamp.strftime("%d %b %Y · %H:%M") if not pd.isna(parsed_timestamp) else timestamp_text
+            st.caption(shown_timestamp)
+
+
+def render_medical_package_share(case_id: str, package_key: str, package: pd.DataFrame, can_edit: bool) -> None:
+    aligned_rows = package[(~package["Calculated"].astype(bool)) & package["Validators"].astype(str).str.strip().ne("")]
+    partners: list[str] = []
+    for _, assumption in aligned_rows.iterrows():
+        for partner in launch_alignment_partners(assumption):
+            if partner not in partners:
+                partners.append(partner)
+    st.caption(f"Alignment with: {', '.join(partners)}" if partners else "No alignment required")
+    if partners and st.button("Share for Alignment", key=f"launch_medical_share_{case_id}_{package_key}", disabled=not can_edit):
+        for _, assumption in aligned_rows.iterrows():
+            update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Shared for Alignment")
+        st.success(f"Saved. {' and '.join(partners)} {'has' if len(partners) == 1 else 'have'} been notified to review this Medical input package.")
+        st.rerun()
+    render_medical_package_history(package)
+
+
+def render_medical_yearly_assumption(case_id: str, assumption: pd.Series, can_edit: bool) -> None:
+    assumption_id = str(assumption.get("Assumption ID", ""))
+    key_base = f"launch_medical_{case_id}_{assumption_id}"
+    name = str(assumption.get("Assumption Name", ""))
+    display_name = "Treatment Eligibility / Treatment Rate" if name == "Treatment Rate / Treatment Eligibility" else name
+    st.markdown(f"**{launch_definition_label(display_name)}**", unsafe_allow_html=True)
+    mode = st.selectbox(
+        f"{name} forecast mode",
+        ["Constant Across Forecast", "By Year"],
+        index=0 if assumption.get("Forecast Mode") == "Constant Across Forecast" else 1,
+        key=f"{key_base}_mode",
+        disabled=not can_edit,
+        label_visibility="collapsed",
+    )
+    updates: dict[str, object] = {"Forecast Mode": mode}
+    if mode == "Constant Across Forecast":
+        entered = st.number_input(
+            f"{name} (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(safe_float(assumption.get("Y1")) * 100),
+            key=f"{key_base}_constant",
+            disabled=not can_edit,
+            format="%.1f",
+        )
+        updates.update({year: safe_float(entered) / 100 for year in LAUNCH_YEARS})
+    else:
+        year_columns = st.columns(5)
+        for index, year in enumerate(LAUNCH_YEARS):
+            entered = year_columns[index].number_input(
+                f"{year} (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(safe_float(assumption.get(year)) * 100),
+                key=f"{key_base}_{year}",
+                disabled=not can_edit,
+                format="%.1f",
+            )
+            updates[year] = safe_float(entered) / 100
+    with st.expander("Evidence and rationale", expanded=False):
+        source_type = str(assumption.get("Source Type", LAUNCH_SOURCE_TYPES[0]))
+        confidence = str(assumption.get("Confidence", "Medium"))
+        updates["Source Type"] = st.selectbox("Source Type", LAUNCH_SOURCE_TYPES, index=LAUNCH_SOURCE_TYPES.index(source_type) if source_type in LAUNCH_SOURCE_TYPES else 0, key=f"{key_base}_source_type", disabled=not can_edit)
+        updates["Source"] = st.text_input("Source", value=str(assumption.get("Source", "")), key=f"{key_base}_source", disabled=not can_edit)
+        updates["Rationale / Comment"] = st.text_area("Rationale / Comment", value=str(assumption.get("Rationale / Comment", "")), key=f"{key_base}_rationale", disabled=not can_edit, height=75)
+        updates["Confidence"] = st.selectbox("Confidence", LAUNCH_CONFIDENCE_LEVELS, index=LAUNCH_CONFIDENCE_LEVELS.index(confidence) if confidence in LAUNCH_CONFIDENCE_LEVELS else 1, key=f"{key_base}_confidence", disabled=not can_edit)
+    if can_edit:
+        update_launch_assumption_record(case_id, assumption_id, updates)
+
+
+def render_medical_positioning(case_id: str, assumptions: pd.DataFrame, can_edit: bool) -> None:
+    names = [
+        "Disease / Indication",
+        "Target Segment / Severity",
+        "Line of Therapy",
+        "Biomarker / Prior Treatment / Clinical Restriction",
+        "Short Treatment Pathway Description",
+        "Other Population-defining Criteria",
+    ]
+    columns = st.columns(2)
+    for index, name in enumerate(names):
+        assumption = medical_assumption(assumptions, name)
+        if assumption is None:
+            continue
+        value = columns[index % 2].text_area(
+            name,
+            value=str(assumption.get("Value", "")),
+            key=f"launch_medical_positioning_{case_id}_{assumption.get('Assumption ID')}",
+            disabled=not can_edit,
+            height=72,
+            help=launch_definition(name) or None,
+        )
+        if can_edit:
+            update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Value": value})
+
+
+def render_medical_reference_input(case_id: str, assumption: pd.Series, can_edit: bool) -> None:
+    assumption_id = str(assumption.get("Assumption ID", ""))
+    name = str(assumption.get("Assumption Name", ""))
+    reference_value = safe_float(assumption.get("Reference Value", assumption.get("Value", 0)))
+    st.markdown(f"**{launch_definition_label(name)}**", unsafe_allow_html=True)
+    st.caption(f"Reference / Master Data · {assumption.get('Reference', 'Product dosing reference')} · {reference_value:g} {assumption.get('Unit', '')}")
+    override = st.checkbox("Use case-specific override", value=bool(assumption.get("Override Enabled", False)), key=f"launch_medical_override_{case_id}_{assumption_id}", disabled=not can_edit)
+    if not override:
+        if can_edit and (bool(assumption.get("Override Enabled", False)) or safe_float(assumption.get("Value")) != reference_value):
+            update_launch_assumption_record(case_id, assumption_id, {"Value": reference_value, "Override Enabled": False, "Override Rationale": ""})
+        return
+    value = st.number_input(str(assumption.get("Unit", "Value")), min_value=0.0, value=float(safe_float(assumption.get("Value", reference_value))), key=f"launch_medical_override_value_{case_id}_{assumption_id}", disabled=not can_edit)
+    rationale = st.text_input("Override rationale *", value=str(assumption.get("Override Rationale", "")), key=f"launch_medical_override_reason_{case_id}_{assumption_id}", disabled=not can_edit)
+    if can_edit and rationale.strip():
+        update_launch_assumption_record(case_id, assumption_id, {"Value": safe_float(value), "Override Enabled": True, "Override Rationale": rationale.strip()})
+    elif can_edit:
+        st.caption("A rationale is required before the override is applied.")
+
+
+def render_medical_clinical_evidence(case_id: str, assumption: pd.Series, can_edit: bool) -> None:
+    assumption_id = str(assumption.get("Assumption ID", ""))
+    items = [deepcopy(item) for item in assumption.get("Value", []) if isinstance(item, dict)]
+    summary_fields = ["Study / Trial Name", "Phase", "Population / Setting", "Primary Endpoint", "Key Primary Result", "Evidence Status"]
+    if items:
+        st.dataframe(pd.DataFrame(items).reindex(columns=summary_fields).rename(columns={"Study / Trial Name": "Study", "Population / Setting": "Population", "Key Primary Result": "Key Result", "Evidence Status": "Status"}), use_container_width=True, hide_index=True)
+    else:
+        st.caption("No clinical evidence items recorded.")
+    if st.button("+ Add Evidence", key=f"launch_medical_add_evidence_{case_id}", disabled=not can_edit):
+        items.append({"Study / Trial Name": "New evidence item", "Phase": "Phase III", "Population / Setting": "", "Primary Endpoint": "", "Key Primary Result": "", "Key Secondary Result(s)": "", "Safety / Key Limitation": "", "Evidence Status": "Ongoing", "Expected Readout Date": "", "Source / Reference": "", "Comment / Rationale": ""})
+        update_launch_assumption_record(case_id, assumption_id, {"Value": items})
+        st.rerun()
+    for index, item in enumerate(items):
+        title = f"{item.get('Study / Trial Name', 'Evidence item')} · {item.get('Evidence Status', 'Not Available')}"
+        with st.expander(title, expanded=False):
+            columns = st.columns(2)
+            updated = dict(item)
+            updated["Study / Trial Name"] = columns[0].text_input("Study / Trial Name", value=str(item.get("Study / Trial Name", "")), key=f"medical_evidence_{case_id}_{index}_study", disabled=not can_edit)
+            updated["Phase"] = columns[1].text_input("Phase", value=str(item.get("Phase", "")), key=f"medical_evidence_{case_id}_{index}_phase", disabled=not can_edit)
+            updated["Population / Setting"] = columns[0].text_area("Population / Setting", value=str(item.get("Population / Setting", "")), key=f"medical_evidence_{case_id}_{index}_population", disabled=not can_edit, height=70)
+            updated["Primary Endpoint"] = columns[1].text_area("Primary Endpoint", value=str(item.get("Primary Endpoint", "")), key=f"medical_evidence_{case_id}_{index}_endpoint", disabled=not can_edit, height=70)
+            updated["Key Primary Result"] = columns[0].text_area("Key Primary Result", value=str(item.get("Key Primary Result", "")), key=f"medical_evidence_{case_id}_{index}_primary", disabled=not can_edit, height=70)
+            updated["Key Secondary Result(s)"] = columns[1].text_area("Key Secondary Result(s)", value=str(item.get("Key Secondary Result(s)", "")), key=f"medical_evidence_{case_id}_{index}_secondary", disabled=not can_edit, height=70)
+            updated["Safety / Key Limitation"] = columns[0].text_area("Safety / Key Limitation", value=str(item.get("Safety / Key Limitation", "")), key=f"medical_evidence_{case_id}_{index}_safety", disabled=not can_edit, height=70)
+            current_status = str(item.get("Evidence Status", "Not Available"))
+            status_options = ["Available", "Interim", "Ongoing", "Expected", "Not Available"]
+            updated["Evidence Status"] = columns[1].selectbox("Evidence Status", status_options, index=status_options.index(current_status) if current_status in status_options else 4, key=f"medical_evidence_{case_id}_{index}_status", disabled=not can_edit, help=launch_definition("Clinical Evidence Status"))
+            updated["Expected Readout Date"] = columns[0].text_input("Expected Readout Date", value=str(item.get("Expected Readout Date", "")), key=f"medical_evidence_{case_id}_{index}_readout", disabled=not can_edit)
+            updated["Source / Reference"] = columns[1].text_input("Source / Reference", value=str(item.get("Source / Reference", "")), key=f"medical_evidence_{case_id}_{index}_source", disabled=not can_edit)
+            updated["Comment / Rationale"] = st.text_area("Comment / Rationale", value=str(item.get("Comment / Rationale", "")), key=f"medical_evidence_{case_id}_{index}_comment", disabled=not can_edit, height=70)
+            if updated != item:
+                items[index] = updated
+                if can_edit:
+                    update_launch_assumption_record(case_id, assumption_id, {"Value": items})
+
+
+def render_medical_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
+    case_id = str(case.get("Launch Case ID", ""))
+    can_edit = launch_user_workstream() == "Medical"
+
+    st.markdown("### Patient Definition & Treatment Funnel")
+    st.caption("Owner: Medical · Target Patient & Treatment Positioning defines who is intended for treatment; Treatment Eligibility quantifies the share of diagnosed patients who meet that definition.")
+    positioning = assumptions[assumptions["Category"].eq("Target Patient & Treatment Positioning")]
+    with st.container(border=True):
+        st.markdown("#### Target Patient & Treatment Positioning")
+        render_medical_positioning(case_id, positioning, can_edit)
+    quantitative_names = ["Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility"]
+    quantitative = assumptions[assumptions["Assumption Name"].isin(quantitative_names)]
+    with st.container(border=True):
+        st.markdown("#### Evidence-based Funnel Inputs")
+        for name in quantitative_names:
+            assumption = medical_assumption(quantitative, name)
+            if assumption is not None:
+                render_medical_yearly_assumption(case_id, assumption, can_edit)
+        st.info("Diagnosed Patients × Treatment Eligibility = Treated / Target Patients")
+    funnel_package = pd.concat([positioning, quantitative], ignore_index=True)
+    render_medical_package_share(case_id, "patient_definition", funnel_package, can_edit)
+
+    refreshed = launch_assumptions(data, case)
+    utilization = refreshed[refreshed["Category"].eq("Treatment & Utilization")]
+    st.markdown("### Treatment & Utilization")
+    st.caption("Owner: Medical · Reference dosing, treatment duration and adherence translate Patients on Product into Demand Units.")
+    with st.container(border=True):
+        reference_columns = st.columns(2)
+        for column, name in zip(reference_columns, ["Dose per Administration", "Administration Frequency"]):
+            assumption = medical_assumption(utilization, name)
+            if assumption is not None:
+                with column:
+                    render_medical_reference_input(case_id, assumption, can_edit)
+        duration = medical_assumption(utilization, "Treatment Duration")
+        compliance = medical_assumption(utilization, "Compliance")
+        persistence = medical_assumption(utilization, "Persistence")
+        input_columns = st.columns(3)
+        if duration is not None:
+            duration_value = input_columns[0].number_input("Treatment Duration", min_value=0.0, value=float(safe_float(duration.get("Value"))), key=f"medical_duration_{case_id}", disabled=not can_edit, help=launch_definition("Treatment Duration"))
+            duration_units = ["days", "weeks", "months", "administrations"]
+            current_unit = str(duration.get("Duration Unit", duration.get("Unit", "months"))).lower()
+            duration_unit = input_columns[0].selectbox("Duration Unit", duration_units, index=duration_units.index(current_unit) if current_unit in duration_units else 2, key=f"medical_duration_unit_{case_id}", disabled=not can_edit)
+            if can_edit:
+                update_launch_assumption_record(case_id, str(duration.get("Assumption ID", "")), {"Value": safe_float(duration_value), "Duration Unit": duration_unit, "Unit": duration_unit})
+        if compliance is not None:
+            compliance_value = input_columns[1].number_input("Compliance (%)", min_value=0.0, max_value=100.0, value=float(safe_float(compliance.get("Value")) * 100), key=f"medical_compliance_{case_id}", disabled=not can_edit, format="%.1f", help=launch_definition("Compliance"))
+            if can_edit:
+                update_launch_assumption_record(case_id, str(compliance.get("Assumption ID", "")), {"Value": safe_float(compliance_value) / 100})
+        if persistence is not None:
+            use_persistence = input_columns[2].checkbox("Use Persistence Adjustment", value=bool(persistence.get("Enabled", False)), key=f"medical_use_persistence_{case_id}", disabled=not can_edit)
+            if use_persistence:
+                persistence_value = input_columns[2].number_input("Persistence (%)", min_value=0.0, max_value=100.0, value=float(safe_float(persistence.get("Value")) * 100), key=f"medical_persistence_{case_id}", disabled=not can_edit, format="%.1f", help=launch_definition("Persistence"))
+            else:
+                persistence_value = safe_float(persistence.get("Value")) * 100
+            if can_edit:
+                update_launch_assumption_record(case_id, str(persistence.get("Assumption ID", "")), {"Value": safe_float(persistence_value) / 100, "Enabled": use_persistence})
+        st.caption("Theoretical utilization is adjusted for Compliance and only applies Persistence when the toggle is enabled.")
+    model = calculate_launch_model(data, case, "Base")
+    forecast = model.get("forecast", pd.DataFrame())
+    y5 = forecast[forecast["Year"].eq("Y5")].iloc[0] if isinstance(forecast, pd.DataFrame) and not forecast.empty else pd.Series(dtype=object)
+    funnel = model.get("funnel", pd.DataFrame())
+    funnel_y5 = funnel[funnel["Year"].eq("Y5")].iloc[0] if isinstance(funnel, pd.DataFrame) and not funnel.empty else pd.Series(dtype=object)
+    output_columns = st.columns(3)
+    output_columns[0].metric("Y5 Treated / Target Patients", f"{safe_float(funnel_y5.get('Treated Patients')):,.0f}")
+    output_columns[1].metric("Adjusted Units per Patient", f"{safe_float(y5.get('Adjusted Units per Patient')):,.2f}")
+    output_columns[2].metric("Y5 Demand Units", f"{safe_float(y5.get('Demand Units')):,.0f}")
+    refreshed = launch_assumptions(data, case, model)
+    utilization = refreshed[refreshed["Category"].eq("Treatment & Utilization")]
+    render_medical_package_share(case_id, "utilization", utilization, can_edit)
+
+    st.markdown("### Clinical Evidence")
+    st.caption("Owner: Medical · Decision-relevant evidence supporting the target patient, treatment positioning and launch case.")
+    clinical = refreshed[refreshed["Category"].eq("Clinical Evidence")]
+    evidence = medical_assumption(clinical, "Clinical Evidence")
+    gap = medical_assumption(clinical, "Key Clinical Evidence Gap / Risk")
+    with st.container(border=True):
+        if evidence is not None:
+            render_medical_clinical_evidence(case_id, evidence, can_edit)
+        if gap is not None:
+            gap_value = st.text_area("Key Clinical Evidence Gap / Risk", value=str(gap.get("Value", "")), key=f"medical_evidence_gap_{case_id}", disabled=not can_edit, height=80)
+            if can_edit:
+                update_launch_assumption_record(case_id, str(gap.get("Assumption ID", "")), {"Value": gap_value})
+    render_medical_package_share(case_id, "clinical_evidence", clinical, can_edit)
+
+    st.markdown("### Needs My Alignment")
+    render_launch_validation_queue(case_id, launch_assumptions(data, case, calculate_launch_model(data, case, "Base")), "Medical")
+
+
 def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], workspace: str) -> None:
     case_id = str(case.get("Launch Case ID", ""))
     assumptions = launch_assumptions(data, case)
@@ -6355,6 +6758,9 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
         return
     if workspace == "Sales":
         render_sales_workspace(case, data, assumptions)
+        return
+    if workspace == "Medical":
+        render_medical_workspace(case, data, assumptions)
         return
     owned = assumptions[(assumptions["Owner"].eq(workspace)) & (~assumptions["Calculated"].astype(bool))]
     st.markdown("### My Inputs")
