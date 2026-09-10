@@ -118,18 +118,18 @@ assert prevalence["Validation Status"] == "Aligned"
 assert any(event.get("Action") == "Confirmed Alignment" for event in prevalence["Validation History"])
 
 # Multi-partner inputs remain open until every configured partner confirms.
-evidence = record(app, "Evidence Maturity")
+evidence = record(app, "Key Clinical Evidence Gap / Risk")
 evidence_id = str(evidence["Assumption ID"])
 marketing_confirm = f"launch_confirm_{CASE_ID}_marketing_{evidence_id}"
 widget_by_key(app.button, marketing_confirm).click().run()
 assert_clean(app, "first multi-partner confirmation")
-assert record(app, "Evidence Maturity")["Validation Status"] == "Shared for Alignment"
+assert record(app, "Key Clinical Evidence Gap / Risk")["Validation Status"] == "Shared for Alignment"
 
 app.session_state["launch_current_role"] = "Regulatory"
 app.run()
 regulatory_confirm = f"launch_confirm_{CASE_ID}_regulatory_{evidence_id}"
 widget_by_key(app.button, regulatory_confirm).click().run()
 assert_clean(app, "final multi-partner confirmation")
-assert record(app, "Evidence Maturity")["Validation Status"] == "Aligned"
+assert record(app, "Key Clinical Evidence Gap / Risk")["Validation Status"] == "Aligned"
 
 print("launch alignment smoke test complete")

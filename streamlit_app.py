@@ -4272,13 +4272,12 @@ def launch_responsibility_matrix(assumptions: pd.DataFrame | None = None) -> pd.
         ("Epidemiology", "Marketing", "Medical"),
         ("Diagnosis Rate", "Marketing", "Medical"),
         ("Eligible Population", "Medical", "Marketing"),
-        ("Market Share", "Marketing", "Sales"),
+        ("Market Share", "Marketing", "Sales, Supply / Operations"),
         ("Patient Volume", "Marketing", "Sales"),
         ("Sales Force HC", "Sales", "Marketing, Finance"),
         ("Market Access Channel Plan", "Market Access", "Marketing, Finance, Regulatory"),
         ("Access Eligibility / Restrictions", "Market Access", "Medical"),
-        ("COGS", "Finance", "Supply / Operations"),
-        ("Supply Capacity", "Supply / Operations", "Sales"),
+        ("Maximum Available Units", "Supply / Operations", "Sales"),
     ]
     return pd.DataFrame(rows, columns=["Assumption / Input", "Owner", "Alignment Partners"])
 
@@ -4421,6 +4420,17 @@ LAUNCH_DEFINITIONS = {
     "Net Price": "The realized price after discounts, rebates and other adjustments; this is the price used for Net Revenue.",
     "Access Start Date": "The expected date when patients can first obtain funded access through the channel.",
     "Access Eligibility / Restrictions": "Access criteria that may narrow the funded population relative to clinical eligibility.",
+    "Regulatory Dossier Submission Date": "The planned or actual date the dossier is submitted to the relevant regulatory authority.",
+    "Expected Regulatory Approval Date": "The base-case approval date used by the integrated launch plan and commercial launch gate.",
+    "Approval Timing Rationale / Key Drivers": "The submission pathway, authority review, data, manufacturing or inspection factors supporting the expected approval date.",
+    "Regulatory Timing Benchmark": "A neutral reference duration for comparable submissions, used as context rather than a decision rule.",
+    "Expected Label / Indication": "The indication and principal population or setting expected in the approved product label.",
+    "Material Regulatory Risk": "A regulatory uncertainty that could materially affect approval timing, approved label, launch timing or commercial feasibility.",
+    "Expected Stock Available Date": "The expected date when commercially releasable product is available in the local warehouse and can support launch.",
+    "Time to Availability": "The calculated number of days from regulatory approval to commercially releasable stock availability.",
+    "Manufacturing / Supply Constraint": "A known manufacturing or supply limitation that could materially affect launch timing or available volume.",
+    "Maximum Available Units": "The optional annual supply ceiling used only when physical capacity may constrain launch demand.",
+    "Supply / Warehouse Capacity": "Whether the supply, warehouse and distribution network can accommodate the planned launch volume.",
 }
 
 
@@ -4562,8 +4572,30 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
             "access_plan": default_market_access_plan(case_id, product),
             "market_share": launch_year_values(0, "By Year", [0.04, 0.10, 0.16, 0.22, 0.27]),
             "utilization": {"Units per Patient": 8.0, "Compliance": 0.88, "Persistence": 0.92, "Compliance Enabled": True, "Persistence Enabled": True, "Treatment Duration": 8.0, "Treatment Duration Unit": "months"},
-            "regulatory": {"Expected Regulatory Approval Date": "2026-12-15", "Expected Label / Indication": "Broad-access launch indication", "Key Regulatory Dependency": "Local label confirmation", "Confidence": "High", "Material Risk": "Low", "Mitigation": "Track final label wording before commercial activation."},
-            "supply": {"Earliest Supply Available Date": "2027-01-10", "Launch Stock Available?": "Yes", "Can Projected Demand Be Supplied?": "Yes", "Major Supply Risk": "Launch allocation balancing", "Mitigation": "Use standard launch allocation cadence.", "Maximum Available Units": launch_year_values(0)},
+            "regulatory": {
+                "Regulatory Dossier Submission Date": "2026-01-15",
+                "Expected Regulatory Approval Date": "2026-12-15",
+                "Approval Timing Rationale / Key Drivers": "Standard review pathway with no anticipated local data requirement; final label wording remains the principal timing dependency.",
+                "Regulatory Timing Benchmark Months": 11.5,
+                "Expected Label / Indication": "Broad-access launch indication",
+                "Risk Level": "Low",
+                "Risk / Issue": "Final label wording may modestly narrow the eligible population.",
+                "Potential Impact": "A narrower label could reduce the initially addressable population and require access-plan refinement.",
+                "Response / Management Consideration": "Track authority questions and align Medical and Market Access assumptions when final wording is available.",
+            },
+            "supply": {
+                "Expected Stock Available Date": "2027-01-10",
+                "Supply Plan / Rationale": "Commercial stock will follow final batch release, local packaging and warehouse receipt.",
+                "Constraint Status": "No known constraint",
+                "Constraint / Risk": "",
+                "Potential Impact": "",
+                "Plan / Management Response": "",
+                "Capacity Constraint Enabled": False,
+                "Maximum Available Units": launch_year_values(0),
+                "Warehouse Capacity Status": "Yes",
+                "Capacity / Logistics Issue": "",
+                "Impact / Comment": "",
+            },
             "sales_resources": {"Sales Force HC / FTE": launch_year_values(0, "By Year", [8, 12, 14, 16, 16]), "Target Accounts / Centers": 240, "Coverage %": 0.68, "Reach": "Broad account reach", "Frequency": "Monthly priority touchpoints"},
             "personnel": {
                 "Marketing": {"FTE": launch_year_values(2.0), "Average Cost per FTE": 145_000},
@@ -4571,7 +4603,7 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
                 "Medical": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 175_000},
                 "Market Access": {"FTE": launch_year_values(1.0), "Average Cost per FTE": 160_000},
                 "Regulatory": {"FTE": launch_year_values(0.5), "Average Cost per FTE": 155_000},
-                "Supply / Operations": {"FTE": launch_year_values(0.5), "Average Cost per FTE": 130_000},
+                "Supply / Operations": {"FTE": launch_year_values(0), "Average Cost per FTE": 130_000},
             },
             "projects": [
                 {"Project / Initiative Name": "Account conversion campaign", "Function": "Marketing", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y5", "Owner": "Marketing", "Finance Alignment Status": "Draft", "Y1": 420_000, "Y2": 260_000, "Y3": 160_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support listing conversion and broad awareness."},
@@ -4590,8 +4622,30 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
         "access_plan": default_market_access_plan(case_id, product),
         "market_share": launch_year_values(0, "By Year", [0.05, 0.12, 0.20, 0.27, 0.31]),
         "utilization": {"Units per Patient": 10.0, "Compliance": 0.86, "Persistence": 0.90, "Compliance Enabled": True, "Persistence Enabled": True, "Treatment Duration": 10.0, "Treatment Duration Unit": "months"},
-        "regulatory": {"Expected Regulatory Approval Date": "2027-02-15", "Expected Label / Indication": "Specialty access launch indication", "Key Regulatory Dependency": "Approval and final access dossier", "Confidence": "Medium", "Material Risk": "Medium", "Mitigation": "Maintain access scenario until final reimbursement decision."},
-        "supply": {"Earliest Supply Available Date": "2027-03-01", "Launch Stock Available?": "At Risk", "Can Projected Demand Be Supplied?": "At Risk", "Major Supply Risk": "Limited launch stock during reimbursement ramp", "Mitigation": "Prioritize validated reimbursed demand during Y1 and Y2.", "Maximum Available Units": launch_year_values(0, "By Year", [1_000, 2_600, 5_000, 8_000, 11_000])},
+        "regulatory": {
+            "Regulatory Dossier Submission Date": "2026-02-01",
+            "Expected Regulatory Approval Date": "2027-02-15",
+            "Approval Timing Rationale / Key Drivers": "Specialty submission with anticipated authority questions on the access population and manufacturing readiness.",
+            "Regulatory Timing Benchmark Months": 11.5,
+            "Expected Label / Indication": "Specialty access launch indication",
+            "Risk Level": "Medium",
+            "Risk / Issue": "Authority review may require additional clarification of the eligible specialty population.",
+            "Potential Impact": "Approval timing or final population wording could shift launch sequencing and reimbursement preparation.",
+            "Response / Management Consideration": "Prepare response materials early and maintain cross-functional alignment on the base launch date and population assumptions.",
+        },
+        "supply": {
+            "Expected Stock Available Date": "2027-03-01",
+            "Supply Plan / Rationale": "Initial launch stock requires specialty batch release, local packaging and controlled warehouse allocation.",
+            "Constraint Status": "At Risk",
+            "Constraint / Risk": "Limited specialty production slots may constrain the initial launch build.",
+            "Potential Impact": "Demand may exceed releasable supply during the early reimbursement ramp.",
+            "Plan / Management Response": "Prioritize validated reimbursed demand and review available units at each launch gate.",
+            "Capacity Constraint Enabled": True,
+            "Maximum Available Units": launch_year_values(0, "By Year", [1_000, 2_600, 5_000, 8_000, 11_000]),
+            "Warehouse Capacity Status": "At Risk",
+            "Capacity / Logistics Issue": "Controlled allocation is required during the first two launch years.",
+            "Impact / Comment": "Warehouse capacity is sufficient, but available launch stock requires prioritized allocation.",
+        },
         "sales_resources": {"Sales Force HC / FTE": launch_year_values(0, "By Year", [4, 6, 8, 9, 10]), "Target Accounts / Centers": 85, "Coverage %": 0.55, "Reach": "Specialty center focus", "Frequency": "Biweekly launch-phase engagement"},
         "personnel": {
             "Marketing": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 150_000},
@@ -4599,7 +4653,7 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
             "Medical": {"FTE": launch_year_values(2.0), "Average Cost per FTE": 185_000},
             "Market Access": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 165_000},
             "Regulatory": {"FTE": launch_year_values(0.8), "Average Cost per FTE": 160_000},
-            "Supply / Operations": {"FTE": launch_year_values(0.7), "Average Cost per FTE": 135_000},
+            "Supply / Operations": {"FTE": launch_year_values(0), "Average Cost per FTE": 135_000},
         },
         "projects": [
             {"Project / Initiative Name": "Reimbursement dossier and access evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y5", "Owner": "Market Access", "Finance Alignment Status": "Draft", "Y1": 650_000, "Y2": 340_000, "Y3": 180_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support payer assessment and reimbursement milestone."},
@@ -4693,7 +4747,7 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("System", "Calculated Funnel", "Treated Patients", "Calculated", "Calculated", "Patients", calculated=True)
     add("System", "Calculated Funnel", "Total Market Access Rate", "Calculated", "Calculated", "%", calculated=True)
     add("System", "Calculated Funnel", "Accessible Patients", "Calculated", "Calculated", "Patients", calculated=True)
-    add("Marketing", "Adoption", "Market Share", "", "Yearly Percentage", "%", "Sales", inputs["market_share"], assumption_type="MANAGEMENT / FUNCTIONAL", rationale="Share of accessible patients expected to receive our product.")
+    add("Marketing", "Adoption", "Market Share", "", "Yearly Percentage", "%", "Sales, Supply / Operations", inputs["market_share"], assumption_type="MANAGEMENT / FUNCTIONAL", rationale="Share of accessible patients expected to receive our product.")
     add("System", "Calculated Funnel", "Patients on Product", "Calculated", "Calculated", "Patients", calculated=True)
     add("System", "Calculated Funnel", "Overall Market Share", "Calculated", "Calculated", "%", calculated=True)
     add(
@@ -4776,24 +4830,42 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("System", "Calculated", "Realized Net Price", "Calculated", "Calculated", "Local currency", "Finance", calculated=True)
 
     regulatory = inputs["regulatory"]
-    add("Regulatory", "Launch Gate", "Expected Regulatory Approval Date", regulatory.get("Expected Regulatory Approval Date", ""), "Date", validators="Marketing, Market Access")
-    add("Regulatory", "Launch Gate", "Expected Label / Indication", regulatory.get("Expected Label / Indication", ""), "Text", validators="Medical")
-    add("Regulatory", "Launch Gate", "Key Regulatory Dependency", regulatory.get("Key Regulatory Dependency", ""), "Text", validators="Marketing")
-    add("Regulatory", "Launch Gate", "Regulatory Confidence", regulatory.get("Confidence", "Medium"), "Choice", validators="Marketing", options=LAUNCH_CONFIDENCE_LEVELS)
-    add("Regulatory", "Launch Gate", "Material Regulatory Risk", regulatory.get("Material Risk", "Medium"), "Choice", validators="Marketing", options=["Low", "Medium", "High"])
-    add("Regulatory", "Launch Gate", "Regulatory Mitigation", regulatory.get("Mitigation", ""), "Text", validators="Marketing")
+    add("Regulatory", "Regulatory Path & Timing", "Regulatory Dossier Submission Date", regulatory.get("Regulatory Dossier Submission Date", ""), "Date", validators="Market Access")
+    add("Regulatory", "Regulatory Path & Timing", "Expected Regulatory Approval Date", regulatory.get("Expected Regulatory Approval Date", ""), "Date", validators="Marketing, Market Access")
+    add("Regulatory", "Regulatory Path & Timing", "Approval Timing Rationale / Key Drivers", regulatory.get("Approval Timing Rationale / Key Drivers", ""), "Text", validators="Marketing, Market Access")
+    add(
+        "Regulatory",
+        "Regulatory Path & Timing",
+        "Regulatory Timing Benchmark",
+        safe_float(regulatory.get("Regulatory Timing Benchmark Months", 11.5)),
+        "Number",
+        "Months",
+        source="Company historical data",
+        confidence="",
+        assumption_type="MASTER DATA",
+        owner="Central Reference Data",
+    )
+    add("Regulatory", "Expected Label / Indication", "Expected Label / Indication", regulatory.get("Expected Label / Indication", ""), "Text", validators="Medical, Market Access")
+    add("Regulatory", "Material Regulatory Risk", "Risk Level", regulatory.get("Risk Level", "Medium"), "Choice", validators="Marketing", options=["Low", "Medium", "High"])
+    add("Regulatory", "Material Regulatory Risk", "Risk / Issue", regulatory.get("Risk / Issue", ""), "Text", validators="Marketing")
+    add("Regulatory", "Material Regulatory Risk", "Potential Impact", regulatory.get("Potential Impact", ""), "Text", validators="Marketing")
+    add("Regulatory", "Material Regulatory Risk", "Response / Management Consideration", regulatory.get("Response / Management Consideration", ""), "Text", validators="Marketing")
 
     supply = inputs["supply"]
-    add("Supply / Operations", "Supply Feasibility", "Earliest Supply Available Date", supply.get("Earliest Supply Available Date", ""), "Date", validators="Sales")
-    add("Supply / Operations", "Supply Feasibility", "Launch Stock Available?", supply.get("Launch Stock Available?", "Yes"), "Choice", validators="Sales", options=["Yes", "At Risk", "No"])
-    add("Supply / Operations", "Supply Feasibility", "Can Projected Demand Be Supplied?", supply.get("Can Projected Demand Be Supplied?", "Yes"), "Choice", validators="Sales, Finance", options=["Yes", "At Risk", "No"])
-    add("Supply / Operations", "Supply Feasibility", "Major Supply Risk", supply.get("Major Supply Risk", ""), "Text", validators="Sales")
-    add("Supply / Operations", "Supply Feasibility", "Supply Mitigation", supply.get("Mitigation", ""), "Text", validators="Sales")
-    add("Supply / Operations", "Supply Investment", "Incremental Supply Investment / Project", 0.0, "Number", "Local currency", "Finance")
-    add("Supply / Operations", "Supply Constraint", "Maximum Available Units", "", "Yearly Number", "Units", "Sales, Finance", supply.get("Maximum Available Units", launch_year_values(0)))
+    add("Supply / Operations", "Product Availability", "Expected Stock Available Date", supply.get("Expected Stock Available Date", ""), "Date", validators="Regulatory, Sales")
+    add("Supply / Operations", "Product Availability", "Supply Plan / Rationale", supply.get("Supply Plan / Rationale", ""), "Text", validators="Regulatory, Sales")
+    add("Supply / Operations", "Manufacturing / Supply Constraints", "Manufacturing / Supply Constraint Status", supply.get("Constraint Status", "No known constraint"), "Choice", validators="Sales", options=["No known constraint", "At Risk", "Yes — material constraint"])
+    add("Supply / Operations", "Manufacturing / Supply Constraints", "Constraint / Risk", supply.get("Constraint / Risk", ""), "Text", validators="Sales")
+    add("Supply / Operations", "Manufacturing / Supply Constraints", "Constraint Potential Impact", supply.get("Potential Impact", ""), "Text", validators="Sales")
+    add("Supply / Operations", "Manufacturing / Supply Constraints", "Plan / Management Response", supply.get("Plan / Management Response", ""), "Text", validators="Sales")
+    add("Supply / Operations", "Manufacturing / Supply Constraints", "Supply Capacity May Constrain Launch Demand", bool(supply.get("Capacity Constraint Enabled", False)), "Boolean", validators="Sales")
+    add("Supply / Operations", "Manufacturing / Supply Constraints", "Maximum Available Units", "", "Yearly Number", "Units", "Sales", supply.get("Maximum Available Units", launch_year_values(0)))
+    add("Supply / Operations", "Supply / Warehouse Capacity", "Supply / Warehouse Capacity Status", supply.get("Warehouse Capacity Status", "Yes"), "Choice", validators="Sales", options=["Yes", "At Risk", "No"])
+    add("Supply / Operations", "Supply / Warehouse Capacity", "Capacity / Logistics Issue", supply.get("Capacity / Logistics Issue", ""), "Text", validators="Sales")
+    add("Supply / Operations", "Supply / Warehouse Capacity", "Capacity Impact / Comment", supply.get("Impact / Comment", ""), "Text", validators="Sales")
 
-    add("Finance", "Unit Economics", "COGS per Unit", product.get("Standard Cost", 0), "Number", "Local currency", "Supply / Operations")
-    add("Finance", "Personnel", "Average Cost per FTE", 150_000, "Number", "Local currency", "Marketing, Sales, Medical, Market Access, Regulatory, Supply / Operations")
+    add("Finance", "Unit Economics", "COGS per Unit", product.get("Standard Cost", 0), "Number", "Local currency")
+    add("Finance", "Personnel", "Average Cost per FTE", 150_000, "Number", "Local currency", "Marketing, Sales, Medical, Market Access, Regulatory")
     add("Finance", "Investment", "Launch Investment Classification", "One-off Launch OPEX", "Choice", validators="Marketing", options=["Recurring OPEX", "One-off Launch OPEX", "CAPEX", "Inventory Build"])
     add("System", "Calculated", "Clinically Addressable Population", "Calculated", "Calculated", "Patients", calculated=True)
     add("System", "Calculated", "Net Revenue", "Calculated", "Calculated", "Local currency", calculated=True)
@@ -4842,6 +4914,14 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
         "Market Share": ["Market Share", "Share Within Accessible Segment", "Market Share / Adoption"],
         "Sales FTE": ["Sales FTE", "Sales Force FTE"],
         "Population-weighted Geographic Coverage %": ["Population-weighted Geographic Coverage %", "Coverage %"],
+        "Approval Timing Rationale / Key Drivers": ["Approval Timing Rationale / Key Drivers", "Key Regulatory Dependency"],
+        "Risk Level": ["Risk Level", "Material Regulatory Risk"],
+        "Response / Management Consideration": ["Response / Management Consideration", "Regulatory Mitigation"],
+        "Expected Stock Available Date": ["Expected Stock Available Date", "Earliest Supply Available Date"],
+        "Manufacturing / Supply Constraint Status": ["Manufacturing / Supply Constraint Status", "Launch Stock Available?"],
+        "Constraint / Risk": ["Constraint / Risk", "Major Supply Risk"],
+        "Plan / Management Response": ["Plan / Management Response", "Supply Mitigation"],
+        "Supply / Warehouse Capacity Status": ["Supply / Warehouse Capacity Status", "Can Projected Demand Be Supplied?"],
     }
     existing_by_name = {str(row.get("Assumption Name", "")): row for row in stored}
     normalized: list[dict[str, object]] = []
@@ -4869,6 +4949,11 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
             merged["Value"] = normalize_competitive_events(merged.get("Value", []))
         if name == "Market Access Channel Plan":
             merged["Value"] = normalize_market_access_plan(merged.get("Value"), case_id, product)
+        if name == "Manufacturing / Supply Constraint Status":
+            merged["Value"] = {
+                "Yes": "No known constraint",
+                "No": "Yes — material constraint",
+            }.get(str(merged.get("Value", "")), str(merged.get("Value", "At Risk")))
         if str(default.get("Value Type", "")).startswith("Yearly"):
             legacy_value = safe_float(existing.get("Value"))
             has_years = any(existing.get(year) is not None for year in LAUNCH_YEARS)
@@ -4945,16 +5030,23 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
     updated["utilization"]["Persistence Enabled"] = bool(persistence_record.get("Enabled", False))
     updated["regulatory"]["Expected Regulatory Approval Date"] = str(value("Expected Regulatory Approval Date", updated["regulatory"]["Expected Regulatory Approval Date"]))
     updated["regulatory"]["Expected Label / Indication"] = str(value("Expected Label / Indication", updated["regulatory"]["Expected Label / Indication"]))
-    updated["regulatory"]["Key Regulatory Dependency"] = str(value("Key Regulatory Dependency", updated["regulatory"]["Key Regulatory Dependency"]))
-    updated["regulatory"]["Confidence"] = str(value("Regulatory Confidence", updated["regulatory"]["Confidence"]))
-    updated["regulatory"]["Material Risk"] = str(value("Material Regulatory Risk", updated["regulatory"]["Material Risk"]))
-    updated["regulatory"]["Mitigation"] = str(value("Regulatory Mitigation", updated["regulatory"]["Mitigation"]))
-    updated["supply"]["Earliest Supply Available Date"] = str(value("Earliest Supply Available Date", updated["supply"]["Earliest Supply Available Date"]))
-    updated["supply"]["Launch Stock Available?"] = str(value("Launch Stock Available?", updated["supply"]["Launch Stock Available?"]))
-    updated["supply"]["Can Projected Demand Be Supplied?"] = str(value("Can Projected Demand Be Supplied?", updated["supply"]["Can Projected Demand Be Supplied?"]))
-    updated["supply"]["Major Supply Risk"] = str(value("Major Supply Risk", updated["supply"]["Major Supply Risk"]))
-    updated["supply"]["Mitigation"] = str(value("Supply Mitigation", updated["supply"]["Mitigation"]))
+    updated["regulatory"]["Regulatory Dossier Submission Date"] = str(value("Regulatory Dossier Submission Date", updated["regulatory"].get("Regulatory Dossier Submission Date", "")))
+    updated["regulatory"]["Approval Timing Rationale / Key Drivers"] = str(value("Approval Timing Rationale / Key Drivers", updated["regulatory"].get("Approval Timing Rationale / Key Drivers", "")))
+    updated["regulatory"]["Risk Level"] = str(value("Risk Level", updated["regulatory"].get("Risk Level", "Medium")))
+    updated["regulatory"]["Risk / Issue"] = str(value("Risk / Issue", updated["regulatory"].get("Risk / Issue", "")))
+    updated["regulatory"]["Potential Impact"] = str(value("Potential Impact", updated["regulatory"].get("Potential Impact", "")))
+    updated["regulatory"]["Response / Management Consideration"] = str(value("Response / Management Consideration", updated["regulatory"].get("Response / Management Consideration", "")))
+    updated["supply"]["Expected Stock Available Date"] = str(value("Expected Stock Available Date", updated["supply"].get("Expected Stock Available Date", "")))
+    updated["supply"]["Supply Plan / Rationale"] = str(value("Supply Plan / Rationale", updated["supply"].get("Supply Plan / Rationale", "")))
+    updated["supply"]["Constraint Status"] = str(value("Manufacturing / Supply Constraint Status", updated["supply"].get("Constraint Status", "No known constraint")))
+    updated["supply"]["Constraint / Risk"] = str(value("Constraint / Risk", updated["supply"].get("Constraint / Risk", "")))
+    updated["supply"]["Potential Impact"] = str(value("Constraint Potential Impact", updated["supply"].get("Potential Impact", "")))
+    updated["supply"]["Plan / Management Response"] = str(value("Plan / Management Response", updated["supply"].get("Plan / Management Response", "")))
+    updated["supply"]["Capacity Constraint Enabled"] = bool(value("Supply Capacity May Constrain Launch Demand", updated["supply"].get("Capacity Constraint Enabled", False)))
     updated["supply"]["Maximum Available Units"] = years("Maximum Available Units", updated["supply"]["Maximum Available Units"])
+    updated["supply"]["Warehouse Capacity Status"] = str(value("Supply / Warehouse Capacity Status", updated["supply"].get("Warehouse Capacity Status", "Yes")))
+    updated["supply"]["Capacity / Logistics Issue"] = str(value("Capacity / Logistics Issue", updated["supply"].get("Capacity / Logistics Issue", "")))
+    updated["supply"]["Impact / Comment"] = str(value("Capacity Impact / Comment", updated["supply"].get("Impact / Comment", "")))
     updated["cogs_per_unit"] = safe_float(value("COGS per Unit", 0))
     average_cost = safe_float(value("Average Cost per FTE", 150_000))
     for resource in updated["personnel"].values():
@@ -5284,7 +5376,7 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
     commercial_gate_date = max(
         str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)),
         planned_launch_date,
-        str(supply.get("Earliest Supply Available Date", planned_launch_date)),
+        str(supply.get("Expected Stock Available Date", planned_launch_date)),
     )
     commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
 
@@ -5308,9 +5400,12 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         if utilization.get("Persistence Enabled", True):
             utilization_multiplier *= safe_float(utilization.get("Persistence"))
         demand_units = patients_on_product * utilization_multiplier
-        supply_status = str(supply.get("Can Projected Demand Be Supplied?", "Yes"))
         max_units = safe_float(supply.get("Maximum Available Units", {}).get(year, 0))
-        sellable_units = min(demand_units, max_units) if supply_status in {"At Risk", "No"} and max_units > 0 else demand_units
+        capacity_constrained = (
+            bool(supply.get("Capacity Constraint Enabled", False))
+            and str(supply.get("Constraint Status", "No known constraint")) != "No known constraint"
+        )
+        sellable_units = min(demand_units, max(0.0, max_units)) if capacity_constrained else demand_units
         year_access = access_metrics.get(year, {})
         realized_net_price = safe_float(year_access.get("Weighted Net Price"))
         revenue = sellable_units * realized_net_price
@@ -5468,7 +5563,7 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
     commercial_gate_date = max(
         str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)),
         planned_launch_date,
-        str(supply.get("Earliest Supply Available Date", planned_launch_date)),
+        str(supply.get("Expected Stock Available Date", planned_launch_date)),
     )
     archetype = str(inputs.get("access_archetype") or case.get("Access Archetype", ""))
     commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
@@ -5495,7 +5590,11 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
             units_per_patient *= safe_float(utilization.get("Persistence"))
         demand_units = patients * units_per_patient
         max_units = safe_float(supply.get("Maximum Available Units", {}).get(year, 0))
-        sellable = min(demand_units, max_units) if str(supply.get("Can Projected Demand Be Supplied?", "Yes")) in {"At Risk", "No"} and max_units > 0 else demand_units
+        capacity_constrained = (
+            bool(supply.get("Capacity Constraint Enabled", False))
+            and str(supply.get("Constraint Status", "No known constraint")) != "No known constraint"
+        )
+        sellable = min(demand_units, max(0.0, max_units)) if capacity_constrained else demand_units
         realized_net_price = safe_float(access_metrics.get(year, {}).get("Weighted Net Price"))
         revenue = sellable * realized_net_price
         gross_profit = revenue - sellable * unit_cost
@@ -5605,15 +5704,13 @@ def render_launch_model_sections(case_id: str, case: pd.Series, data: dict[str, 
         supply = inputs["supply"]
         supply_view = pd.DataFrame(
             [
-                {"Supply Assumption": "Earliest Supply Available Date", "Value": supply.get("Earliest Supply Available Date", "")},
-                {"Supply Assumption": "Launch Stock Available?", "Value": supply.get("Launch Stock Available?", "")},
-                {"Supply Assumption": "Can Projected Demand Be Supplied?", "Value": supply.get("Can Projected Demand Be Supplied?", "")},
-                {"Supply Assumption": "Major Supply Risk", "Value": supply.get("Major Supply Risk", "")},
-                {"Supply Assumption": "Mitigation", "Value": supply.get("Mitigation", "")},
+                {"Supply Assumption": "Expected Stock Available Date", "Value": supply.get("Expected Stock Available Date", "")},
+                {"Supply Assumption": "Manufacturing / Supply Constraint", "Value": supply.get("Constraint Status", "No known constraint")},
+                {"Supply Assumption": "Supply / Warehouse Capacity", "Value": supply.get("Warehouse Capacity Status", "Yes")},
             ]
         )
         st.dataframe(supply_view, use_container_width=True, hide_index=True)
-        if supply.get("Can Projected Demand Be Supplied?") in {"At Risk", "No"}:
+        if bool(supply.get("Capacity Constraint Enabled", False)) and supply.get("Constraint Status") in {"At Risk", "Yes — material constraint"}:
             capacity_view = pd.DataFrame([{"Capacity Metric": "Maximum Available Units", **supply.get("Maximum Available Units", {})}])
             st.dataframe(capacity_view, use_container_width=True, hide_index=True)
 
@@ -6504,6 +6601,13 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
             "Disease / Indication",
             "Biomarker / Prior Treatment / Clinical Restriction",
         },
+        "Regulatory": {
+            "Disease / Indication",
+            "Line of Therapy",
+            "Biomarker / Prior Treatment / Clinical Restriction",
+            "Key Clinical Evidence Gap / Risk",
+        },
+        "Supply / Operations": {"Market Share"},
     }
     validators_mask = assumptions["Validators"].astype(str).map(lambda value: workspace in split_validators(value))
     queue = assumptions[validators_mask & ~assumptions["Owner"].eq(workspace)]
@@ -7489,6 +7593,360 @@ def render_market_access_workspace(case: pd.Series, data: dict[str, pd.DataFrame
     render_launch_package_share(case_id, launch_assumptions(data, case, model), "Market Access", can_edit)
 
 
+def regulatory_date_value(raw_value: object, fallback_year: int) -> date:
+    parsed = pd.to_datetime(raw_value, errors="coerce")
+    return parsed.date() if not pd.isna(parsed) else date(fallback_year, 1, 1)
+
+
+def render_regulatory_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
+    case_id = str(case.get("Launch Case ID", ""))
+    can_edit = launch_user_workstream() == "Regulatory"
+    launch_year = launch_year_from_case(case)
+    owned = assumptions[assumptions["Workstream"].eq("Regulatory")]
+
+    dossier = medical_assumption(owned, "Regulatory Dossier Submission Date")
+    approval = medical_assumption(owned, "Expected Regulatory Approval Date")
+    rationale = medical_assumption(owned, "Approval Timing Rationale / Key Drivers")
+    benchmark = medical_assumption(owned, "Regulatory Timing Benchmark")
+    label = medical_assumption(owned, "Expected Label / Indication")
+    risk_level = medical_assumption(owned, "Risk Level")
+    risk_issue = medical_assumption(owned, "Risk / Issue")
+    risk_impact = medical_assumption(owned, "Potential Impact")
+    risk_response = medical_assumption(owned, "Response / Management Consideration")
+
+    st.markdown("### Regulatory Path & Timing")
+    with st.container(border=True):
+        timing_columns = st.columns(2)
+        dossier_date = regulatory_date_value(dossier.get("Value") if dossier is not None else None, launch_year - 1)
+        approval_date = regulatory_date_value(approval.get("Value") if approval is not None else None, launch_year)
+        if dossier is not None:
+            dossier_date = timing_columns[0].date_input(
+                "Regulatory Dossier Submission Date",
+                value=dossier_date,
+                key=f"launch_regulatory_submission_{case_id}",
+                disabled=not can_edit,
+                help=launch_definition("Regulatory Dossier Submission Date"),
+            )
+        if approval is not None:
+            approval_date = timing_columns[1].date_input(
+                "Expected Regulatory Approval Date",
+                value=approval_date,
+                key=f"launch_regulatory_approval_{case_id}",
+                disabled=not can_edit,
+                help=launch_definition("Expected Regulatory Approval Date"),
+            )
+            timing_columns[1].caption("Alternative approval timing scenarios can be modeled in Sensitivity Analysis.")
+        if rationale is not None:
+            timing_rationale = st.text_area(
+                "Approval Timing Rationale / Key Drivers",
+                value=str(rationale.get("Value", "")),
+                key=f"launch_regulatory_timing_rationale_{case_id}",
+                disabled=not can_edit,
+                height=88,
+                help=launch_definition("Approval Timing Rationale / Key Drivers"),
+            )
+        else:
+            timing_rationale = ""
+
+        benchmark_months = safe_float(benchmark.get("Value")) if benchmark is not None else 11.5
+        expected_months = max(0.0, (approval_date - dossier_date).days / 30.4375)
+        variance_months = expected_months - benchmark_months
+        st.markdown(f"**{launch_definition_label('Regulatory Timing Benchmark')}**", unsafe_allow_html=True)
+        benchmark_columns = st.columns(3)
+        benchmark_columns[0].metric("Reference benchmark", f"{benchmark_months:.1f} months")
+        benchmark_columns[1].metric("Expected case duration", f"{expected_months:.1f} months")
+        benchmark_columns[2].metric("Variance", f"{variance_months:+.1f} months")
+        st.caption("Median approval duration for comparable submissions · Company historical data · Reference only")
+
+        planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
+        if not pd.isna(planned_launch) and planned_launch.date() < approval_date:
+            st.warning("Planned Launch Date precedes Expected Regulatory Approval Date.")
+
+        if can_edit:
+            if dossier is not None:
+                update_launch_assumption_record(case_id, str(dossier.get("Assumption ID", "")), {"Value": dossier_date.isoformat()})
+            if approval is not None:
+                update_launch_assumption_record(case_id, str(approval.get("Assumption ID", "")), {"Value": approval_date.isoformat()})
+            if rationale is not None:
+                update_launch_assumption_record(case_id, str(rationale.get("Assumption ID", "")), {"Value": timing_rationale})
+
+    st.markdown("### Expected Label / Indication")
+    with st.container(border=True):
+        if label is None:
+            st.caption("No expected label has been configured for this case.")
+        else:
+            label_value = st.text_area(
+                "Expected Label / Indication",
+                value=str(label.get("Value", "")),
+                key=f"launch_regulatory_label_{case_id}",
+                disabled=not can_edit,
+                height=92,
+                help=launch_definition("Expected Label / Indication"),
+            )
+            st.caption("Regulatory owns the expected approved label; Medical interprets the clinical population and treatment eligibility.")
+            if can_edit:
+                update_launch_assumption_record(case_id, str(label.get("Assumption ID", "")), {"Value": label_value})
+
+    st.markdown("### Material Regulatory Risk")
+    with st.container(border=True):
+        st.caption(launch_definition("Material Regulatory Risk"))
+        risk_options = ["Low", "Medium", "High"]
+        current_risk = str(risk_level.get("Value", "Medium")) if risk_level is not None else "Medium"
+        selected_risk = st.selectbox(
+            "Risk Level",
+            risk_options,
+            index=risk_options.index(current_risk) if current_risk in risk_options else 1,
+            key=f"launch_regulatory_risk_level_{case_id}",
+            disabled=not can_edit,
+        )
+        risk_columns = st.columns(2)
+        issue_value = risk_columns[0].text_area(
+            "Risk / Issue",
+            value=str(risk_issue.get("Value", "")) if risk_issue is not None else "",
+            key=f"launch_regulatory_risk_issue_{case_id}",
+            disabled=not can_edit,
+            height=88,
+        )
+        impact_value = risk_columns[1].text_area(
+            "Potential Impact",
+            value=str(risk_impact.get("Value", "")) if risk_impact is not None else "",
+            key=f"launch_regulatory_risk_impact_{case_id}",
+            disabled=not can_edit,
+            height=88,
+        )
+        response_value = st.text_area(
+            "Response / Management Consideration",
+            value=str(risk_response.get("Value", "")) if risk_response is not None else "",
+            key=f"launch_regulatory_risk_response_{case_id}",
+            disabled=not can_edit,
+            height=82,
+        )
+        if can_edit:
+            for assumption, value in [
+                (risk_level, selected_risk),
+                (risk_issue, issue_value),
+                (risk_impact, impact_value),
+                (risk_response, response_value),
+            ]:
+                if assumption is not None:
+                    update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Value": value})
+
+    model = calculate_launch_model(data, case, "Base")
+    refreshed = launch_assumptions(data, case, model)
+    st.markdown("### Needs My Alignment")
+    render_launch_validation_queue(case_id, refreshed, "Regulatory")
+    st.markdown("### Regulatory Input Package")
+    render_launch_package_share(case_id, refreshed, "Regulatory", can_edit)
+
+
+def render_supply_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
+    case_id = str(case.get("Launch Case ID", ""))
+    can_edit = launch_user_workstream() == "Supply / Operations"
+    launch_year = launch_year_from_case(case)
+    owned = assumptions[assumptions["Workstream"].eq("Supply / Operations")]
+
+    approval = medical_assumption(assumptions, "Expected Regulatory Approval Date")
+    stock = medical_assumption(owned, "Expected Stock Available Date")
+    supply_plan = medical_assumption(owned, "Supply Plan / Rationale")
+    constraint_status = medical_assumption(owned, "Manufacturing / Supply Constraint Status")
+    constraint_risk = medical_assumption(owned, "Constraint / Risk")
+    constraint_impact = medical_assumption(owned, "Constraint Potential Impact")
+    management_response = medical_assumption(owned, "Plan / Management Response")
+    capacity_enabled = medical_assumption(owned, "Supply Capacity May Constrain Launch Demand")
+    maximum_units = medical_assumption(owned, "Maximum Available Units")
+    warehouse_status = medical_assumption(owned, "Supply / Warehouse Capacity Status")
+    logistics_issue = medical_assumption(owned, "Capacity / Logistics Issue")
+    capacity_comment = medical_assumption(owned, "Capacity Impact / Comment")
+
+    approval_date = regulatory_date_value(approval.get("Value") if approval is not None else None, launch_year)
+    stock_date = regulatory_date_value(stock.get("Value") if stock is not None else None, launch_year)
+
+    st.markdown("### Product Availability")
+    with st.container(border=True):
+        availability_columns = st.columns(3)
+        availability_columns[0].metric("Regulatory Approval Date", approval_date.strftime("%d %b %Y"))
+        availability_columns[0].caption("Source: Regulatory")
+        if stock is not None:
+            stock_date = availability_columns[1].date_input(
+                "Expected Stock Available Date",
+                value=stock_date,
+                key=f"launch_supply_stock_date_{case_id}",
+                disabled=not can_edit,
+                help=launch_definition("Expected Stock Available Date"),
+            )
+        days_to_availability = (stock_date - approval_date).days
+        availability_columns[2].metric("Time to Availability", f"{days_to_availability} days")
+        availability_columns[2].caption(launch_definition("Time to Availability"))
+        plan_value = st.text_area(
+            "Supply Plan / Rationale",
+            value=str(supply_plan.get("Value", "")) if supply_plan is not None else "",
+            key=f"launch_supply_plan_{case_id}",
+            disabled=not can_edit,
+            height=78,
+            help="Summarize the path from approval through release, shipment and warehouse receipt.",
+        )
+        if days_to_availability < 0:
+            st.warning("Stock availability cannot precede Regulatory Approval Date.")
+        if can_edit:
+            if stock is not None:
+                update_launch_assumption_record(case_id, str(stock.get("Assumption ID", "")), {"Value": stock_date.isoformat()})
+            if supply_plan is not None:
+                update_launch_assumption_record(case_id, str(supply_plan.get("Assumption ID", "")), {"Value": plan_value})
+
+    st.markdown("### Manufacturing / Supply Constraints")
+    with st.container(border=True):
+        constraint_options = ["No known constraint", "At Risk", "Yes — material constraint"]
+        current_constraint = str(constraint_status.get("Value", "No known constraint")) if constraint_status is not None else "No known constraint"
+        selected_constraint = st.selectbox(
+            "Any known material manufacturing or supply constraints?",
+            constraint_options,
+            index=constraint_options.index(current_constraint) if current_constraint in constraint_options else 0,
+            key=f"launch_supply_constraint_status_{case_id}",
+            disabled=not can_edit,
+            help=launch_definition("Manufacturing / Supply Constraint"),
+        )
+        constrained = selected_constraint in {"At Risk", "Yes — material constraint"}
+        risk_value = str(constraint_risk.get("Value", "")) if constraint_risk is not None else ""
+        impact_value = str(constraint_impact.get("Value", "")) if constraint_impact is not None else ""
+        response_value = str(management_response.get("Value", "")) if management_response is not None else ""
+        use_capacity_limit = bool(capacity_enabled.get("Value", False)) if capacity_enabled is not None else False
+
+        if constrained:
+            detail_columns = st.columns(2)
+            risk_value = detail_columns[0].text_area(
+                "Constraint / Risk",
+                value=risk_value,
+                key=f"launch_supply_constraint_risk_{case_id}",
+                disabled=not can_edit,
+                height=76,
+            )
+            impact_value = detail_columns[1].text_area(
+                "Potential Impact",
+                value=impact_value,
+                key=f"launch_supply_constraint_impact_{case_id}",
+                disabled=not can_edit,
+                height=76,
+            )
+            response_value = st.text_area(
+                "Plan / Management Response",
+                value=response_value,
+                key=f"launch_supply_management_response_{case_id}",
+                disabled=not can_edit,
+                height=76,
+            )
+            use_capacity_limit = st.checkbox(
+                "Supply capacity may constrain launch demand",
+                value=use_capacity_limit,
+                key=f"launch_supply_capacity_enabled_{case_id}",
+                disabled=not can_edit,
+            )
+
+        maximum_values = {
+            year: safe_float(maximum_units.get(year, 0)) if maximum_units is not None else 0.0
+            for year in LAUNCH_YEARS
+        }
+        if constrained and use_capacity_limit:
+            st.markdown(f"**{launch_definition_label('Maximum Available Units')}**", unsafe_allow_html=True)
+            capacity_columns = st.columns(5)
+            maximum_values = {
+                year: safe_float(
+                    capacity_columns[index].number_input(
+                        year,
+                        min_value=0,
+                        value=int(round(maximum_values[year])),
+                        step=100,
+                        key=f"launch_supply_max_units_{case_id}_{year}",
+                        disabled=not can_edit,
+                    )
+                )
+                for index, year in enumerate(LAUNCH_YEARS)
+            }
+
+        if can_edit:
+            updates = [
+                (constraint_status, {"Value": selected_constraint}),
+                (constraint_risk, {"Value": risk_value}),
+                (constraint_impact, {"Value": impact_value}),
+                (management_response, {"Value": response_value}),
+                (capacity_enabled, {"Value": use_capacity_limit}),
+                (maximum_units, maximum_values),
+            ]
+            for assumption, values in updates:
+                if assumption is not None:
+                    update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), values)
+
+        model = calculate_launch_model(data, case, "Base")
+        forecast = model.get("forecast", pd.DataFrame())
+        if constrained and use_capacity_limit and isinstance(forecast, pd.DataFrame) and not forecast.empty:
+            comparison = forecast[["Year", "Demand Units", "Sellable Units"]].copy()
+            comparison["Maximum Available Units"] = comparison["Year"].map(maximum_values)
+            comparison = comparison[["Year", "Demand Units", "Maximum Available Units", "Sellable Units"]]
+            for column in ["Demand Units", "Maximum Available Units", "Sellable Units"]:
+                comparison[column] = comparison[column].map(lambda value: f"{safe_float(value):,.0f}")
+            st.dataframe(comparison, use_container_width=True, hide_index=True)
+            constrained_years = [
+                year for year in LAUNCH_YEARS
+                if safe_float(forecast.loc[forecast["Year"].eq(year), "Demand Units"].iloc[0]) > maximum_values[year]
+            ]
+            if constrained_years:
+                st.warning(f"Calculated demand exceeds maximum available units in {', '.join(constrained_years)}. Sellable Units are capped at available supply.")
+
+    st.markdown("### Supply / Warehouse Capacity")
+    with st.container(border=True):
+        forecast = model.get("forecast", pd.DataFrame())
+        if isinstance(forecast, pd.DataFrame) and not forecast.empty:
+            demand_row = {"Metric": "Calculated Demand Units", **{
+                year: f"{safe_float(forecast.loc[forecast['Year'].eq(year), 'Demand Units'].iloc[0]):,.0f}"
+                for year in LAUNCH_YEARS
+            }}
+            st.table(pd.DataFrame([demand_row]).set_index("Metric"))
+            st.caption("Source: Integrated Launch Model")
+
+        warehouse_options = ["Yes", "At Risk", "No"]
+        current_warehouse = str(warehouse_status.get("Value", "Yes")) if warehouse_status is not None else "Yes"
+        selected_warehouse = st.selectbox(
+            "Can the planned launch volume be accommodated by the supply / warehouse network?",
+            warehouse_options,
+            index=warehouse_options.index(current_warehouse) if current_warehouse in warehouse_options else 0,
+            key=f"launch_supply_warehouse_status_{case_id}",
+            disabled=not can_edit,
+            help=launch_definition("Supply / Warehouse Capacity"),
+        )
+        issue_value = str(logistics_issue.get("Value", "")) if logistics_issue is not None else ""
+        comment_value = str(capacity_comment.get("Value", "")) if capacity_comment is not None else ""
+        if selected_warehouse in {"At Risk", "No"}:
+            capacity_columns = st.columns(2)
+            issue_value = capacity_columns[0].text_area(
+                "Capacity / Logistics Issue",
+                value=issue_value,
+                key=f"launch_supply_logistics_issue_{case_id}",
+                disabled=not can_edit,
+                height=76,
+            )
+            comment_value = capacity_columns[1].text_area(
+                "Impact / Comment",
+                value=comment_value,
+                key=f"launch_supply_capacity_comment_{case_id}",
+                disabled=not can_edit,
+                height=76,
+            )
+        if can_edit:
+            for assumption, value in [
+                (warehouse_status, selected_warehouse),
+                (logistics_issue, issue_value),
+                (capacity_comment, comment_value),
+            ]:
+                if assumption is not None:
+                    update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Value": value})
+
+    refreshed_model = calculate_launch_model(data, case, "Base")
+    refreshed = launch_assumptions(data, case, refreshed_model)
+    st.markdown("### Needs My Alignment")
+    render_launch_validation_queue(case_id, refreshed, "Supply / Operations")
+    st.markdown("### Supply Input Package")
+    render_launch_package_share(case_id, refreshed, "Supply / Operations", can_edit)
+
+
 def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], workspace: str) -> None:
     case_id = str(case.get("Launch Case ID", ""))
     assumptions = launch_assumptions(data, case)
@@ -7505,17 +7963,18 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
     if workspace == "Market Access":
         render_market_access_workspace(case, data, assumptions)
         return
+    if workspace == "Regulatory":
+        render_regulatory_workspace(case, data, assumptions)
+        return
+    if workspace == "Supply / Operations":
+        render_supply_workspace(case, data, assumptions)
+        return
     owned = assumptions[(assumptions["Owner"].eq(workspace)) & (~assumptions["Calculated"].astype(bool))]
     st.markdown("### My Inputs")
     if owned.empty:
         st.info("No owned inputs are configured for this workstream.")
     else:
         for _, assumption in owned.iterrows():
-            if workspace == "Supply / Operations" and assumption.get("Assumption Name") == "Maximum Available Units":
-                current = launch_assumptions(data, case)
-                feasibility = current[current["Assumption Name"].eq("Can Projected Demand Be Supplied?")]
-                if feasibility.empty or str(feasibility.iloc[0].get("Value")) not in {"At Risk", "No"}:
-                    continue
             with st.container(border=True):
                 render_launch_assumption_input(case_id, assumption)
 
