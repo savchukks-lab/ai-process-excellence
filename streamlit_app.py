@@ -4402,6 +4402,15 @@ LAUNCH_DEFINITIONS = {
     "Theoretical Units per Patient": "Dose per administration multiplied by the administrations expected over the treatment duration.",
     "Adjusted Units per Patient": "Theoretical units per patient adjusted for compliance and, when enabled, persistence.",
     "Clinical Evidence Status": "The maturity of the evidence available to support the launch assumption or clinical positioning.",
+    "Unmet Need Level": "Degree to which current treatment options fail to address the target population, considering effective alternatives, disease burden and limitations of current care.",
+    "Evidence Maturity": "Early means limited evidence; Emerging means meaningful evidence with important data still maturing; Established means a mature, decision-relevant evidence base.",
+    "Absolute Efficacy": "Key efficacy results observed for the product itself, such as response, survival, remission or symptom control.",
+    "Comparative Efficacy": "How the product's efficacy compares with relevant alternatives or standard of care, based on available evidence.",
+    "Efficacy Summary": "The concise Medical interpretation of the overall efficacy proposition.",
+    "Absolute Safety / Tolerability": "Key adverse events, tolerability profile, discontinuations and major safety limitations of the product.",
+    "Comparative Safety / Tolerability": "How the product's safety and tolerability profile compares with key alternatives.",
+    "Safety Summary": "The concise Medical interpretation of the overall safety proposition.",
+    "Overall Clinical Value": "Where the product creates meaningful clinical value, for which patients, how it differs from alternatives and what uncertainties remain.",
 }
 
 
@@ -4663,23 +4672,18 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("Medical", "Treatment & Utilization", "Theoretical Units per Patient", "Calculated", "Calculated", "Units", calculated=True)
     add("Medical", "Treatment & Utilization", "Adjusted Units per Patient", "Calculated", "Calculated", "Units", calculated=True)
 
-    evidence_items = [
-        {
-            "Study / Trial Name": "Pivotal launch study",
-            "Phase": "Phase III",
-            "Population / Setting": "Target indication population",
-            "Primary Endpoint": "Primary efficacy endpoint",
-            "Key Primary Result": "Clinically meaningful improvement versus comparator",
-            "Key Secondary Result(s)": "Consistent benefit across key secondary measures",
-            "Safety / Key Limitation": "Long-term follow-up remains limited",
-            "Evidence Status": "Available",
-            "Expected Readout Date": "",
-            "Source / Reference": "Clinical study report",
-            "Comment / Rationale": "Supports the proposed target patient and treatment positioning.",
-        }
-    ]
-    add("Medical", "Clinical Evidence", "Clinical Evidence", evidence_items, "Structured Evidence", validators="Marketing, Regulatory", assumption_type="EVIDENCE-BASED", source="Clinical evidence plan", rationale="Decision-relevant evidence supporting the launch case.")
-    add("Medical", "Clinical Evidence", "Key Clinical Evidence Gap / Risk", "Long-term evidence maturity should be monitored through launch readiness.", "Text", validators="Marketing, Regulatory", rationale="Primary evidence uncertainty that may affect positioning or readiness.")
+    add("Medical", "Key Clinical Value", "Unmet Need Level", "High", "Choice", validators="Marketing", options=["Low", "Medium", "High"], rationale="Current treatment options leave a meaningful gap for the target population.")
+    add("Medical", "Key Clinical Value", "Current Treatment Gap / Rationale", "Current options do not fully address clinically important outcomes for the target population.", "Text", validators="Marketing")
+    add("Medical", "Key Clinical Value", "Main Clinical Comparators", "Current standard of care and the principal alternative used in the target treatment setting.", "Text", validators="Marketing, Regulatory")
+    add("Medical", "Key Clinical Value", "Evidence Maturity", "Emerging", "Choice", validators="Marketing, Regulatory", options=["Early", "Emerging", "Established"])
+    add("Medical", "Key Clinical Value", "Absolute Efficacy", "Available evidence indicates clinically meaningful efficacy in the target population.", "Text", validators="Marketing, Regulatory")
+    add("Medical", "Key Clinical Value", "Comparative Efficacy", "Evidence suggests a differentiated efficacy profile versus relevant current alternatives.", "Text", validators="Marketing, Regulatory")
+    add("Medical", "Key Clinical Value", "Efficacy Summary", "The efficacy proposition is relevant to the principal remaining treatment gap.", "Text", validators="Marketing, Regulatory")
+    add("Medical", "Key Clinical Value", "Absolute Safety / Tolerability", "The known safety profile is manageable within the expected treatment setting.", "Text", validators="Regulatory")
+    add("Medical", "Key Clinical Value", "Comparative Safety / Tolerability", "Tolerability is expected to be competitive with the main clinical alternatives.", "Text", validators="Regulatory")
+    add("Medical", "Key Clinical Value", "Safety Summary", "No new safety limitation is expected to prevent use in the defined target population.", "Text", validators="Regulatory")
+    add("Medical", "Key Clinical Value", "Overall Clinical Value", "The product may provide meaningful clinical value for eligible patients while longer-term and comparative evidence continue to mature.", "Text", validators="Marketing, Regulatory")
+    add("Medical", "Key Clinical Value", "Key Clinical Evidence Gap / Risk", "Long-term evidence maturity should be monitored through launch readiness.", "Text", validators="Marketing, Regulatory", rationale="Primary evidence uncertainty that may affect positioning or readiness.")
 
     pricing = inputs["pricing"]
     add("Market Access", "Access", "Access Archetype", case.get("Access Archetype", "Reimbursement Dependent"), "Choice", validators="Marketing, Finance", options=["Reimbursement Dependent", "Mixed Access", "Predominantly OOP / Broad Access"])
@@ -5773,6 +5777,8 @@ def update_launch_assumption_record(case_id: str, assumption_id: str, updates: d
                 }
             )
             updated = {**record, **actual_updates, "Validation History": history, "Last Updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            if str(record.get("Owner", record.get("Workstream", ""))) == launch_user_workstream():
+                updated["Validation Status"] = "Draft"
             records[index] = updated
             changed = True
         break
@@ -5811,22 +5817,58 @@ def update_launch_validation(case_id: str, assumption_id: str, action: str, comm
         }
         if action in status_by_action:
             updated["Validation Status"] = status_by_action[action]
+        if action in {"Confirmed", "Confirmed Alignment"}:
+            partners = set(launch_alignment_partners(updated))
+            boundary = -1
+            for event_index, event in enumerate(history):
+                if str(event.get("Action", "")) in {"Submitted for Validation", "Shared for Alignment", "Requested Change"}:
+                    boundary = event_index
+            confirmed = {
+                str(event.get("Role", ""))
+                for event in history[boundary + 1 :]
+                if str(event.get("Action", "")) in {"Confirmed", "Confirmed Alignment"}
+            }
+            if not partners or partners.issubset(confirmed):
+                updated["Validation Status"] = "Aligned"
+            elif launch_alignment_status(record.get("Validation Status", "Draft")) != "Alignment Required":
+                updated["Validation Status"] = "Shared for Alignment"
         records[index] = updated
         st.session_state[key] = records
         return
 
 
-def render_launch_validation_history(assumption: pd.Series | dict[str, object]) -> None:
+def launch_partner_has_confirmed(assumption: pd.Series | dict[str, object], workspace: str) -> bool:
+    history = [item for item in assumption.get("Validation History", []) if isinstance(item, dict)]
+    boundary = -1
+    for event_index, event in enumerate(history):
+        if str(event.get("Action", "")) in {"Submitted for Validation", "Shared for Alignment", "Requested Change"}:
+            boundary = event_index
+    return any(
+        str(event.get("Role", "")) == workspace
+        and str(event.get("Action", "")) in {"Confirmed", "Confirmed Alignment"}
+        for event in history[boundary + 1 :]
+    )
+
+
+def render_launch_validation_history(
+    assumption: pd.Series | dict[str, object],
+    *,
+    expandable: bool = True,
+) -> None:
     history = [item for item in assumption.get("Validation History", []) if isinstance(item, dict)]
     if not history:
+        if not expandable:
+            st.markdown("#### Alignment History")
+            st.caption("No alignment activity yet.")
         return
-    with st.expander("Alignment History"):
+
+    def render_history_items() -> None:
         for event in history:
             action = {
                 "Submitted for Validation": "Shared for Alignment",
                 "Confirmed": "Confirmed Alignment",
             }.get(str(event.get("Action", "")), str(event.get("Action", "")))
-            st.markdown(f"**{str(event.get('Role', '')).upper()} {action.upper()}**")
+            st.markdown(f"**{str(event.get('Role', 'Unknown role'))} — {action}**")
             if event.get("Comment"):
                 st.write(f'“{event.get("Comment")}”')
             old_values = event.get("Old Value") if isinstance(event.get("Old Value"), dict) else {}
@@ -5870,6 +5912,13 @@ def render_launch_validation_history(assumption: pd.Series | dict[str, object]) 
             parsed_timestamp = pd.to_datetime(event.get("Timestamp"), errors="coerce")
             timestamp = parsed_timestamp.strftime("%d %b %Y · %H:%M") if not pd.isna(parsed_timestamp) else str(event.get("Timestamp", ""))
             st.caption(timestamp)
+
+    if expandable:
+        with st.expander("Alignment History", expanded=False):
+            render_history_items()
+    else:
+        st.markdown("#### Alignment History")
+        render_history_items()
 
 
 def render_competitive_events_input(case_id: str, assumption: pd.Series, editable: bool) -> None:
@@ -5920,10 +5969,6 @@ def render_competitive_events_input(case_id: str, assumption: pd.Series, editabl
             update_launch_assumption_record(case_id, assumption_id, {"Value": updated_events})
             st.success("Competitive event added.")
             st.rerun()
-    if editable and st.button("Share for Alignment", key=f"launch_comp_share_{case_id}", disabled=not events):
-        update_launch_validation(case_id, assumption_id, "Shared for Alignment")
-        st.success("Saved. Sales has been notified to review the Competitive Landscape for alignment.")
-        st.rerun()
     render_launch_validation_history(assumption)
 
 
@@ -6071,15 +6116,6 @@ def render_launch_assumption_input(case_id: str, assumption: pd.Series) -> None:
             updates["Source"] = st.text_input("Source (optional)", value=str(assumption.get("Source", "")), key=f"{key_base}_source", disabled=not editable)
     if editable:
         update_launch_assumption_record(case_id, assumption_id, updates)
-        submit_disabled = str(assumption.get("Assumption Type")) == "MANAGEMENT / FUNCTIONAL" and not str(updates.get("Rationale / Comment", assumption.get("Rationale / Comment", ""))).strip()
-        partners = launch_alignment_partners(assumption)
-        if partners:
-            if st.button("Share for Alignment", key=f"{key_base}_submit", disabled=submit_disabled):
-                update_launch_validation(case_id, assumption_id, "Shared for Alignment")
-                st.success(f"Saved. {' and '.join(partners)} {'has' if len(partners) == 1 else 'have'} been notified to review this input for alignment.")
-                st.rerun()
-        else:
-            st.caption("No alignment required")
     render_launch_validation_history(assumption)
 
 
@@ -6161,6 +6197,96 @@ def render_launch_funnel(model: dict[str, object], assumptions: pd.DataFrame) ->
     )
 
 
+def launch_package_status(package: pd.DataFrame) -> str:
+    if package.empty:
+        return "Draft"
+    statuses = package["Validation Status"].map(launch_alignment_status)
+    if statuses.eq("Alignment Required").any():
+        return "Alignment Required"
+    if statuses.isin(["Draft", "Not Started"]).any():
+        return "Draft"
+    if statuses.eq("Aligned").all():
+        return "Aligned"
+    if statuses.isin(["Shared for Alignment", "Aligned"]).any():
+        return "Shared for Alignment"
+    return "Draft"
+
+
+def render_launch_package_history(package: pd.DataFrame, workspace: str) -> None:
+    events: list[tuple[str, str, dict[str, object]]] = []
+    for _, assumption in package.iterrows():
+        name = str(assumption.get("Assumption Name", ""))
+        for event in assumption.get("Validation History", []):
+            if isinstance(event, dict):
+                events.append((str(event.get("Timestamp", "")), name, event))
+    if not events:
+        return
+    with st.expander("Alignment History", expanded=False):
+        for timestamp_text, name, event in sorted(events, reverse=True)[:25]:
+            action = {
+                "Submitted for Validation": "Shared for Alignment",
+                "Confirmed": "Confirmed Alignment",
+            }.get(str(event.get("Action", "")), str(event.get("Action", "")))
+            st.markdown(f"**{event.get('Role', workspace)} — {action}**")
+            st.caption(name)
+            if event.get("Comment"):
+                st.write(f'“{event.get("Comment")}”')
+            parsed_timestamp = pd.to_datetime(timestamp_text, errors="coerce")
+            shown_timestamp = parsed_timestamp.strftime("%d %b %Y · %H:%M") if not pd.isna(parsed_timestamp) else timestamp_text
+            st.caption(shown_timestamp)
+
+
+def render_launch_package_share(
+    case_id: str,
+    assumptions: pd.DataFrame,
+    workspace: str,
+    can_edit: bool,
+) -> None:
+    package = assumptions[
+        assumptions["Owner"].eq(workspace)
+        & (~assumptions["Calculated"].astype(bool))
+    ].copy()
+    if workspace == "Sales" and "Enabled" in package.columns:
+        package = package[package["Enabled"].map(lambda value: True if pd.isna(value) else bool(value))]
+    aligned_rows = package[package["Validators"].astype(str).str.strip().ne("")]
+    partners: list[str] = []
+    for _, assumption in aligned_rows.iterrows():
+        for partner in launch_alignment_partners(assumption):
+            if partner not in partners:
+                partners.append(partner)
+
+    display_name = "Supply" if workspace == "Supply / Operations" else workspace
+    package_status = launch_package_status(aligned_rows)
+    updated_values = pd.to_datetime(package.get("Last Updated", pd.Series(dtype=str)), errors="coerce").dropna()
+    last_saved = updated_values.max().strftime("%d %b %Y · %H:%M") if not updated_values.empty else "Autosaved"
+    st.caption(f"{display_name} package status: {package_status} · Last saved: {last_saved}")
+    st.caption(f"Alignment with: {', '.join(partners)}" if partners else "No alignment required")
+
+    if package_status == "Alignment Required":
+        requests: list[tuple[str, dict[str, object]]] = []
+        for _, assumption in aligned_rows.iterrows():
+            for event in assumption.get("Validation History", []):
+                if isinstance(event, dict) and str(event.get("Action", "")) == "Requested Change":
+                    requests.append((str(event.get("Timestamp", "")), event))
+        if requests:
+            _, latest = max(requests, key=lambda item: item[0])
+            requester = str(latest.get("Role", "Alignment partner"))
+            comment = str(latest.get("Comment", "")).strip()
+            st.warning(f"Alignment Required · Requested by: {requester}" + (f"\n\n“{comment}”" if comment else ""))
+
+    render_launch_package_history(package, workspace)
+    if not partners:
+        return
+    if st.button(
+        f"Share {display_name} Input for Alignment",
+        key=f"launch_package_share_{case_id}_{re.sub(r'[^A-Za-z0-9]+', '_', workspace).lower()}",
+        disabled=not can_edit,
+    ):
+        for _, assumption in aligned_rows.iterrows():
+            update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Shared for Alignment")
+        st.success(f"{display_name} input shared. {' and '.join(partners)} {'has' if len(partners) == 1 else 'have'} been notified for alignment.")
+
+
 def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, workspace: str) -> None:
     allowed = {
         "Marketing": {
@@ -6172,9 +6298,22 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
             "Line of Therapy",
             "Short Treatment Pathway Description",
             "Other Population-defining Criteria",
-            "Clinical Evidence",
+            "Unmet Need Level",
+            "Current Treatment Gap / Rationale",
+            "Main Clinical Comparators",
+            "Evidence Maturity",
+            "Absolute Efficacy",
+            "Comparative Efficacy",
+            "Efficacy Summary",
+            "Overall Clinical Value",
             "Key Clinical Evidence Gap / Risk",
             "Market Access Rate",
+            "Sales FTE",
+            "Regions Covered",
+            "Population-weighted Geographic Coverage %",
+            "Target Account / Center Coverage %",
+            "Target Accounts / Centers",
+            "Launch Investment Classification",
         },
         "Sales": {"Market Share", "Competitive Landscape"},
         "Medical": {"Expected Label / Indication", "Eligibility Restrictions"},
@@ -6187,6 +6326,7 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
         st.caption("No inputs currently need this function's alignment.")
         return
     can_validate = launch_user_workstream() == workspace
+    workspace_key = re.sub(r"[^A-Za-z0-9]+", "_", workspace).lower()
     for _, assumption in queue.iterrows():
         assumption_id = str(assumption.get("Assumption ID", ""))
         summary = launch_assumption_display_value(assumption)
@@ -6213,29 +6353,38 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
                 st.caption(f"Source: {assumption.get('Source')}")
             if assumption.get("Rationale / Comment"):
                 st.caption(f"Rationale: {assumption.get('Rationale / Comment')}")
-            if alignment_status == "Draft":
+            if alignment_status in {"Draft", "Not Started"}:
                 st.info("Not yet shared for alignment")
-            comment = st.text_area("Alignment comment", key=f"launch_validation_comment_{case_id}_{assumption_id}", height=70)
+            elif alignment_status == "Aligned":
+                st.success("Alignment confirmed")
+            can_interact = can_validate and alignment_status in {"Shared for Alignment", "Alignment Required"}
+            comment = st.text_area(
+                "Alignment comment",
+                key=f"launch_alignment_comment_{case_id}_{workspace_key}_{assumption_id}",
+                height=70,
+                disabled=not can_interact,
+            )
             actions = st.columns(3)
             actions[0].markdown("<span class='launch-confirm-marker'></span>", unsafe_allow_html=True)
-            can_decide = can_validate and alignment_status in {"Shared for Alignment", "Alignment Required"}
-            can_comment = can_validate and alignment_status not in {"Draft", "Not Started"}
-            if actions[0].button("Confirm Alignment", type="primary", key=f"launch_confirm_{case_id}_{assumption_id}", disabled=not can_decide):
+            already_confirmed = launch_partner_has_confirmed(assumption, workspace)
+            can_decide = can_interact and not already_confirmed
+            can_comment = can_interact
+            if actions[0].button("Confirm Alignment", type="primary", key=f"launch_confirm_{case_id}_{workspace_key}_{assumption_id}", disabled=not can_decide):
                 update_launch_validation(case_id, assumption_id, "Confirmed Alignment", comment)
                 st.success("Assumption aligned.")
                 st.rerun()
-            if actions[1].button("Request Change", type="secondary", key=f"launch_request_change_{case_id}_{assumption_id}", disabled=not can_decide):
+            if actions[1].button("Request Change", type="secondary", key=f"launch_request_change_{case_id}_{workspace_key}_{assumption_id}", disabled=not can_interact):
                 if not comment.strip():
                     st.warning("A comment is required to request a change.")
                 else:
                     update_launch_validation(case_id, assumption_id, "Requested Change", comment)
                     st.success("Change requested from the assumption owner.")
                     st.rerun()
-            if actions[2].button("Add Comment", key=f"launch_add_comment_{case_id}_{assumption_id}", disabled=not can_comment or not comment.strip()):
+            if actions[2].button("Add Comment", key=f"launch_add_comment_{case_id}_{workspace_key}_{assumption_id}", disabled=not can_comment or not comment.strip()):
                 update_launch_validation(case_id, assumption_id, "Added Comment", comment)
                 st.success("Comment added.")
                 st.rerun()
-            render_launch_validation_history(assumption)
+            render_launch_validation_history(assumption, expandable=False)
 
 
 def render_sales_plan_alignment(case_id: str, assumptions: pd.DataFrame) -> None:
@@ -6310,7 +6459,13 @@ def render_marketing_workspace(case: pd.Series, data: dict[str, pd.DataFrame], a
     render_launch_funnel(model, refreshed_assumptions)
     st.markdown("### Needs My Alignment")
     render_launch_validation_queue(case_id, refreshed_assumptions, "Marketing")
-    render_sales_plan_alignment(case_id, refreshed_assumptions)
+    st.markdown("### Marketing Input Package")
+    render_launch_package_share(
+        case_id,
+        launch_assumptions(data, case, calculate_launch_model(data, case, "Base")),
+        "Marketing",
+        launch_user_workstream() == "Marketing",
+    )
 
 
 def render_sales_plan_history(coverage: pd.DataFrame) -> None:
@@ -6437,29 +6592,11 @@ def render_sales_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assum
         if can_edit:
             for _, assumption in coverage.iterrows():
                 update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Rationale / Comment": rationale})
-    active_coverage = coverage[
-        coverage["Assumption Name"].eq("Sales FTE")
-        | coverage["Assumption Name"].map(lambda name: enabled_by_name.get(str(name), False))
-    ]
-    partners = []
-    for _, assumption in active_coverage.iterrows():
-        for partner in launch_alignment_partners(assumption):
-            if partner not in partners:
-                partners.append(partner)
-    st.caption(f"Alignment with: {', '.join(partners)}" if partners else "No alignment required")
-    if st.button("Save & Share for Alignment", key=f"launch_sales_plan_submit_{case_id}", disabled=not can_edit or not rationale.strip() or not partners):
-        for _, assumption in coverage.iterrows():
-            name = str(assumption.get("Assumption Name", ""))
-            if name == "Sales FTE" or enabled_by_name.get(name, bool(assumption.get("Enabled", True))):
-                update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Shared for Alignment")
-        partner_text = " and ".join(partners)
-        st.success(f"Saved. {partner_text} {'has' if len(partners) == 1 else 'have'} been notified to review the Sales plan for alignment.")
-        st.rerun()
-    refreshed_sales = launch_assumptions(data, case)
-    render_sales_plan_history(refreshed_sales[refreshed_sales["Category"].eq("Sales Coverage & Execution Plan")])
     model = calculate_launch_model(data, case, "Base")
     st.markdown("### Needs My Alignment")
     render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Sales")
+    st.markdown("### Sales Input Package")
+    render_launch_package_share(case_id, launch_assumptions(data, case, model), "Sales", can_edit)
 
 
 def medical_assumption(assumptions: pd.DataFrame, name: str) -> pd.Series | None:
@@ -6514,20 +6651,33 @@ def render_medical_package_history(assumptions: pd.DataFrame) -> None:
             st.caption(shown_timestamp)
 
 
-def render_medical_package_share(case_id: str, package_key: str, package: pd.DataFrame, can_edit: bool) -> None:
+def render_medical_package_share(case_id: str, package: pd.DataFrame, can_edit: bool) -> None:
     aligned_rows = package[(~package["Calculated"].astype(bool)) & package["Validators"].astype(str).str.strip().ne("")]
     partners: list[str] = []
     for _, assumption in aligned_rows.iterrows():
         for partner in launch_alignment_partners(assumption):
             if partner not in partners:
                 partners.append(partner)
+    statuses = aligned_rows["Validation Status"].map(launch_alignment_status) if not aligned_rows.empty else pd.Series(dtype=str)
+    if statuses.eq("Alignment Required").any():
+        package_status = "Alignment Required"
+    elif statuses.isin(["Draft", "Not Started"]).any():
+        package_status = "Draft"
+    elif not statuses.empty and statuses.eq("Aligned").all():
+        package_status = "Aligned"
+    elif statuses.isin(["Shared for Alignment", "Aligned"]).any():
+        package_status = "Shared for Alignment"
+    else:
+        package_status = "Draft"
+    updated_values = pd.to_datetime(package.get("Last Updated", pd.Series(dtype=str)), errors="coerce").dropna()
+    last_saved = updated_values.max().strftime("%d %b %Y · %H:%M") if not updated_values.empty else "Autosaved"
+    st.caption(f"Medical package status: {package_status} · Last saved: {last_saved}")
     st.caption(f"Alignment with: {', '.join(partners)}" if partners else "No alignment required")
-    if partners and st.button("Share for Alignment", key=f"launch_medical_share_{case_id}_{package_key}", disabled=not can_edit):
+    render_medical_package_history(package)
+    if partners and st.button("Share Medical Input for Alignment", key=f"launch_medical_share_{case_id}", disabled=not can_edit):
         for _, assumption in aligned_rows.iterrows():
             update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Shared for Alignment")
-        st.success(f"Saved. {' and '.join(partners)} {'has' if len(partners) == 1 else 'have'} been notified to review this Medical input package.")
-        st.rerun()
-    render_medical_package_history(package)
+        st.success(f"Medical input shared. {' and '.join(partners)} {'has' if len(partners) == 1 else 'have'} been notified for alignment.")
 
 
 def render_medical_yearly_assumption(case_id: str, assumption: pd.Series, can_edit: bool) -> None:
@@ -6625,40 +6775,104 @@ def render_medical_reference_input(case_id: str, assumption: pd.Series, can_edit
         st.caption("A rationale is required before the override is applied.")
 
 
-def render_medical_clinical_evidence(case_id: str, assumption: pd.Series, can_edit: bool) -> None:
-    assumption_id = str(assumption.get("Assumption ID", ""))
-    items = [deepcopy(item) for item in assumption.get("Value", []) if isinstance(item, dict)]
-    summary_fields = ["Study / Trial Name", "Phase", "Population / Setting", "Primary Endpoint", "Key Primary Result", "Evidence Status"]
-    if items:
-        st.dataframe(pd.DataFrame(items).reindex(columns=summary_fields).rename(columns={"Study / Trial Name": "Study", "Population / Setting": "Population", "Key Primary Result": "Key Result", "Evidence Status": "Status"}), use_container_width=True, hide_index=True)
-    else:
-        st.caption("No clinical evidence items recorded.")
-    if st.button("+ Add Evidence", key=f"launch_medical_add_evidence_{case_id}", disabled=not can_edit):
-        items.append({"Study / Trial Name": "New evidence item", "Phase": "Phase III", "Population / Setting": "", "Primary Endpoint": "", "Key Primary Result": "", "Key Secondary Result(s)": "", "Safety / Key Limitation": "", "Evidence Status": "Ongoing", "Expected Readout Date": "", "Source / Reference": "", "Comment / Rationale": ""})
-        update_launch_assumption_record(case_id, assumption_id, {"Value": items})
-        st.rerun()
-    for index, item in enumerate(items):
-        title = f"{item.get('Study / Trial Name', 'Evidence item')} · {item.get('Evidence Status', 'Not Available')}"
-        with st.expander(title, expanded=False):
-            columns = st.columns(2)
-            updated = dict(item)
-            updated["Study / Trial Name"] = columns[0].text_input("Study / Trial Name", value=str(item.get("Study / Trial Name", "")), key=f"medical_evidence_{case_id}_{index}_study", disabled=not can_edit)
-            updated["Phase"] = columns[1].text_input("Phase", value=str(item.get("Phase", "")), key=f"medical_evidence_{case_id}_{index}_phase", disabled=not can_edit)
-            updated["Population / Setting"] = columns[0].text_area("Population / Setting", value=str(item.get("Population / Setting", "")), key=f"medical_evidence_{case_id}_{index}_population", disabled=not can_edit, height=70)
-            updated["Primary Endpoint"] = columns[1].text_area("Primary Endpoint", value=str(item.get("Primary Endpoint", "")), key=f"medical_evidence_{case_id}_{index}_endpoint", disabled=not can_edit, height=70)
-            updated["Key Primary Result"] = columns[0].text_area("Key Primary Result", value=str(item.get("Key Primary Result", "")), key=f"medical_evidence_{case_id}_{index}_primary", disabled=not can_edit, height=70)
-            updated["Key Secondary Result(s)"] = columns[1].text_area("Key Secondary Result(s)", value=str(item.get("Key Secondary Result(s)", "")), key=f"medical_evidence_{case_id}_{index}_secondary", disabled=not can_edit, height=70)
-            updated["Safety / Key Limitation"] = columns[0].text_area("Safety / Key Limitation", value=str(item.get("Safety / Key Limitation", "")), key=f"medical_evidence_{case_id}_{index}_safety", disabled=not can_edit, height=70)
-            current_status = str(item.get("Evidence Status", "Not Available"))
-            status_options = ["Available", "Interim", "Ongoing", "Expected", "Not Available"]
-            updated["Evidence Status"] = columns[1].selectbox("Evidence Status", status_options, index=status_options.index(current_status) if current_status in status_options else 4, key=f"medical_evidence_{case_id}_{index}_status", disabled=not can_edit, help=launch_definition("Clinical Evidence Status"))
-            updated["Expected Readout Date"] = columns[0].text_input("Expected Readout Date", value=str(item.get("Expected Readout Date", "")), key=f"medical_evidence_{case_id}_{index}_readout", disabled=not can_edit)
-            updated["Source / Reference"] = columns[1].text_input("Source / Reference", value=str(item.get("Source / Reference", "")), key=f"medical_evidence_{case_id}_{index}_source", disabled=not can_edit)
-            updated["Comment / Rationale"] = st.text_area("Comment / Rationale", value=str(item.get("Comment / Rationale", "")), key=f"medical_evidence_{case_id}_{index}_comment", disabled=not can_edit, height=70)
-            if updated != item:
-                items[index] = updated
-                if can_edit:
-                    update_launch_assumption_record(case_id, assumption_id, {"Value": items})
+def render_medical_text_assumption(case_id: str, assumption: pd.Series | None, can_edit: bool, height: int = 76) -> None:
+    if assumption is None:
+        return
+    name = str(assumption.get("Assumption Name", ""))
+    value = st.text_area(
+        name,
+        value=str(assumption.get("Value", "")),
+        key=f"launch_medical_value_{case_id}_{assumption.get('Assumption ID')}",
+        disabled=not can_edit,
+        height=height,
+        help=launch_definition(name) or None,
+    )
+    if can_edit:
+        update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Value": value})
+
+
+def render_medical_key_clinical_value(case_id: str, assumptions: pd.DataFrame, can_edit: bool) -> None:
+    with st.container(border=True):
+        st.markdown("#### Unmet Need")
+        unmet_need = medical_assumption(assumptions, "Unmet Need Level")
+        treatment_gap = medical_assumption(assumptions, "Current Treatment Gap / Rationale")
+        unmet_columns = st.columns([1, 3])
+        if unmet_need is not None:
+            options = ["Low", "Medium", "High"]
+            current = str(unmet_need.get("Value", "Medium"))
+            value = unmet_columns[0].selectbox(
+                "Unmet Need Level",
+                options,
+                index=options.index(current) if current in options else 1,
+                key=f"launch_medical_unmet_need_{case_id}",
+                disabled=not can_edit,
+                help=launch_definition("Unmet Need Level"),
+            )
+            if can_edit:
+                update_launch_assumption_record(case_id, str(unmet_need.get("Assumption ID", "")), {"Value": value})
+        with unmet_columns[1]:
+            render_medical_text_assumption(case_id, treatment_gap, can_edit, 84)
+
+        st.markdown("#### Main Clinical Comparators")
+        comparators = medical_assumption(assumptions, "Main Clinical Comparators")
+        if comparators is not None:
+            comparator_value = st.text_area(
+                "Main clinical alternatives / standard of care",
+                value=str(comparators.get("Value", "")),
+                key=f"launch_medical_comparators_{case_id}",
+                disabled=not can_edit,
+                height=90,
+                help="Describe the main clinical alternatives or standard of care, where they are used, and their principal clinical advantages and limitations.",
+            )
+            if can_edit:
+                update_launch_assumption_record(case_id, str(comparators.get("Assumption ID", "")), {"Value": comparator_value})
+
+        st.markdown("#### Clinical Value Proposition")
+        maturity = medical_assumption(assumptions, "Evidence Maturity")
+        if maturity is not None:
+            maturity_options = ["Early", "Emerging", "Established"]
+            current_maturity = str(maturity.get("Value", "Emerging"))
+            maturity_value = st.selectbox(
+                "Evidence Maturity",
+                maturity_options,
+                index=maturity_options.index(current_maturity) if current_maturity in maturity_options else 1,
+                key=f"launch_medical_evidence_maturity_{case_id}",
+                disabled=not can_edit,
+                help=launch_definition("Evidence Maturity"),
+            )
+            if can_edit:
+                update_launch_assumption_record(case_id, str(maturity.get("Assumption ID", "")), {"Value": maturity_value})
+
+        st.markdown("##### Efficacy")
+        efficacy_columns = st.columns(2)
+        with efficacy_columns[0]:
+            render_medical_text_assumption(case_id, medical_assumption(assumptions, "Absolute Efficacy"), can_edit)
+        with efficacy_columns[1]:
+            render_medical_text_assumption(case_id, medical_assumption(assumptions, "Comparative Efficacy"), can_edit)
+        render_medical_text_assumption(case_id, medical_assumption(assumptions, "Efficacy Summary"), can_edit, 72)
+
+        st.markdown("##### Safety / Tolerability")
+        safety_columns = st.columns(2)
+        with safety_columns[0]:
+            render_medical_text_assumption(case_id, medical_assumption(assumptions, "Absolute Safety / Tolerability"), can_edit)
+        with safety_columns[1]:
+            render_medical_text_assumption(case_id, medical_assumption(assumptions, "Comparative Safety / Tolerability"), can_edit)
+        render_medical_text_assumption(case_id, medical_assumption(assumptions, "Safety Summary"), can_edit, 72)
+
+        st.markdown("##### Overall Clinical Value")
+        overall = medical_assumption(assumptions, "Overall Clinical Value")
+        if overall is not None:
+            overall_value = st.text_area(
+                "Overall Clinical Value",
+                value=str(overall.get("Value", "")),
+                key=f"launch_medical_overall_value_{case_id}",
+                disabled=not can_edit,
+                height=96,
+                help="Summarize where the product creates meaningful clinical value, for which patients, how it differs from current alternatives, and what important limitations or uncertainties remain.",
+            )
+            if can_edit:
+                update_launch_assumption_record(case_id, str(overall.get("Assumption ID", "")), {"Value": overall_value})
+        render_medical_text_assumption(case_id, medical_assumption(assumptions, "Key Clinical Evidence Gap / Risk"), can_edit, 76)
 
 
 def render_medical_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
@@ -6680,9 +6894,6 @@ def render_medical_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
             if assumption is not None:
                 render_medical_yearly_assumption(case_id, assumption, can_edit)
         st.info("Diagnosed Patients × Treatment Eligibility = Treated / Target Patients")
-    funnel_package = pd.concat([positioning, quantitative], ignore_index=True)
-    render_medical_package_share(case_id, "patient_definition", funnel_package, can_edit)
-
     refreshed = launch_assumptions(data, case)
     utilization = refreshed[refreshed["Category"].eq("Treatment & Utilization")]
     st.markdown("### Treatment & Utilization")
@@ -6718,35 +6929,22 @@ def render_medical_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
             if can_edit:
                 update_launch_assumption_record(case_id, str(persistence.get("Assumption ID", "")), {"Value": safe_float(persistence_value) / 100, "Enabled": use_persistence})
         st.caption("Theoretical utilization is adjusted for Compliance and only applies Persistence when the toggle is enabled.")
-    model = calculate_launch_model(data, case, "Base")
-    forecast = model.get("forecast", pd.DataFrame())
-    y5 = forecast[forecast["Year"].eq("Y5")].iloc[0] if isinstance(forecast, pd.DataFrame) and not forecast.empty else pd.Series(dtype=object)
-    funnel = model.get("funnel", pd.DataFrame())
-    funnel_y5 = funnel[funnel["Year"].eq("Y5")].iloc[0] if isinstance(funnel, pd.DataFrame) and not funnel.empty else pd.Series(dtype=object)
-    output_columns = st.columns(3)
-    output_columns[0].metric("Y5 Treated / Target Patients", f"{safe_float(funnel_y5.get('Treated Patients')):,.0f}")
-    output_columns[1].metric("Adjusted Units per Patient", f"{safe_float(y5.get('Adjusted Units per Patient')):,.2f}")
-    output_columns[2].metric("Y5 Demand Units", f"{safe_float(y5.get('Demand Units')):,.0f}")
-    refreshed = launch_assumptions(data, case, model)
-    utilization = refreshed[refreshed["Category"].eq("Treatment & Utilization")]
-    render_medical_package_share(case_id, "utilization", utilization, can_edit)
-
-    st.markdown("### Clinical Evidence")
-    st.caption("Owner: Medical · Decision-relevant evidence supporting the target patient, treatment positioning and launch case.")
-    clinical = refreshed[refreshed["Category"].eq("Clinical Evidence")]
-    evidence = medical_assumption(clinical, "Clinical Evidence")
-    gap = medical_assumption(clinical, "Key Clinical Evidence Gap / Risk")
-    with st.container(border=True):
-        if evidence is not None:
-            render_medical_clinical_evidence(case_id, evidence, can_edit)
-        if gap is not None:
-            gap_value = st.text_area("Key Clinical Evidence Gap / Risk", value=str(gap.get("Value", "")), key=f"medical_evidence_gap_{case_id}", disabled=not can_edit, height=80)
-            if can_edit:
-                update_launch_assumption_record(case_id, str(gap.get("Assumption ID", "")), {"Value": gap_value})
-    render_medical_package_share(case_id, "clinical_evidence", clinical, can_edit)
+    st.markdown("### Key Clinical Value")
+    st.caption("Owner: Medical · Management-level clinical interpretation relevant to launch decision-making.")
+    clinical_value = launch_assumptions(data, case)
+    clinical_value = clinical_value[clinical_value["Category"].eq("Key Clinical Value")]
+    render_medical_key_clinical_value(case_id, clinical_value, can_edit)
 
     st.markdown("### Needs My Alignment")
     render_launch_validation_queue(case_id, launch_assumptions(data, case, calculate_launch_model(data, case, "Base")), "Medical")
+
+    st.markdown("### Medical Input Package")
+    medical_package = launch_assumptions(data, case, calculate_launch_model(data, case, "Base"))
+    medical_package = medical_package[
+        medical_package["Workstream"].eq("Medical")
+        | medical_package["Assumption Name"].isin(["Theoretical Units per Patient", "Adjusted Units per Patient"])
+    ]
+    render_launch_package_share(case_id, medical_package, "Medical", can_edit)
 
 
 def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], workspace: str) -> None:
@@ -6778,18 +6976,7 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
 
     st.markdown("### Needs My Alignment")
     refreshed = launch_assumptions(data, case)
-    refreshed = refreshed.copy()
-    refreshed["Display Value"] = refreshed.apply(launch_assumption_display_value, axis=1)
-    validators_mask = refreshed["Validators"].astype(str).map(lambda value: workspace in split_validators(value))
-    to_validate = refreshed[validators_mask & ~refreshed["Owner"].eq(workspace)]
-    if to_validate.empty:
-        st.caption("No inputs currently need this function's alignment.")
-    else:
-        alignment_view = to_validate[["Assumption Name", "Owner", "Display Value", "Unit", "Rationale / Comment", "Validation Status"]].rename(
-            columns={"Validation Status": "Alignment Status"}
-        )
-        alignment_view["Alignment Status"] = alignment_view["Alignment Status"].map(launch_alignment_status)
-        st.dataframe(alignment_view, use_container_width=True, hide_index=True)
+    render_launch_validation_queue(case_id, refreshed, workspace)
     model = calculate_launch_model(data, case, "Base")
     st.markdown("### Key Outputs / Dependencies")
     launch_key_outputs(workspace, model)
@@ -6801,6 +6988,13 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
             st.dataframe(model["projects"], use_container_width=True, hide_index=True)
         with st.expander("Scenario analysis"):
             st.dataframe(model["scenario_summary"], use_container_width=True, hide_index=True)
+    st.markdown(f"### {'Supply' if workspace == 'Supply / Operations' else workspace} Input Package")
+    render_launch_package_share(
+        case_id,
+        launch_assumptions(data, case, model),
+        workspace,
+        launch_user_workstream() == workspace,
+    )
 
 
 def update_launch_responsibility_matrix(case_id: str, edited: pd.DataFrame) -> None:
