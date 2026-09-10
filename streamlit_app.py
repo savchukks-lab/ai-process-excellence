@@ -4275,9 +4275,8 @@ def launch_responsibility_matrix(assumptions: pd.DataFrame | None = None) -> pd.
         ("Market Share", "Marketing", "Sales"),
         ("Patient Volume", "Marketing", "Sales"),
         ("Sales Force HC", "Sales", "Marketing, Finance"),
-        ("Access Rate", "Market Access", "Marketing, Finance"),
-        ("Covered Population", "Market Access", "Medical, Marketing"),
-        ("Target Price", "Market Access", "Finance"),
+        ("Market Access Channel Plan", "Market Access", "Marketing, Finance, Regulatory"),
+        ("Access Eligibility / Restrictions", "Market Access", "Medical"),
         ("COGS", "Finance", "Supply / Operations"),
         ("Supply Capacity", "Supply / Operations", "Sales"),
     ]
@@ -4385,8 +4384,8 @@ LAUNCH_DEFINITIONS = {
     "Treatment Rate / Treatment Eligibility": "The percentage of diagnosed patients who receive or are eligible for the relevant treatment.",
     "Treatment Eligibility / Treatment Rate": "The percentage of diagnosed patients who meet the clinical criteria for, or receive, the relevant treatment.",
     "Treated Patients": "Diagnosed Patients multiplied by Treatment Rate / Treatment Eligibility.",
-    "Market Access Rate": "The percentage of treated patients who can access our product in the relevant year.",
-    "Accessible Patients": "Treated Patients multiplied by Market Access Rate.",
+    "Total Market Access Rate": "Government, Private Insurance and Out-of-Pocket Reach combined for the year, capped at the treated population.",
+    "Accessible Patients": "Treated Patients multiplied by Total Market Access Rate.",
     "Market Share": "The share of Accessible Patients expected to receive our product.",
     "Patients on Product": "Accessible Patients multiplied by Market Share.",
     "Overall Market Share": "Patients on Product divided by total Treated Patients.",
@@ -4411,7 +4410,93 @@ LAUNCH_DEFINITIONS = {
     "Comparative Safety / Tolerability": "How the product's safety and tolerability profile compares with key alternatives.",
     "Safety Summary": "The concise Medical interpretation of the overall safety proposition.",
     "Overall Clinical Value": "Where the product creates meaningful clinical value, for which patients, how it differs from alternatives and what uncertainties remain.",
+    "Price": "The public or official price and the realized commercial price applicable within a funding channel.",
+    "Reach": "The share of Treated Patients expected to obtain access to our product through a funding channel.",
+    "Speed": "When access begins and how quickly patient coverage develops after access is achieved.",
+    "Government Reimbursement": "Publicly funded access through the government reimbursement structure applicable in the market.",
+    "Private Insurance": "Access funded through voluntary, commercial or private payer coverage.",
+    "Out of Pocket": "The share of Treated Patients realistically able and willing to fund access privately.",
+    "Federal / Regional / Municipal funding": "Configurable public funding levels used only where they apply to the selected market.",
+    "List Price": "The public, official or headline price before discounts, rebates or other access adjustments.",
+    "Net Price": "The realized price after discounts, rebates and other adjustments; this is the price used for Net Revenue.",
+    "Access Start Date": "The expected date when patients can first obtain funded access through the channel.",
+    "Access Eligibility / Restrictions": "Access criteria that may narrow the funded population relative to clinical eligibility.",
 }
+
+
+MARKET_ACCESS_CHANNELS = ["Government Reimbursement", "Private Insurance", "Out of Pocket"]
+GOVERNMENT_ACCESS_LEVELS = ["Federal", "Regional", "Municipal / Local"]
+
+
+def default_market_access_plan(case_id: str, product: dict[str, object]) -> dict[str, object]:
+    list_price = safe_float(product.get("List Price")) or safe_float(product.get("Gross Price"))
+    gross_price = safe_float(product.get("Gross Price")) or list_price
+
+    def prices(multiplier: float) -> dict[str, float]:
+        return {year: round(gross_price * multiplier, 2) for year in LAUNCH_YEARS}
+
+    def channel(
+        enabled: bool,
+        start_date: str,
+        reach: list[float],
+        net_multiplier: float,
+        note: str = "",
+    ) -> dict[str, object]:
+        return {
+            "Enabled": enabled,
+            "Access Start Date": start_date,
+            "Reach": dict(zip(LAUNCH_YEARS, reach)),
+            "List Price": {year: list_price for year in LAUNCH_YEARS},
+            "Net Price": prices(net_multiplier),
+            "Show Price Bridge": False,
+            "Rebate / Discount": {year: 0.0 for year in LAUNCH_YEARS},
+            "Other GTN": {year: 0.0 for year in LAUNCH_YEARS},
+            "Note": note,
+            "Show Patient Price / Co-pay": False,
+            "Patient Price / Co-pay": {year: list_price for year in LAUNCH_YEARS},
+        }
+
+    if str(case_id) == "LAUNCH-1002":
+        government = channel(False, "2027-09-01", [0.0, 0.0, 0.0, 0.0, 0.0], 0.78)
+        government["Use Common Government Price"] = True
+        government["Subchannels"] = {
+            "Federal": channel(False, "2027-09-01", [0.0, 0.0, 0.0, 0.0, 0.0], 0.78),
+            "Regional": channel(False, "2028-04-01", [0.0, 0.0, 0.0, 0.0, 0.0], 0.76),
+            "Municipal / Local": channel(False, "2028-09-01", [0.0, 0.0, 0.0, 0.0, 0.0], 0.74),
+        }
+        return {
+            "Government Reimbursement": government,
+            "Private Insurance": channel(True, "2027-02-01", [0.15, 0.24, 0.32, 0.38, 0.42], 0.88, "Coverage expands through the principal private payer networks."),
+            "Out of Pocket": channel(True, "2027-01-20", [0.38, 0.42, 0.45, 0.46, 0.46], 0.96, "Private affordability remains the principal early-access route."),
+        }
+
+    government = channel(True, "2027-10-01", [0.0, 0.0, 0.0, 0.0, 0.0], 0.80)
+    government["Use Common Government Price"] = True
+    government["Subchannels"] = {
+        "Federal": channel(True, "2027-10-01", [0.10, 0.22, 0.34, 0.44, 0.50], 0.80),
+        "Regional": channel(True, "2028-04-01", [0.0, 0.08, 0.15, 0.20, 0.22], 0.80),
+        "Municipal / Local": channel(False, "2028-09-01", [0.0, 0.0, 0.0, 0.0, 0.0], 0.80),
+    }
+    return {
+        "Government Reimbursement": government,
+        "Private Insurance": channel(True, "2027-06-01", [0.03, 0.05, 0.06, 0.07, 0.08], 0.90, "Selective private coverage complements public reimbursement."),
+        "Out of Pocket": channel(True, "2027-03-01", [0.02, 0.03, 0.04, 0.04, 0.05], 0.97, "Limited private-pay access is expected before broader reimbursement."),
+    }
+
+
+def normalize_market_access_plan(value: object, case_id: str, product: dict[str, object]) -> dict[str, object]:
+    defaults = default_market_access_plan(case_id, product)
+    supplied = value if isinstance(value, dict) else {}
+
+    def merge(default: object, current: object) -> object:
+        if not isinstance(default, dict) or not isinstance(current, dict):
+            return deepcopy(current) if current is not None else deepcopy(default)
+        return {
+            key: merge(default_value, current.get(key)) if key in current else deepcopy(default_value)
+            for key, default_value in default.items()
+        }
+
+    return merge(defaults, supplied)
 
 
 def launch_definition(name: object) -> str:
@@ -4474,16 +4559,9 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
                 {"Step": "Diagnosis Rate", "Input Type": "percentage conversion", "Value": 0.72, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
                 {"Step": "Treatment Rate / Treatment Eligibility", "Input Type": "percentage conversion", "Value": 0.68, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
             ],
-            "access_channels": [
-                {"Channel": "OOP / Private", "Accessible Patient %": 0.72, "Pricing Weight": 0.65},
-                {"Channel": "Reimbursed", "Accessible Patient %": 0.18, "Pricing Weight": 0.30},
-                {"Channel": "Other", "Accessible Patient %": 0.08, "Pricing Weight": 0.05},
-            ],
-            "expected_access_date": "2027-01-20",
-            "access_rate": launch_year_values(0.90),
+            "access_plan": default_market_access_plan(case_id, product),
             "market_share": launch_year_values(0, "By Year", [0.04, 0.10, 0.16, 0.22, 0.27]),
             "utilization": {"Units per Patient": 8.0, "Compliance": 0.88, "Persistence": 0.92, "Compliance Enabled": True, "Persistence Enabled": True, "Treatment Duration": 8.0, "Treatment Duration Unit": "months"},
-            "pricing": {"Price Mode": "Use Current Price", "List / Base Price": safe_float(product.get("Gross Price", 0)), "Rebate / Discount %": 0.12, "Other GTN %": 0.03},
             "regulatory": {"Expected Regulatory Approval Date": "2026-12-15", "Expected Label / Indication": "Broad-access launch indication", "Key Regulatory Dependency": "Local label confirmation", "Confidence": "High", "Material Risk": "Low", "Mitigation": "Track final label wording before commercial activation."},
             "supply": {"Earliest Supply Available Date": "2027-01-10", "Launch Stock Available?": "Yes", "Can Projected Demand Be Supplied?": "Yes", "Major Supply Risk": "Launch allocation balancing", "Mitigation": "Use standard launch allocation cadence.", "Maximum Available Units": launch_year_values(0)},
             "sales_resources": {"Sales Force HC / FTE": launch_year_values(0, "By Year", [8, 12, 14, 16, 16]), "Target Accounts / Centers": 240, "Coverage %": 0.68, "Reach": "Broad account reach", "Frequency": "Monthly priority touchpoints"},
@@ -4509,12 +4587,9 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
                 {"Step": "Diagnosis Rate", "Input Type": "percentage conversion", "Value": 0.58, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
             {"Step": "Treatment Rate / Treatment Eligibility", "Input Type": "percentage conversion", "Value": 0.64, "Owner": "Medical", "Validators": "Marketing", "Optional": False},
         ],
-        "access_channels": [{"Channel": "Reimbursed", "Accessible Patient %": 1.0, "Pricing Weight": 1.0}],
-        "expected_access_date": "2027-10-01",
-        "access_rate": launch_year_values(0, "By Year", [0.10, 0.25, 0.45, 0.65, 0.75]),
+        "access_plan": default_market_access_plan(case_id, product),
         "market_share": launch_year_values(0, "By Year", [0.05, 0.12, 0.20, 0.27, 0.31]),
         "utilization": {"Units per Patient": 10.0, "Compliance": 0.86, "Persistence": 0.90, "Compliance Enabled": True, "Persistence Enabled": True, "Treatment Duration": 10.0, "Treatment Duration Unit": "months"},
-        "pricing": {"Price Mode": "Use Current Price", "List / Base Price": safe_float(product.get("Gross Price", 0)), "Rebate / Discount %": 0.16, "Other GTN %": 0.04},
         "regulatory": {"Expected Regulatory Approval Date": "2027-02-15", "Expected Label / Indication": "Specialty access launch indication", "Key Regulatory Dependency": "Approval and final access dossier", "Confidence": "Medium", "Material Risk": "Medium", "Mitigation": "Maintain access scenario until final reimbursement decision."},
         "supply": {"Earliest Supply Available Date": "2027-03-01", "Launch Stock Available?": "At Risk", "Can Projected Demand Be Supplied?": "At Risk", "Major Supply Risk": "Limited launch stock during reimbursement ramp", "Mitigation": "Prioritize validated reimbursed demand during Y1 and Y2.", "Maximum Available Units": launch_year_values(0, "By Year", [1_000, 2_600, 5_000, 8_000, 11_000])},
         "sales_resources": {"Sales Force HC / FTE": launch_year_values(0, "By Year", [4, 6, 8, 9, 10]), "Target Accounts / Centers": 85, "Coverage %": 0.55, "Reach": "Specialty center focus", "Frequency": "Biweekly launch-phase engagement"},
@@ -4616,7 +4691,7 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("System", "Calculated Funnel", "Diagnosed Patients", "Calculated", "Calculated", "Patients", calculated=True)
     add("Medical", "Market Opportunity", "Treatment Rate / Treatment Eligibility", "", "Yearly Percentage", "%", "Marketing", launch_year_values(treatment_rate), assumption_type="EVIDENCE-BASED", source="Treatment pathway evidence")
     add("System", "Calculated Funnel", "Treated Patients", "Calculated", "Calculated", "Patients", calculated=True)
-    add("Market Access", "Access", "Market Access Rate", "", "Yearly Percentage", "%", "Marketing", inputs["access_rate"], assumption_type="MANAGEMENT / FUNCTIONAL", rationale="Product-specific access ramp based on expected market access milestones.")
+    add("System", "Calculated Funnel", "Total Market Access Rate", "Calculated", "Calculated", "%", calculated=True)
     add("System", "Calculated Funnel", "Accessible Patients", "Calculated", "Calculated", "Patients", calculated=True)
     add("Marketing", "Adoption", "Market Share", "", "Yearly Percentage", "%", "Sales", inputs["market_share"], assumption_type="MANAGEMENT / FUNCTIONAL", rationale="Share of accessible patients expected to receive our product.")
     add("System", "Calculated Funnel", "Patients on Product", "Calculated", "Calculated", "Patients", calculated=True)
@@ -4685,19 +4760,19 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("Medical", "Key Clinical Value", "Overall Clinical Value", "The product may provide meaningful clinical value for eligible patients while longer-term and comparative evidence continue to mature.", "Text", validators="Marketing, Regulatory")
     add("Medical", "Key Clinical Value", "Key Clinical Evidence Gap / Risk", "Long-term evidence maturity should be monitored through launch readiness.", "Text", validators="Marketing, Regulatory", rationale="Primary evidence uncertainty that may affect positioning or readiness.")
 
-    pricing = inputs["pricing"]
-    add("Market Access", "Access", "Access Archetype", case.get("Access Archetype", "Reimbursement Dependent"), "Choice", validators="Marketing, Finance", options=["Reimbursement Dependent", "Mixed Access", "Predominantly OOP / Broad Access"])
-    add("Market Access", "Access", "Access Pathway", "Reimbursement and account access pathway", "Text", validators="Marketing")
-    add("Market Access", "Access", "Coverage / Reimbursement", "Coverage assumptions by launch year", "Text", validators="Marketing, Finance")
-    add("Market Access", "Access", "Expected Access / Reimbursement Date", inputs.get("expected_access_date", ""), "Date", validators="Regulatory, Finance")
-    add("Market Access", "Access", "Access Ramp", "", "Yearly Percentage", "%", "Marketing, Finance", inputs["access_rate"])
+    add("Market Access", "Access Strategy & Eligibility", "Access Archetype", case.get("Access Archetype", "Reimbursement Dependent"), "Choice", validators="Marketing, Finance", options=["Reimbursement Dependent", "Mixed Access", "Predominantly OOP / Broad Access"])
+    add("Market Access", "Access Strategy & Eligibility", "Access Strategy & Pathway", "Define the expected funding pathway, payer dependencies and sequencing across enabled access channels.", "Text", validators="Marketing")
+    add("Market Access", "Access Strategy & Eligibility", "Access Eligibility / Restrictions", "Access eligibility is expected to remain aligned with the approved indication and relevant payer criteria.", "Text", validators="Medical")
+    add(
+        "Market Access",
+        "Price – Reach – Speed",
+        "Market Access Channel Plan",
+        deepcopy(inputs["access_plan"]),
+        "Structured Access Plan",
+        validators="Marketing, Finance, Regulatory",
+        rationale="Channel-specific Price, Reach and Speed assumptions used by the integrated launch funnel and revenue model.",
+    )
     add("System", "Calculated", "Commercially Accessible Population", "Calculated", "Calculated", "Patients", "", calculated=True)
-    add("Market Access", "Access", "Eligibility Restrictions", "Eligibility aligned to approved access pathway", "Text", validators="Medical")
-    add("Market Access", "Access", "Geographic / Account Coverage", case.get("Market / Region", ""), "Text", validators="Sales")
-    add("Market Access", "Access", "Patient Co-pay / OOP", 0.0, "Number", "Local currency", "Finance")
-    add("Market Access", "Pricing", "Target / Launch Price", pricing.get("List / Base Price", 0), "Number", "Local currency", "Finance")
-    add("Market Access", "Pricing", "Rebate / Discount", pricing.get("Rebate / Discount %", 0), "Percentage", "%", "Finance")
-    add("Market Access", "Pricing", "Other GTN", pricing.get("Other GTN %", 0), "Percentage", "%", "Finance")
     add("System", "Calculated", "Realized Net Price", "Calculated", "Calculated", "Local currency", "Finance", calculated=True)
 
     regulatory = inputs["regulatory"]
@@ -4765,7 +4840,6 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
         "Prevalence": ["Prevalence", "Prevalence / Incidence"],
         "Treatment Rate / Treatment Eligibility": ["Treatment Rate / Treatment Eligibility", "Treatment Eligibility"],
         "Market Share": ["Market Share", "Share Within Accessible Segment", "Market Share / Adoption"],
-        "Market Access Rate": ["Market Access Rate", "Product Access Rate", "Access Ramp", "Market Accessibility Rate"],
         "Sales FTE": ["Sales FTE", "Sales Force FTE"],
         "Population-weighted Geographic Coverage %": ["Population-weighted Geographic Coverage %", "Coverage %"],
     }
@@ -4793,6 +4867,8 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
         merged["Validation Status"] = launch_alignment_status(merged.get("Validation Status", "Draft"))
         if name == "Competitive Landscape":
             merged["Value"] = normalize_competitive_events(merged.get("Value", []))
+        if name == "Market Access Channel Plan":
+            merged["Value"] = normalize_market_access_plan(merged.get("Value"), case_id, product)
         if str(default.get("Value Type", "")).startswith("Yearly"):
             legacy_value = safe_float(existing.get("Value"))
             has_years = any(existing.get(year) is not None for year in LAUNCH_YEARS)
@@ -4834,9 +4910,9 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
                 assumption = by_name.get(assumption_name, {})
                 row["Value"] = safe_float(assumption.get("Y1", value(assumption_name, row.get("Value", 0))))
     updated["market_share"] = years("Market Share", updated["market_share"])
-    updated["access_rate"] = years("Market Access Rate", updated["access_rate"])
     updated["access_archetype"] = str(value("Access Archetype", ""))
-    updated["expected_access_date"] = str(value("Expected Access / Reimbursement Date", updated.get("expected_access_date", "")))
+    channel_plan = value("Market Access Channel Plan", updated.get("access_plan", {}))
+    updated["access_plan"] = deepcopy(channel_plan) if isinstance(channel_plan, dict) else deepcopy(updated.get("access_plan", {}))
     updated["sales_resources"]["Sales Force HC / FTE"] = years("Sales FTE", updated["sales_resources"]["Sales Force HC / FTE"])
     updated["sales_resources"]["Regions Covered"] = years("Regions Covered", launch_year_values(0))
     updated["sales_resources"]["Population-weighted Geographic Coverage %"] = years("Population-weighted Geographic Coverage %", launch_year_values(safe_float(updated["sales_resources"]["Coverage %"])))
@@ -4867,9 +4943,6 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
     updated["utilization"]["Persistence"] = safe_float(value("Persistence", updated["utilization"]["Persistence"]))
     updated["utilization"]["Compliance Enabled"] = True
     updated["utilization"]["Persistence Enabled"] = bool(persistence_record.get("Enabled", False))
-    updated["pricing"]["List / Base Price"] = safe_float(value("Target / Launch Price", updated["pricing"]["List / Base Price"]))
-    updated["pricing"]["Rebate / Discount %"] = safe_float(value("Rebate / Discount", updated["pricing"]["Rebate / Discount %"]))
-    updated["pricing"]["Other GTN %"] = safe_float(value("Other GTN", updated["pricing"]["Other GTN %"]))
     updated["regulatory"]["Expected Regulatory Approval Date"] = str(value("Expected Regulatory Approval Date", updated["regulatory"]["Expected Regulatory Approval Date"]))
     updated["regulatory"]["Expected Label / Indication"] = str(value("Expected Label / Indication", updated["regulatory"]["Expected Label / Indication"]))
     updated["regulatory"]["Key Regulatory Dependency"] = str(value("Key Regulatory Dependency", updated["regulatory"]["Key Regulatory Dependency"]))
@@ -4911,6 +4984,87 @@ def get_launch_patient_flow(case_id: str, default_flow: list[dict[str, object]])
 
 def set_launch_patient_flow(case_id: str, rows: list[dict[str, object]]) -> None:
     st.session_state[launch_flow_state_key(case_id)] = [dict(row) for row in rows]
+
+
+def market_access_plan_entries(plan: dict[str, object]) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for channel_name in MARKET_ACCESS_CHANNELS:
+        channel = plan.get(channel_name, {}) if isinstance(plan, dict) else {}
+        if not isinstance(channel, dict) or not bool(channel.get("Enabled", False)):
+            continue
+        if channel_name == "Government Reimbursement":
+            common_price = bool(channel.get("Use Common Government Price", True))
+            subchannels = channel.get("Subchannels", {}) if isinstance(channel.get("Subchannels"), dict) else {}
+            for level in GOVERNMENT_ACCESS_LEVELS:
+                subchannel = subchannels.get(level, {}) if isinstance(subchannels.get(level), dict) else {}
+                if not bool(subchannel.get("Enabled", False)):
+                    continue
+                entries.append(
+                    {
+                        **deepcopy(subchannel),
+                        "Channel": channel_name,
+                        "Access Path": level,
+                        "List Price": deepcopy(channel.get("List Price", {})) if common_price else deepcopy(subchannel.get("List Price", {})),
+                        "Net Price": deepcopy(channel.get("Net Price", {})) if common_price else deepcopy(subchannel.get("Net Price", {})),
+                        "Show Price Bridge": bool(channel.get("Show Price Bridge", False)) if common_price else bool(subchannel.get("Show Price Bridge", False)),
+                        "Rebate / Discount": deepcopy(channel.get("Rebate / Discount", {})) if common_price else deepcopy(subchannel.get("Rebate / Discount", {})),
+                        "Other GTN": deepcopy(channel.get("Other GTN", {})) if common_price else deepcopy(subchannel.get("Other GTN", {})),
+                    }
+                )
+        else:
+            entries.append({**deepcopy(channel), "Channel": channel_name, "Access Path": channel_name})
+    return entries
+
+
+def market_access_year_metrics(
+    plan: dict[str, object],
+    launch_year: int,
+    adjustments: dict[str, float] | None = None,
+) -> dict[str, dict[str, object]]:
+    adjustments = adjustments or {}
+    entries = market_access_plan_entries(plan)
+    metrics: dict[str, dict[str, object]] = {}
+    for year_index, year in enumerate(LAUNCH_YEARS):
+        year_rows = []
+        for entry in entries:
+            raw_reach = max(0.0, safe_float(entry.get("Reach", {}).get(year)))
+            start_fraction = launch_availability_fraction(entry.get("Access Start Date"), launch_year, year_index)
+            effective_reach = raw_reach * safe_float(adjustments.get("Access Rate", 1.0)) * start_fraction
+            list_price = max(0.0, safe_float(entry.get("List Price", {}).get(year)))
+            if bool(entry.get("Show Price Bridge", False)):
+                rebate = min(1.0, max(0.0, safe_float(entry.get("Rebate / Discount", {}).get(year))))
+                other_gtn = min(1.0, max(0.0, safe_float(entry.get("Other GTN", {}).get(year))))
+                net_price = list_price * max(0.0, 1 - rebate - other_gtn)
+            else:
+                net_price = max(0.0, safe_float(entry.get("Net Price", {}).get(year)))
+            year_rows.append(
+                {
+                    "Channel": entry.get("Channel", ""),
+                    "Access Path": entry.get("Access Path", ""),
+                    "Raw Reach": raw_reach,
+                    "Effective Reach": effective_reach,
+                    "Access Start Date": entry.get("Access Start Date", ""),
+                    "List Price": list_price,
+                    "Net Price": net_price * safe_float(adjustments.get("Net Price", 1.0)),
+                }
+            )
+        raw_total = sum(safe_float(row["Raw Reach"]) for row in year_rows)
+        effective_total = sum(safe_float(row["Effective Reach"]) for row in year_rows)
+        if effective_total > 1.0:
+            scale = 1.0 / effective_total
+            for row in year_rows:
+                row["Effective Reach"] = safe_float(row["Effective Reach"]) * scale
+            effective_total = 1.0
+        weighted_list = sum(safe_float(row["Effective Reach"]) * safe_float(row["List Price"]) for row in year_rows)
+        weighted_net = sum(safe_float(row["Effective Reach"]) * safe_float(row["Net Price"]) for row in year_rows)
+        metrics[year] = {
+            "Raw Total Reach": raw_total,
+            "Total Reach": effective_total,
+            "Weighted List Price": weighted_list / effective_total if effective_total else 0.0,
+            "Weighted Net Price": weighted_net / effective_total if effective_total else 0.0,
+            "Rows": year_rows,
+        }
+    return metrics
 
 
 def calculate_patient_flow(flow_rows: list[dict[str, object]], scenario_multiplier: float) -> pd.DataFrame:
@@ -4962,7 +5116,11 @@ def calculate_patient_flow(flow_rows: list[dict[str, object]], scenario_multipli
     return pd.DataFrame(records)
 
 
-def calculate_launch_funnel(records: list[dict[str, object]], adjustments: dict[str, float] | None = None) -> pd.DataFrame:
+def calculate_launch_funnel(
+    records: list[dict[str, object]],
+    adjustments: dict[str, float] | None = None,
+    launch_year: int | None = None,
+) -> pd.DataFrame:
     by_name = {str(row.get("Assumption Name", "")): row for row in records}
     adjustments = adjustments or {}
 
@@ -4971,6 +5129,12 @@ def calculate_launch_funnel(records: list[dict[str, object]], adjustments: dict[
         value = row.get(year)
         return safe_float(value if value is not None else row.get("Value", fallback))
 
+    channel_plan = by_name.get("Market Access Channel Plan", {}).get("Value", {})
+    access_metrics = market_access_year_metrics(
+        channel_plan if isinstance(channel_plan, dict) else {},
+        launch_year or date.today().year,
+        adjustments,
+    )
     rows = []
     for year in LAUNCH_YEARS:
         population = yearly("Population", year) * safe_float(adjustments.get("Population", 1.0))
@@ -4980,7 +5144,7 @@ def calculate_launch_funnel(records: list[dict[str, object]], adjustments: dict[
         diagnosed_patients = disease_population * diagnosis_rate
         treatment_rate = yearly("Treatment Rate / Treatment Eligibility", year)
         treated_patients = diagnosed_patients * treatment_rate
-        market_access_rate = min(1.0, yearly("Market Access Rate", year) * safe_float(adjustments.get("Access Rate", 1.0)))
+        market_access_rate = safe_float(access_metrics.get(year, {}).get("Total Reach"))
         accessible_patients = treated_patients * market_access_rate
         market_share = min(1.0, yearly("Market Share", year) * safe_float(adjustments.get("Market Share", 1.0)))
         patients_on_product = accessible_patients * market_share
@@ -4995,7 +5159,7 @@ def calculate_launch_funnel(records: list[dict[str, object]], adjustments: dict[
                 "Diagnosed Patients": round(diagnosed_patients),
                 "Treatment Rate / Treatment Eligibility": treatment_rate,
                 "Treated Patients": round(treated_patients),
-                "Market Access Rate": market_access_rate,
+                "Total Market Access Rate": market_access_rate,
                 "Accessible Patients": round(accessible_patients),
                 "Market Share": market_share,
                 "Patients on Product": round(patients_on_product),
@@ -5105,17 +5269,14 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
     multiplier = adjustments["Population"]
     flow_rows = [dict(row) for row in inputs["patient_flow"]]
     patient_flow = calculate_patient_flow(flow_rows, multiplier)
-    funnel = calculate_launch_funnel(assumption_records, adjustments)
-
     launch_year = launch_year_from_case(case)
+    funnel = calculate_launch_funnel(assumption_records, adjustments, launch_year)
     regulatory = inputs["regulatory"]
     supply = inputs["supply"]
-    access_rate = inputs["access_rate"]
     market_share = inputs["market_share"]
     utilization = inputs["utilization"]
-    pricing = inputs["pricing"]
-    base_price = safe_float(pricing.get("List / Base Price")) or safe_float(product.get("Gross Price"))
-    realized_net_price = base_price * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %"))) * adjustments["Net Price"]
+    access_plan = inputs.get("access_plan", {})
+    access_metrics = market_access_year_metrics(access_plan, launch_year, adjustments)
     unit_cost = (safe_float(inputs.get("cogs_per_unit")) or safe_float(product.get("Standard Cost"))) * adjustments["COGS"]
     archetype = str(inputs.get("access_archetype") or case.get("Access Archetype", ""))
     planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
@@ -5125,12 +5286,10 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         planned_launch_date,
         str(supply.get("Earliest Supply Available Date", planned_launch_date)),
     )
-    if archetype == "Reimbursement Dependent":
-        commercial_gate_date = max(commercial_gate_date, str(inputs.get("expected_access_date", commercial_gate_date)))
     commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
 
     forecast_rows = []
-    channels = pd.DataFrame(inputs["access_channels"])
+    channel_rows = []
     for index, year in enumerate(LAUNCH_YEARS):
         funnel_row = funnel[funnel["Year"].eq(year)].iloc[0]
         clinical_patients = safe_float(funnel_row.get("Treated Patients"))
@@ -5152,14 +5311,34 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         supply_status = str(supply.get("Can Projected Demand Be Supplied?", "Yes"))
         max_units = safe_float(supply.get("Maximum Available Units", {}).get(year, 0))
         sellable_units = min(demand_units, max_units) if supply_status in {"At Risk", "No"} and max_units > 0 else demand_units
+        year_access = access_metrics.get(year, {})
+        realized_net_price = safe_float(year_access.get("Weighted Net Price"))
         revenue = sellable_units * realized_net_price
+        total_reach = safe_float(year_access.get("Total Reach"))
+        for channel in year_access.get("Rows", []):
+            reach = safe_float(channel.get("Effective Reach"))
+            allocation = reach / total_reach if total_reach else 0.0
+            channel_units = sellable_units * allocation
+            channel_rows.append(
+                {
+                    "Year": year,
+                    "Funding Channel": channel.get("Channel", ""),
+                    "Access Path": channel.get("Access Path", ""),
+                    "Reach": pct(reach),
+                    "Access Start Date": channel.get("Access Start Date", ""),
+                    "List Price": money(channel.get("List Price", 0)),
+                    "Net Price": money(channel.get("Net Price", 0)),
+                    "Sellable Units": round(channel_units),
+                    "Net Revenue": channel_units * safe_float(channel.get("Net Price")),
+                }
+            )
         cogs = sellable_units * unit_cost
         gross_profit = revenue - cogs
         forecast_rows.append(
             {
                 "Year": year,
                 "Clinical Addressable Patients": round(clinical_patients),
-                "Access Rate": pct(access_rate.get(year)),
+                "Total Market Access Rate": pct(total_reach),
                 "Commercially Accessible Patients": round(accessible_patients),
                 "Market Share": pct(market_share.get(year)),
                 "Patients on Product": round(patients_on_product),
@@ -5175,6 +5354,8 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
             }
         )
     forecast = pd.DataFrame(forecast_rows)
+    channels = pd.DataFrame(channel_rows)
+    realized_net_price = safe_float(access_metrics.get("Y5", {}).get("Weighted Net Price"))
 
     sales_fte = inputs["sales_resources"]["Sales Force HC / FTE"]
     personnel_records = []
@@ -5253,6 +5434,7 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         "funnel": funnel,
         "forecast": forecast,
         "channels": channels,
+        "access_metrics": access_metrics,
         "personnel": personnel,
         "projects": projects,
         "pnl": pnl,
@@ -5273,16 +5455,13 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
     adjustments = launch_scenario_adjustments(inputs, scenario)
     multiplier = adjustments["Population"]
     patient_flow = calculate_patient_flow([dict(row) for row in inputs["patient_flow"]], multiplier)
-    funnel = calculate_launch_funnel(assumption_records, adjustments)
     launch_year = launch_year_from_case(case)
+    funnel = calculate_launch_funnel(assumption_records, adjustments, launch_year)
     regulatory = inputs["regulatory"]
     supply = inputs["supply"]
-    access_rate = inputs["access_rate"]
     market_share = inputs["market_share"]
     utilization = inputs["utilization"]
-    pricing = inputs["pricing"]
-    base_price = safe_float(pricing.get("List / Base Price")) or safe_float(product.get("Gross Price"))
-    realized_net_price = base_price * (1 - safe_float(pricing.get("Rebate / Discount %"))) * (1 - safe_float(pricing.get("Other GTN %"))) * adjustments["Net Price"]
+    access_metrics = market_access_year_metrics(inputs.get("access_plan", {}), launch_year, adjustments)
     unit_cost = (safe_float(inputs.get("cogs_per_unit")) or safe_float(product.get("Standard Cost"))) * adjustments["COGS"]
     planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
     planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
@@ -5292,8 +5471,6 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
         str(supply.get("Earliest Supply Available Date", planned_launch_date)),
     )
     archetype = str(inputs.get("access_archetype") or case.get("Access Archetype", ""))
-    if archetype == "Reimbursement Dependent":
-        commercial_gate_date = max(commercial_gate_date, str(inputs.get("expected_access_date", commercial_gate_date)))
     commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
     y5_patients = 0.0
     y5_revenue = 0.0
@@ -5319,6 +5496,7 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
         demand_units = patients * units_per_patient
         max_units = safe_float(supply.get("Maximum Available Units", {}).get(year, 0))
         sellable = min(demand_units, max_units) if str(supply.get("Can Projected Demand Be Supplied?", "Yes")) in {"At Risk", "No"} and max_units > 0 else demand_units
+        realized_net_price = safe_float(access_metrics.get(year, {}).get("Weighted Net Price"))
         revenue = sellable * realized_net_price
         gross_profit = revenue - sellable * unit_cost
         opex = 0.0
@@ -5382,7 +5560,7 @@ def render_launch_model_sections(case_id: str, case: pd.Series, data: dict[str, 
     access_cols[0].metric("Access Archetype", case.get("Access Archetype", ""))
     access_cols[1].metric("Commercial Gate Date", model.get("commercial_gate_date", ""))
     access_cols[2].metric("Y5 Commercially Accessible", f"{safe_float(forecast.loc[forecast['Year'].eq('Y5'), 'Commercially Accessible Patients'].iloc[0]):,.0f}")
-    st.caption(f"Expected access / reimbursement date: {inputs.get('expected_access_date', 'Not constrained')}")
+    st.caption("Funding-channel start dates and Reach assumptions are maintained in the Market Access Price–Reach–Speed plan.")
     st.dataframe(model["channels"], use_container_width=True, hide_index=True)
 
     st.markdown("<div class='enterprise-section-title'>Adoption & Utilization</div>", unsafe_allow_html=True)
@@ -5402,22 +5580,16 @@ def render_launch_model_sections(case_id: str, case: pd.Series, data: dict[str, 
 
     st.markdown("<div class='enterprise-section-title'>Pricing & Revenue</div>", unsafe_allow_html=True)
     product = model["product"]
-    pricing = inputs["pricing"]
-    pricing_view = pd.DataFrame(
-        [
-            {
-                "SKU": product.get("SKU", ""),
-                "Product": product.get("Product Name", case.get("Product", "")),
-                "Price Mode": pricing.get("Price Mode", ""),
-                "Current List Price": money(product.get("List Price")),
-                "Current Gross Price": money(product.get("Gross Price")),
-                "Launch List / Base Price": money(pricing.get("List / Base Price")),
-                "Rebate / Discount %": pct(pricing.get("Rebate / Discount %")),
-                "Other GTN %": pct(pricing.get("Other GTN %")),
-                "Realized Net Price": money(model.get("realized_net_price")),
-            }
-        ]
-    )
+    access_metrics = model.get("access_metrics", {})
+    pricing_view = pd.DataFrame([
+        {
+            "Year": year,
+            "Current Product List Price": money(product.get("List Price")),
+            "Reach-weighted Channel List Price": money(access_metrics.get(year, {}).get("Weighted List Price", 0)),
+            "Reach-weighted Net Price": money(access_metrics.get(year, {}).get("Weighted Net Price", 0)),
+        }
+        for year in LAUNCH_YEARS
+    ])
     st.dataframe(pricing_view, use_container_width=True, hide_index=True)
     st.dataframe(format_launch_forecast_table(forecast[["Year", "Sellable Units", "Realized Net Price", "Net Revenue", "COGS", "Gross Profit", "Gross Margin %"]]), use_container_width=True, hide_index=True)
 
@@ -5532,7 +5704,7 @@ def launch_assumptions(data: dict[str, pd.DataFrame], case: pd.Series, model: di
     clinical_value = safe_float(patient_flow["Output Patients"].dropna().iloc[-1]) if isinstance(patient_flow, pd.DataFrame) and not patient_flow.empty else 0
     set_calculated("Clinically Addressable Population", round(clinical_value))
     if isinstance(funnel, pd.DataFrame) and not funnel.empty:
-        for name in ["Disease Population", "Diagnosed Patients", "Treated Patients", "Accessible Patients", "Patients on Product", "Overall Market Share"]:
+        for name in ["Disease Population", "Diagnosed Patients", "Treated Patients", "Total Market Access Rate", "Accessible Patients", "Patients on Product", "Overall Market Share"]:
             yearly = {str(row["Year"]): row.get(name, 0) for _, row in funnel.iterrows()}
             set_calculated(name, yearly.get("Y5", 0), yearly)
     if isinstance(forecast, pd.DataFrame) and not forecast.empty:
@@ -5743,6 +5915,11 @@ def launch_assumption_display_value(assumption: pd.Series | dict[str, object]) -
     if value_type == "Structured Evidence":
         evidence = [item for item in assumption.get("Value", []) if isinstance(item, dict)]
         return f"{len(evidence)} evidence item{'s' if len(evidence) != 1 else ''}"
+    if value_type == "Structured Access Plan":
+        plan = assumption.get("Value", {}) if isinstance(assumption.get("Value"), dict) else {}
+        entries = market_access_plan_entries(plan)
+        total_reach = sum(safe_float(entry.get("Reach", {}).get("Y5")) for entry in entries)
+        return f"{len(entries)} enabled access path{'s' if len(entries) != 1 else ''} · Y5 Reach {pct(total_reach)}"
     if value_type == "Percentage":
         return pct(assumption.get("Value"))
     if value_type == "Number":
@@ -6056,6 +6233,9 @@ def render_launch_assumption_input(case_id: str, assumption: pd.Series) -> None:
     if value_type == "Structured Evidence":
         st.info("Structured clinical evidence is maintained in the Medical workspace.")
         return
+    if value_type == "Structured Access Plan":
+        st.info("Price, Reach and Speed are maintained in the Market Access workspace.")
+        return
     if "Enabled" in assumption and str(assumption.get("Category")) == "Sales Coverage & Execution Plan" and str(assumption.get("Assumption Name")) != "Sales FTE":
         enabled = st.checkbox("Use this coverage metric", value=bool(assumption.get("Enabled", True)), key=f"{key_base}_enabled", disabled=not editable)
         updates["Enabled"] = enabled
@@ -6156,13 +6336,13 @@ def render_launch_funnel(model: dict[str, object], assumptions: pd.DataFrame) ->
         "Diagnosed Patients",
         "Treatment Rate / Treatment Eligibility",
         "Treated Patients",
-        "Market Access Rate",
+        "Total Market Access Rate",
         "Accessible Patients",
         "Market Share",
         "Patients on Product",
         "Overall Market Share",
     ]
-    percentage_rows = {"Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility", "Market Access Rate", "Market Share", "Overall Market Share"}
+    percentage_rows = {"Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility", "Total Market Access Rate", "Market Share", "Overall Market Share"}
     key_outputs = {"Disease Population", "Diagnosed Patients", "Treated Patients", "Accessible Patients", "Patients on Product"}
     rows = []
     for metric in funnel_order:
@@ -6307,7 +6487,7 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
             "Efficacy Summary",
             "Overall Clinical Value",
             "Key Clinical Evidence Gap / Risk",
-            "Market Access Rate",
+            "Market Access Channel Plan",
             "Sales FTE",
             "Regions Covered",
             "Population-weighted Geographic Coverage %",
@@ -6317,6 +6497,13 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
         },
         "Sales": {"Market Share", "Competitive Landscape"},
         "Medical": {"Expected Label / Indication", "Eligibility Restrictions"},
+        "Market Access": {
+            "Expected Regulatory Approval Date",
+            "Expected Label / Indication",
+            "Treatment Rate / Treatment Eligibility",
+            "Disease / Indication",
+            "Biomarker / Prior Treatment / Clinical Restriction",
+        },
     }
     validators_mask = assumptions["Validators"].astype(str).map(lambda value: workspace in split_validators(value))
     queue = assumptions[validators_mask & ~assumptions["Owner"].eq(workspace)]
@@ -6947,6 +7134,361 @@ def render_medical_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
     render_launch_package_share(case_id, medical_package, "Medical", can_edit)
 
 
+def render_access_reach_inputs(
+    case_id: str,
+    key_name: str,
+    entry: dict[str, object],
+    can_edit: bool,
+) -> dict[str, float]:
+    st.markdown(f"**{launch_definition_label('Reach')} · Y1–Y5**", unsafe_allow_html=True)
+    columns = st.columns(5)
+    reach = entry.get("Reach", {}) if isinstance(entry.get("Reach"), dict) else {}
+    return {
+        year: safe_float(
+            columns[index].number_input(
+                f"Reach {year} (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=safe_float(reach.get(year)) * 100,
+                step=1.0,
+                format="%.1f",
+                key=f"launch_access_reach_{case_id}_{key_name}_{year}",
+                disabled=not can_edit,
+            )
+        )
+        / 100
+        for index, year in enumerate(LAUNCH_YEARS)
+    }
+
+
+def render_access_price_inputs(
+    case_id: str,
+    key_name: str,
+    entry: dict[str, object],
+    can_edit: bool,
+) -> dict[str, object]:
+    show_bridge = st.checkbox(
+        "Show Price Bridge",
+        value=bool(entry.get("Show Price Bridge", False)),
+        key=f"launch_access_bridge_{case_id}_{key_name}",
+        disabled=not can_edit,
+        help="Optional view: List Price minus Rebate / Discount and Other GTN equals Net Price.",
+    )
+    list_prices = entry.get("List Price", {}) if isinstance(entry.get("List Price"), dict) else {}
+    net_prices = entry.get("Net Price", {}) if isinstance(entry.get("Net Price"), dict) else {}
+    rebates = entry.get("Rebate / Discount", {}) if isinstance(entry.get("Rebate / Discount"), dict) else {}
+    other_gtn = entry.get("Other GTN", {}) if isinstance(entry.get("Other GTN"), dict) else {}
+
+    st.markdown(f"**{launch_definition_label('List Price')}**", unsafe_allow_html=True)
+    list_columns = st.columns(5)
+    updated_list = {
+        year: safe_float(
+            list_columns[index].number_input(
+                f"List Price {year}",
+                min_value=0.0,
+                value=safe_float(list_prices.get(year)),
+                key=f"launch_access_list_{case_id}_{key_name}_{year}",
+                disabled=not can_edit,
+            )
+        )
+        for index, year in enumerate(LAUNCH_YEARS)
+    }
+    if show_bridge:
+        st.caption("Optional price bridge (%)")
+        rebate_columns = st.columns(5)
+        updated_rebates = {
+            year: safe_float(
+                rebate_columns[index].number_input(
+                    f"Rebate / Discount {year} (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=safe_float(rebates.get(year)) * 100,
+                    key=f"launch_access_rebate_{case_id}_{key_name}_{year}",
+                    disabled=not can_edit,
+                )
+            )
+            / 100
+            for index, year in enumerate(LAUNCH_YEARS)
+        }
+        gtn_columns = st.columns(5)
+        updated_gtn = {
+            year: safe_float(
+                gtn_columns[index].number_input(
+                    f"Other GTN {year} (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=safe_float(other_gtn.get(year)) * 100,
+                    key=f"launch_access_gtn_{case_id}_{key_name}_{year}",
+                    disabled=not can_edit,
+                )
+            )
+            / 100
+            for index, year in enumerate(LAUNCH_YEARS)
+        }
+        updated_net = {
+            year: updated_list[year] * max(0.0, 1 - updated_rebates[year] - updated_gtn[year])
+            for year in LAUNCH_YEARS
+        }
+        st.caption("Net Price: " + " · ".join(f"{year} {money(updated_net[year])}" for year in LAUNCH_YEARS))
+    else:
+        st.markdown(f"**{launch_definition_label('Net Price')}**", unsafe_allow_html=True)
+        net_columns = st.columns(5)
+        updated_net = {
+            year: safe_float(
+                net_columns[index].number_input(
+                    f"Net Price {year}",
+                    min_value=0.0,
+                    value=safe_float(net_prices.get(year)),
+                    key=f"launch_access_net_{case_id}_{key_name}_{year}",
+                    disabled=not can_edit,
+                )
+            )
+            for index, year in enumerate(LAUNCH_YEARS)
+        }
+        updated_rebates = deepcopy(rebates)
+        updated_gtn = deepcopy(other_gtn)
+    return {
+        "Show Price Bridge": show_bridge,
+        "List Price": updated_list,
+        "Net Price": updated_net,
+        "Rebate / Discount": updated_rebates,
+        "Other GTN": updated_gtn,
+    }
+
+
+def render_access_path_inputs(
+    case_id: str,
+    key_name: str,
+    entry: dict[str, object],
+    can_edit: bool,
+    launch_year: int,
+    show_prices: bool = True,
+    display_name: str | None = None,
+) -> dict[str, object]:
+    updated = deepcopy(entry)
+    parsed_start = pd.to_datetime(entry.get("Access Start Date"), errors="coerce")
+    default_start = parsed_start.date() if not pd.isna(parsed_start) else date(launch_year, 1, 1)
+    start_date = st.date_input(
+        "Access Start Date",
+        value=default_start,
+        key=f"launch_access_start_{case_id}_{key_name}",
+        disabled=not can_edit,
+        help=launch_definition("Access Start Date"),
+    )
+    updated["Access Start Date"] = start_date.isoformat()
+    updated["Reach"] = render_access_reach_inputs(case_id, key_name, entry, can_edit)
+    if show_prices:
+        updated.update(render_access_price_inputs(case_id, key_name, entry, can_edit))
+    path_label = display_name or key_name.replace("_", " ").title()
+    for year_index, year in enumerate(LAUNCH_YEARS):
+        if safe_float(updated["Reach"].get(year)) > 0 and start_date.year > launch_year + year_index:
+            st.warning(f"{path_label} Reach is {pct(updated['Reach'][year])} in {year}, but its Access Start Date is after {year}.")
+    return updated
+
+
+def render_market_access_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
+    case_id = str(case.get("Launch Case ID", ""))
+    can_edit = launch_user_workstream() == "Market Access"
+    launch_year = launch_year_from_case(case)
+    owned = assumptions[assumptions["Owner"].eq("Market Access")]
+
+    st.markdown("### Access Strategy & Eligibility")
+    with st.container(border=True):
+        archetype = medical_assumption(owned, "Access Archetype")
+        strategy = medical_assumption(owned, "Access Strategy & Pathway")
+        eligibility = medical_assumption(owned, "Access Eligibility / Restrictions")
+        if archetype is not None:
+            options = list(archetype.get("Options", []))
+            current = str(archetype.get("Value", options[0] if options else ""))
+            selected = st.selectbox(
+                "Access Archetype",
+                options,
+                index=options.index(current) if current in options else 0,
+                key=f"launch_access_archetype_{case_id}",
+                disabled=not can_edit,
+            )
+            if can_edit:
+                update_launch_assumption_record(case_id, str(archetype.get("Assumption ID", "")), {"Value": selected})
+        if strategy is not None:
+            pathway = st.text_area(
+                "Access Strategy & Pathway",
+                value=str(strategy.get("Value", "")),
+                key=f"launch_access_strategy_{case_id}",
+                disabled=not can_edit,
+                height=92,
+                help="Describe the expected funding and reimbursement pathway, the relative importance of government, private insurance and out-of-pocket access, and the main payer or policy dependencies.",
+            )
+            if can_edit:
+                update_launch_assumption_record(case_id, str(strategy.get("Assumption ID", "")), {"Value": pathway})
+        if eligibility is not None:
+            restrictions = st.text_area(
+                "Access Eligibility / Restrictions",
+                value=str(eligibility.get("Value", "")),
+                key=f"launch_access_eligibility_{case_id}",
+                disabled=not can_edit,
+                height=82,
+                help=launch_definition("Access Eligibility / Restrictions"),
+            )
+            st.caption("Examples: reimbursement indication, line of therapy, biomarker or prior-treatment criteria, payer and regional restrictions.")
+            if can_edit:
+                update_launch_assumption_record(case_id, str(eligibility.get("Assumption ID", "")), {"Value": restrictions})
+
+    st.markdown("### Price – Reach – Speed")
+    definition_columns = st.columns(3)
+    for column, name in zip(definition_columns, ["Price", "Reach", "Speed"]):
+        column.info(f"{name.upper()}\n\n{launch_definition(name)}")
+
+    refreshed = launch_assumptions(data, case)
+    plan_assumption = medical_assumption(refreshed, "Market Access Channel Plan")
+    if plan_assumption is None:
+        st.warning("The Market Access channel plan is unavailable for this case.")
+        return
+    product = launch_product(data.get("products", pd.DataFrame()), str(case.get("Product", "")))
+    plan = normalize_market_access_plan(plan_assumption.get("Value"), case_id, product)
+    updated_plan = deepcopy(plan)
+    channel_tabs = st.tabs(MARKET_ACCESS_CHANNELS)
+
+    with channel_tabs[0]:
+        government = deepcopy(plan["Government Reimbursement"])
+        government["Enabled"] = st.checkbox(
+            "Enable Government Reimbursement",
+            value=bool(government.get("Enabled", False)),
+            key=f"launch_access_enabled_{case_id}_government",
+            disabled=not can_edit,
+            help=launch_definition("Government Reimbursement"),
+        )
+        if government["Enabled"]:
+            st.caption(launch_definition("Federal / Regional / Municipal funding"))
+            level_columns = st.columns(3)
+            subchannels = deepcopy(government.get("Subchannels", {}))
+            for index, level in enumerate(GOVERNMENT_ACCESS_LEVELS):
+                subchannel = deepcopy(subchannels.get(level, {}))
+                subchannel["Enabled"] = level_columns[index].checkbox(
+                    level,
+                    value=bool(subchannel.get("Enabled", False)),
+                    key=f"launch_access_enabled_{case_id}_government_{index}",
+                    disabled=not can_edit,
+                )
+                subchannels[level] = subchannel
+            government["Use Common Government Price"] = st.checkbox(
+                "Use common Government price",
+                value=bool(government.get("Use Common Government Price", True)),
+                key=f"launch_access_common_price_{case_id}",
+                disabled=not can_edit,
+            )
+            if government["Use Common Government Price"]:
+                st.markdown("#### Common Government Price")
+                government.update(render_access_price_inputs(case_id, "government_common", government, can_edit))
+            for index, level in enumerate(GOVERNMENT_ACCESS_LEVELS):
+                if not bool(subchannels[level].get("Enabled", False)):
+                    continue
+                st.markdown(f"#### {level}")
+                subchannels[level] = render_access_path_inputs(
+                    case_id,
+                    f"government_{index}",
+                    subchannels[level],
+                    can_edit,
+                    launch_year,
+                    show_prices=not government["Use Common Government Price"],
+                    display_name=level,
+                )
+            government["Subchannels"] = subchannels
+        else:
+            st.caption("Government Reimbursement is not included in this case.")
+        updated_plan["Government Reimbursement"] = government
+
+    for tab, channel_name, key_name in zip(channel_tabs[1:], MARKET_ACCESS_CHANNELS[1:], ["private", "oop"]):
+        with tab:
+            channel = deepcopy(plan[channel_name])
+            channel["Enabled"] = st.checkbox(
+                f"Enable {channel_name}",
+                value=bool(channel.get("Enabled", False)),
+                key=f"launch_access_enabled_{case_id}_{key_name}",
+                disabled=not can_edit,
+                help=launch_definition(channel_name),
+            )
+            if channel["Enabled"]:
+                channel = render_access_path_inputs(
+                    case_id,
+                    key_name,
+                    channel,
+                    can_edit,
+                    launch_year,
+                    display_name=channel_name,
+                )
+                note_label = "Key insurer / coverage assumptions" if channel_name == "Private Insurance" else "Private access / affordability assumptions"
+                channel["Note"] = st.text_area(
+                    note_label,
+                    value=str(channel.get("Note", "")),
+                    key=f"launch_access_note_{case_id}_{key_name}",
+                    disabled=not can_edit,
+                    height=72,
+                )
+                if channel_name == "Out of Pocket":
+                    show_patient_price = st.checkbox(
+                        "Patient Price / Co-pay differs from modeled prices",
+                        value=bool(channel.get("Show Patient Price / Co-pay", False)),
+                        key=f"launch_access_patient_price_enabled_{case_id}",
+                        disabled=not can_edit,
+                    )
+                    channel["Show Patient Price / Co-pay"] = show_patient_price
+                    if show_patient_price:
+                        patient_prices = channel.get("Patient Price / Co-pay", {}) if isinstance(channel.get("Patient Price / Co-pay"), dict) else {}
+                        patient_columns = st.columns(5)
+                        channel["Patient Price / Co-pay"] = {
+                            year: safe_float(
+                                patient_columns[index].number_input(
+                                    f"Patient Price / Co-pay {year}",
+                                    min_value=0.0,
+                                    value=safe_float(patient_prices.get(year)),
+                                    key=f"launch_access_patient_price_{case_id}_{year}",
+                                    disabled=not can_edit,
+                                )
+                            )
+                            for index, year in enumerate(LAUNCH_YEARS)
+                        }
+            else:
+                st.caption(f"{channel_name} is not included in this case.")
+            updated_plan[channel_name] = channel
+
+    if can_edit:
+        update_launch_assumption_record(case_id, str(plan_assumption.get("Assumption ID", "")), {"Value": updated_plan})
+
+    metrics = market_access_year_metrics(updated_plan, launch_year)
+    reach_summary = pd.DataFrame(
+        [
+            {
+                "Metric": "Total Market Access Rate",
+                **{year: pct(metrics[year]["Raw Total Reach"]) for year in LAUNCH_YEARS},
+            }
+        ]
+    )
+    st.markdown("#### Integrated Access Impact")
+    st.table(reach_summary.set_index("Metric"))
+    exceeded = [year for year in LAUNCH_YEARS if safe_float(metrics[year]["Raw Total Reach"]) > 1.0]
+    if exceeded:
+        st.warning(f"Total Market Access Rate exceeds 100% in {', '.join(exceeded)}. Funding channels are treated as mutually exclusive; revise Reach to avoid patient double counting.")
+    model = calculate_launch_model(data, case, "Base")
+    funnel = model.get("funnel", pd.DataFrame())
+    if isinstance(funnel, pd.DataFrame) and not funnel.empty:
+        st.dataframe(
+            funnel[["Year", "Treated Patients", "Total Market Access Rate", "Accessible Patients"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+    channels = model.get("channels", pd.DataFrame())
+    if isinstance(channels, pd.DataFrame) and not channels.empty:
+        channel_view = channels.copy()
+        channel_view["Net Revenue"] = channel_view["Net Revenue"].map(money)
+        st.markdown("#### Revenue by Funding Channel")
+        st.dataframe(channel_view, use_container_width=True, hide_index=True)
+
+    st.markdown("### Needs My Alignment")
+    render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Market Access")
+    st.markdown("### Market Access Input Package")
+    render_launch_package_share(case_id, launch_assumptions(data, case, model), "Market Access", can_edit)
+
+
 def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], workspace: str) -> None:
     case_id = str(case.get("Launch Case ID", ""))
     assumptions = launch_assumptions(data, case)
@@ -6959,6 +7501,9 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
         return
     if workspace == "Medical":
         render_medical_workspace(case, data, assumptions)
+        return
+    if workspace == "Market Access":
+        render_market_access_workspace(case, data, assumptions)
         return
     owned = assumptions[(assumptions["Owner"].eq(workspace)) & (~assumptions["Calculated"].astype(bool))]
     st.markdown("### My Inputs")
