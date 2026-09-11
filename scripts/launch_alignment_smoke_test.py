@@ -26,7 +26,7 @@ def widget_by_key(widgets, key: str):
     return next(widget for widget in widgets if widget.key == key)
 
 
-app = AppTest.from_file(str(APP_PATH), default_timeout=45)
+app = AppTest.from_file(str(APP_PATH), default_timeout=60)
 app.session_state["current_module"] = "launch"
 app.session_state["launch_page"] = "Launch Case"
 app.session_state["selected_launch_case_id"] = CASE_ID

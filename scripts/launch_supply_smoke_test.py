@@ -59,9 +59,8 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
     assert not removed.intersection(names), f"{case_id}: legacy Supply assumptions remain {removed.intersection(names)}"
 
     cogs = next(row for row in records if row.get("Assumption Name") == "COGS per Unit")
-    average_fte = next(row for row in records if row.get("Assumption Name") == "Average Cost per FTE")
     assert "Supply / Operations" not in str(cogs.get("Validators", ""))
-    assert "Supply / Operations" not in str(average_fte.get("Validators", ""))
+    assert "Average Cost per FTE" not in names
 
     incoming = [
         row

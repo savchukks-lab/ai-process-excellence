@@ -4431,6 +4431,17 @@ LAUNCH_DEFINITIONS = {
     "Manufacturing / Supply Constraint": "A known manufacturing or supply limitation that could materially affect launch timing or available volume.",
     "Maximum Available Units": "The optional annual supply ceiling used only when physical capacity may constrain launch demand.",
     "Supply / Warehouse Capacity": "Whether the supply, warehouse and distribution network can accommodate the planned launch volume.",
+    "COGS per Unit": "Direct product cost recognized per sellable unit.",
+    "Fully Loaded Cost per FTE": "Annual employer cost of one dedicated FTE, including salary, employer taxes, benefits and other directly attributable employment costs.",
+    "Personnel Cost": "Functional FTE multiplied by the Finance-owned fully loaded cost per FTE, including annual escalation.",
+    "Gross Profit": "Net Revenue less direct product cost.",
+    "Gross Margin": "Gross Profit expressed as a percentage of Net Revenue.",
+    "Gross Margin %": "Gross Profit expressed as a percentage of Net Revenue.",
+    "Operating Profit": "Gross Profit less direct and incremental launch operating expenses.",
+    "Operating Margin": "Operating Profit expressed as a percentage of Net Revenue.",
+    "Operating Margin %": "Operating Profit expressed as a percentage of Net Revenue.",
+    "Financial Benchmark": "An independent corporate reference forecast used for comparison and management challenge; it does not drive the launch model.",
+    "Benchmark Variance": "The Launch Case result less the selected corporate benchmark, shown in absolute and percentage terms.",
 }
 
 
@@ -4598,16 +4609,14 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
             },
             "sales_resources": {"Sales Force HC / FTE": launch_year_values(0, "By Year", [8, 12, 14, 16, 16]), "Target Accounts / Centers": 240, "Coverage %": 0.68, "Reach": "Broad account reach", "Frequency": "Monthly priority touchpoints"},
             "personnel": {
-                "Marketing": {"FTE": launch_year_values(2.0), "Average Cost per FTE": 145_000},
-                "Sales": {"FTE": None, "Average Cost per FTE": 135_000},
-                "Medical": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 175_000},
-                "Market Access": {"FTE": launch_year_values(1.0), "Average Cost per FTE": 160_000},
-                "Regulatory": {"FTE": launch_year_values(0.5), "Average Cost per FTE": 155_000},
-                "Supply / Operations": {"FTE": launch_year_values(0), "Average Cost per FTE": 130_000},
+                "Marketing": {"Role": "Product Manager", "FTE": launch_year_values(2.0), "Fully Loaded Cost per FTE": 145_000, "Annual Escalation %": 0.04},
+                "Sales": {"Role": "KAM / Sales FTE", "FTE": None, "Fully Loaded Cost per FTE": 135_000, "Annual Escalation %": 0.04},
+                "Medical": {"Role": "MSL / Medical FTE", "FTE": launch_year_values(1.5), "Fully Loaded Cost per FTE": 175_000, "Annual Escalation %": 0.04},
             },
             "projects": [
                 {"Project / Initiative Name": "Account conversion campaign", "Function": "Marketing", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y5", "Owner": "Marketing", "Finance Alignment Status": "Draft", "Y1": 420_000, "Y2": 260_000, "Y3": 160_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support listing conversion and broad awareness."},
                 {"Project / Initiative Name": "Field enablement and coverage setup", "Function": "Sales", "Category": "Recurring OPEX", "Start / End": "Y1-Y5", "Owner": "Sales", "Finance Alignment Status": "Draft", "Y1": 280_000, "Y2": 220_000, "Y3": 180_000, "Y4": 160_000, "Y5": 160_000, "Rationale / Business Need": "Prepare target account coverage and launch execution."},
+                {"Project / Initiative Name": "Medical launch education", "Function": "Medical", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y3", "Owner": "Medical", "Finance Alignment Status": "Draft", "Y1": 240_000, "Y2": 180_000, "Y3": 100_000, "Y4": 0, "Y5": 0, "Rationale / Business Need": "Prepare scientific exchange and evidence communication for launch."},
                 {"Project / Initiative Name": "Access affordability evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y5", "Owner": "Market Access", "Finance Alignment Status": "Draft", "Y1": 180_000, "Y2": 120_000, "Y3": 80_000, "Y4": 60_000, "Y5": 60_000, "Rationale / Business Need": "Support OOP affordability and payer discussions."},
             ],
         }
@@ -4648,14 +4657,13 @@ def launch_default_model_inputs(case_id: str, case: pd.Series, product: dict[str
         },
         "sales_resources": {"Sales Force HC / FTE": launch_year_values(0, "By Year", [4, 6, 8, 9, 10]), "Target Accounts / Centers": 85, "Coverage %": 0.55, "Reach": "Specialty center focus", "Frequency": "Biweekly launch-phase engagement"},
         "personnel": {
-            "Marketing": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 150_000},
-            "Sales": {"FTE": None, "Average Cost per FTE": 140_000},
-            "Medical": {"FTE": launch_year_values(2.0), "Average Cost per FTE": 185_000},
-            "Market Access": {"FTE": launch_year_values(1.5), "Average Cost per FTE": 165_000},
-            "Regulatory": {"FTE": launch_year_values(0.8), "Average Cost per FTE": 160_000},
-            "Supply / Operations": {"FTE": launch_year_values(0), "Average Cost per FTE": 135_000},
+            "Marketing": {"Role": "Product Manager", "FTE": launch_year_values(1.5), "Fully Loaded Cost per FTE": 150_000, "Annual Escalation %": 0.04},
+            "Sales": {"Role": "KAM / Sales FTE", "FTE": None, "Fully Loaded Cost per FTE": 140_000, "Annual Escalation %": 0.04},
+            "Medical": {"Role": "MSL / Medical FTE", "FTE": launch_year_values(2.0), "Fully Loaded Cost per FTE": 185_000, "Annual Escalation %": 0.04},
         },
         "projects": [
+            {"Project / Initiative Name": "Specialty launch campaign", "Function": "Marketing", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y3", "Owner": "Marketing", "Finance Alignment Status": "Draft", "Y1": 360_000, "Y2": 240_000, "Y3": 120_000, "Y4": 0, "Y5": 0, "Rationale / Business Need": "Build specialist awareness and account readiness for launch."},
+            {"Project / Initiative Name": "Specialty account activation", "Function": "Sales", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y2", "Owner": "Sales", "Finance Alignment Status": "Draft", "Y1": 220_000, "Y2": 140_000, "Y3": 0, "Y4": 0, "Y5": 0, "Rationale / Business Need": "Prepare priority centers and field execution for initial access."},
             {"Project / Initiative Name": "Reimbursement dossier and access evidence", "Function": "Market Access", "Category": "One-off Launch OPEX", "Start / End": "Y1-Y5", "Owner": "Market Access", "Finance Alignment Status": "Draft", "Y1": 650_000, "Y2": 340_000, "Y3": 180_000, "Y4": 120_000, "Y5": 120_000, "Rationale / Business Need": "Support payer assessment and reimbursement milestone."},
             {"Project / Initiative Name": "Specialist education program", "Function": "Medical", "Category": "Recurring OPEX", "Start / End": "Y1-Y5", "Owner": "Medical", "Finance Alignment Status": "Draft", "Y1": 420_000, "Y2": 360_000, "Y3": 300_000, "Y4": 240_000, "Y5": 220_000, "Rationale / Business Need": "Prepare clinical pathway and evidence readiness."},
             {"Project / Initiative Name": "Launch supply readiness", "Function": "Supply / Operations", "Category": "Inventory Build", "Start / End": "Y1-Y2", "Owner": "Supply / Operations", "Finance Alignment Status": "Draft", "Y1": 500_000, "Y2": 250_000, "Y3": 0, "Y4": 0, "Y5": 0, "Rationale / Business Need": "Initial inventory build displayed separately from operating profit."},
@@ -4772,6 +4780,7 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
         assumption_type="MANAGEMENT / FUNCTIONAL",
         rationale="Competitive events considered in the commercial adoption plan.",
     )
+    add("Marketing", "Launch Resources", "Marketing FTE", "", "Yearly Number", "FTE", yearly=inputs["personnel"]["Marketing"]["FTE"], rationale="Dedicated Product Manager capacity required for launch execution.")
 
     sales = inputs["sales_resources"]
     sales_rationale = f"{sales['Reach']}. {sales['Frequency']}. Field deployment ramps with launch adoption."
@@ -4813,6 +4822,7 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("Medical", "Key Clinical Value", "Safety Summary", "No new safety limitation is expected to prevent use in the defined target population.", "Text", validators="Regulatory")
     add("Medical", "Key Clinical Value", "Overall Clinical Value", "The product may provide meaningful clinical value for eligible patients while longer-term and comparative evidence continue to mature.", "Text", validators="Marketing, Regulatory")
     add("Medical", "Key Clinical Value", "Key Clinical Evidence Gap / Risk", "Long-term evidence maturity should be monitored through launch readiness.", "Text", validators="Marketing, Regulatory", rationale="Primary evidence uncertainty that may affect positioning or readiness.")
+    add("Medical", "Launch Resources", "Medical FTE", "", "Yearly Number", "FTE", yearly=inputs["personnel"]["Medical"]["FTE"], rationale="Dedicated MSL / Medical capacity required for launch-specific scientific work.")
 
     add("Market Access", "Access Strategy & Eligibility", "Access Archetype", case.get("Access Archetype", "Reimbursement Dependent"), "Choice", validators="Marketing, Finance", options=["Reimbursement Dependent", "Mixed Access", "Predominantly OOP / Broad Access"])
     add("Market Access", "Access Strategy & Eligibility", "Access Strategy & Pathway", "Define the expected funding pathway, payer dependencies and sequencing across enabled access channels.", "Text", validators="Marketing")
@@ -4864,9 +4874,12 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("Supply / Operations", "Supply / Warehouse Capacity", "Capacity / Logistics Issue", supply.get("Capacity / Logistics Issue", ""), "Text", validators="Sales")
     add("Supply / Operations", "Supply / Warehouse Capacity", "Capacity Impact / Comment", supply.get("Impact / Comment", ""), "Text", validators="Sales")
 
-    add("Finance", "Unit Economics", "COGS per Unit", product.get("Standard Cost", 0), "Number", "Local currency")
-    add("Finance", "Personnel", "Average Cost per FTE", 150_000, "Number", "Local currency", "Marketing, Sales, Medical, Market Access, Regulatory")
-    add("Finance", "Investment", "Launch Investment Classification", "One-off Launch OPEX", "Choice", validators="Marketing", options=["Recurring OPEX", "One-off Launch OPEX", "CAPEX", "Inventory Build"])
+    add("Finance", "Product Economics", "COGS per Unit", product.get("Standard Cost", 0), "Yearly Number", "Local currency / unit", "Marketing", launch_year_values(safe_float(product.get("Standard Cost", 0))), source="Product cost reference", rationale="Direct product cost recognized per sellable unit.")
+    records[-1]["Forecast Mode"] = "Constant Across Forecast"
+    for function, role_name in [("Marketing", "Product Manager"), ("Sales", "KAM / Sales FTE"), ("Medical", "MSL / Medical FTE")]:
+        resource = inputs["personnel"][function]
+        add("Finance", "Personnel Cost Assumptions", f"{role_name} Fully Loaded Cost per FTE", resource["Fully Loaded Cost per FTE"], "Number", "Local currency / FTE", function)
+        add("Finance", "Personnel Cost Assumptions", f"{role_name} Annual Escalation %", resource["Annual Escalation %"], "Percentage", "%", function)
     add("System", "Calculated", "Clinically Addressable Population", "Calculated", "Calculated", "Patients", calculated=True)
     add("System", "Calculated", "Net Revenue", "Calculated", "Calculated", "Local currency", calculated=True)
     add("System", "Calculated", "Operating Profit", "Calculated", "Calculated", "Local currency", calculated=True)
@@ -5047,10 +5060,18 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
     updated["supply"]["Warehouse Capacity Status"] = str(value("Supply / Warehouse Capacity Status", updated["supply"].get("Warehouse Capacity Status", "Yes")))
     updated["supply"]["Capacity / Logistics Issue"] = str(value("Capacity / Logistics Issue", updated["supply"].get("Capacity / Logistics Issue", "")))
     updated["supply"]["Impact / Comment"] = str(value("Capacity Impact / Comment", updated["supply"].get("Impact / Comment", "")))
-    updated["cogs_per_unit"] = safe_float(value("COGS per Unit", 0))
-    average_cost = safe_float(value("Average Cost per FTE", 150_000))
-    for resource in updated["personnel"].values():
-        resource["Average Cost per FTE"] = average_cost
+    cogs_default = safe_float(updated.get("cogs_per_unit", 0)) or 0.0
+    updated["cogs_per_unit"] = years("COGS per Unit", launch_year_values(cogs_default))
+    updated["personnel"]["Marketing"]["FTE"] = years("Marketing FTE", updated["personnel"]["Marketing"]["FTE"])
+    updated["personnel"]["Medical"]["FTE"] = years("Medical FTE", updated["personnel"]["Medical"]["FTE"])
+    for function, role_name in [("Marketing", "Product Manager"), ("Sales", "KAM / Sales FTE"), ("Medical", "MSL / Medical FTE")]:
+        resource = updated["personnel"][function]
+        resource["Fully Loaded Cost per FTE"] = safe_float(
+            value(f"{role_name} Fully Loaded Cost per FTE", resource.get("Fully Loaded Cost per FTE", 0))
+        )
+        resource["Annual Escalation %"] = safe_float(
+            value(f"{role_name} Annual Escalation %", resource.get("Annual Escalation %", 0))
+        )
     return updated
 
 
@@ -5332,6 +5353,11 @@ def get_launch_projects(case_id: str, default_projects: list[dict[str, object]])
     key = launch_projects_state_key(case_id)
     if key not in st.session_state:
         st.session_state[key] = [dict(row) for row in default_projects]
+    else:
+        existing_names = {str(row.get("Project / Initiative Name", "")) for row in st.session_state[key] if isinstance(row, dict)}
+        missing_defaults = [dict(row) for row in default_projects if str(row.get("Project / Initiative Name", "")) not in existing_names]
+        if missing_defaults:
+            st.session_state[key] = [dict(row) for row in st.session_state[key] if isinstance(row, dict)] + missing_defaults
     prepared_projects = []
     for row in st.session_state[key]:
         prepared = dict(row)
@@ -5341,6 +5367,8 @@ def get_launch_projects(case_id: str, default_projects: list[dict[str, object]])
         prepared.setdefault("Source", "Functional launch plan")
         prepared.setdefault("Confidence", "Medium")
         prepared["Finance Alignment Status"] = prepared.pop("Finance Validation Status", prepared.get("Finance Alignment Status", "Draft"))
+        prepared.setdefault("Finance Alignment Comment", "")
+        prepared.setdefault("Finance Alignment History", [])
         prepared_projects.append(prepared)
     if prepared_projects != st.session_state[key]:
         st.session_state[key] = prepared_projects
@@ -5351,7 +5379,105 @@ def set_launch_projects(case_id: str, projects: pd.DataFrame) -> None:
     st.session_state[launch_projects_state_key(case_id)] = projects.fillna("").to_dict("records")
 
 
-def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scenario: str = "Base") -> dict[str, pd.DataFrame | dict[str, object]]:
+def update_launch_project_alignment(case_id: str, project_name: str, status: str, comment: str) -> None:
+    key = launch_projects_state_key(case_id)
+    projects = [deepcopy(row) for row in st.session_state.get(key, []) if isinstance(row, dict)]
+    for index, project in enumerate(projects):
+        if str(project.get("Project / Initiative Name", "")) != project_name:
+            continue
+        history = [deepcopy(item) for item in project.get("Finance Alignment History", []) if isinstance(item, dict)]
+        history.append(
+            {
+                "Role": launch_user_workstream(),
+                "Action": status,
+                "Comment": comment.strip(),
+                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        projects[index] = {
+            **project,
+            "Finance Alignment Status": status,
+            "Finance Alignment Comment": comment.strip(),
+            "Finance Alignment History": history,
+        }
+        st.session_state[key] = projects
+        return
+
+
+def launch_finance_benchmark_state_key(case_id: str) -> str:
+    return f"launch_finance_benchmark_{case_id}"
+
+
+def get_launch_finance_benchmark(case_id: str, model: dict[str, object]) -> dict[str, object]:
+    key = launch_finance_benchmark_state_key(case_id)
+    if key not in st.session_state:
+        pnl = model.get("pnl", pd.DataFrame())
+        indexed = pnl.set_index("Metric") if isinstance(pnl, pd.DataFrame) and not pnl.empty else pd.DataFrame()
+        st.session_state[key] = {
+            "Benchmark Source": "Latest LRF",
+            "Benchmark Version / Date": "LRF 2026 Q3",
+            "As Of Date": date(2026, 6, 30).isoformat(),
+            "Short Comment / Rationale": "Corporate reference forecast retained independently for launch-case comparison.",
+            "Revenue Enabled": True,
+            "Gross Profit Enabled": False,
+            "Gross Margin Enabled": False,
+            "Revenue": {year: safe_float(indexed.loc["Net Revenue", year]) * 0.90 if "Net Revenue" in indexed.index else 0.0 for year in LAUNCH_YEARS},
+            "Gross Profit": {year: safe_float(indexed.loc["Gross Profit", year]) * 0.90 if "Gross Profit" in indexed.index else 0.0 for year in LAUNCH_YEARS},
+            "Gross Margin %": {year: max(0.0, safe_float(indexed.loc["Gross Margin %", year]) - 0.02) if "Gross Margin %" in indexed.index else 0.0 for year in LAUNCH_YEARS},
+        }
+    return deepcopy(st.session_state[key])
+
+
+def set_launch_finance_benchmark(case_id: str, benchmark: dict[str, object]) -> None:
+    st.session_state[launch_finance_benchmark_state_key(case_id)] = deepcopy(benchmark)
+
+
+def launch_personnel_cost_model(inputs: dict[str, object]) -> tuple[pd.DataFrame, dict[str, dict[str, float]], pd.DataFrame]:
+    sales_fte = inputs["sales_resources"]["Sales Force HC / FTE"]
+    personnel_rows = []
+    trace_rows = []
+    costs_by_function: dict[str, dict[str, float]] = {}
+    for function in ["Marketing", "Sales", "Medical"]:
+        resource = inputs["personnel"][function]
+        role_name = str(resource.get("Role", function))
+        fte_values = sales_fte if function == "Sales" else resource.get("FTE", launch_year_values(0))
+        base_cost = safe_float(resource.get("Fully Loaded Cost per FTE"))
+        escalation = safe_float(resource.get("Annual Escalation %"))
+        annual_costs = {}
+        for index, year in enumerate(LAUNCH_YEARS):
+            cost_per_fte = base_cost * ((1 + escalation) ** index)
+            fte = safe_float(fte_values.get(year))
+            annual_costs[year] = fte * cost_per_fte
+            trace_rows.append(
+                {
+                    "Function": function,
+                    "Role": role_name,
+                    "Year": year,
+                    "FTE": fte,
+                    "Cost per FTE": cost_per_fte,
+                    "Personnel Cost": annual_costs[year],
+                }
+            )
+        costs_by_function[function] = annual_costs
+        personnel_rows.append(
+            {
+                "Role": role_name,
+                "Functional Owner": function,
+                "Y1 FTE": safe_float(fte_values.get("Y1")),
+                "Fully Loaded Cost per FTE": base_cost,
+                "Annual Cost Escalation %": escalation,
+                **{year: annual_costs[year] for year in LAUNCH_YEARS},
+            }
+        )
+    return pd.DataFrame(personnel_rows), costs_by_function, pd.DataFrame(trace_rows)
+
+
+def calculate_launch_model(
+    data: dict[str, pd.DataFrame],
+    case: pd.Series,
+    scenario: str = "Base",
+    include_scenarios: bool = True,
+) -> dict[str, pd.DataFrame | dict[str, object]]:
     products = data.get("products", pd.DataFrame())
     product = launch_product(products, str(case.get("Product", "")))
     inputs = launch_default_model_inputs(str(case.get("Launch Case ID", "")), case, product)
@@ -5369,7 +5495,6 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
     utilization = inputs["utilization"]
     access_plan = inputs.get("access_plan", {})
     access_metrics = market_access_year_metrics(access_plan, launch_year, adjustments)
-    unit_cost = (safe_float(inputs.get("cogs_per_unit")) or safe_float(product.get("Standard Cost"))) * adjustments["COGS"]
     archetype = str(inputs.get("access_archetype") or case.get("Access Archetype", ""))
     planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
     planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
@@ -5408,6 +5533,10 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         sellable_units = min(demand_units, max(0.0, max_units)) if capacity_constrained else demand_units
         year_access = access_metrics.get(year, {})
         realized_net_price = safe_float(year_access.get("Weighted Net Price"))
+        unit_cost = (
+            safe_float(inputs.get("cogs_per_unit", {}).get(year))
+            or safe_float(product.get("Standard Cost"))
+        ) * adjustments["COGS"]
         revenue = sellable_units * realized_net_price
         total_reach = safe_float(year_access.get("Total Reach"))
         for channel in year_access.get("Rows", []):
@@ -5452,16 +5581,7 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
     channels = pd.DataFrame(channel_rows)
     realized_net_price = safe_float(access_metrics.get("Y5", {}).get("Weighted Net Price"))
 
-    sales_fte = inputs["sales_resources"]["Sales Force HC / FTE"]
-    personnel_records = []
-    for function, resource in inputs["personnel"].items():
-        fte_values = sales_fte if function == "Sales" and resource.get("FTE") is None else resource.get("FTE", launch_year_values(0))
-        cost_per_fte = safe_float(resource.get("Average Cost per FTE"))
-        row = {"Function": function, "Type": "Personnel", "Average Cost per FTE": money(cost_per_fte)}
-        for year in LAUNCH_YEARS:
-            row[year] = safe_float(fte_values.get(year)) * cost_per_fte
-        personnel_records.append(row)
-    personnel = pd.DataFrame(personnel_records)
+    personnel, personnel_costs, personnel_trace = launch_personnel_cost_model(inputs)
     projects, project_opex, excluded_investment = launch_project_opex(get_launch_projects(str(case.get("Launch Case ID", "")), inputs["projects"]))
 
     pnl_rows = []
@@ -5476,15 +5596,10 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         "Sales Projects",
         "Medical Personnel",
         "Medical Projects",
-        "Market Access Personnel",
-        "Market Access Projects",
-        "Regulatory incremental OPEX",
-        "Supply incremental OPEX",
-        "Other approved functional OPEX",
+        "Other Approved Incremental Launch OPEX",
         "Total OPEX",
         "Operating Profit",
         "Operating Margin %",
-        "CAPEX / Inventory Build",
     ]:
         pnl_rows.append({"Metric": metric, **{year: 0.0 for year in LAUNCH_YEARS}})
     pnl = pd.DataFrame(pnl_rows).set_index("Metric")
@@ -5497,31 +5612,26 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         pnl.loc["Gross Profit", year] = gross_profit
         pnl.loc["Gross Margin %", year] = gross_profit / revenue if revenue else 0
         total_opex = 0.0
-        for _, row in personnel.iterrows():
-            function = str(row.get("Function", ""))
-            cost = safe_float(row.get(year))
-            metric = f"{function} Personnel" if function not in {"Regulatory", "Supply / Operations"} else f"{function.split(' / ')[0]} incremental OPEX"
-            if metric in pnl.index:
-                pnl.loc[metric, year] += -cost
-                total_opex += cost
+        for function, annual_costs in personnel_costs.items():
+            cost = safe_float(annual_costs.get(year))
+            pnl.loc[f"{function} Personnel", year] = -cost
+            total_opex += cost
         for function, values in project_opex.items():
             cost = safe_float(values.get(year))
-            metric = f"{function} Projects" if function not in {"Regulatory", "Supply / Operations"} else f"{function.split(' / ')[0]} incremental OPEX"
+            metric = f"{function} Projects" if function in {"Marketing", "Sales", "Medical"} else "Other Approved Incremental Launch OPEX"
             if metric in pnl.index:
                 pnl.loc[metric, year] += -cost
-            else:
-                pnl.loc["Other approved functional OPEX", year] += -cost
             total_opex += cost
         pnl.loc["Total OPEX", year] = -total_opex
         pnl.loc["Operating Profit", year] = gross_profit - total_opex
         pnl.loc["Operating Margin %", year] = (gross_profit - total_opex) / revenue if revenue else 0
-        pnl.loc["CAPEX / Inventory Build", year] = excluded_investment.get(year, 0.0)
     pnl = pnl.reset_index()
 
     scenario_records = []
-    for scenario_name in LAUNCH_SCENARIOS:
-        scenario_model = calculate_launch_model_no_scenarios(data, case, scenario_name)
-        scenario_records.append(scenario_model)
+    if include_scenarios:
+        for scenario_name in LAUNCH_SCENARIOS:
+            scenario_model = calculate_launch_model_no_scenarios(data, case, scenario_name)
+            scenario_records.append(scenario_model)
 
     return {
         "inputs": inputs,
@@ -5531,7 +5641,9 @@ def calculate_launch_model(data: dict[str, pd.DataFrame], case: pd.Series, scena
         "channels": channels,
         "access_metrics": access_metrics,
         "personnel": personnel,
+        "personnel_trace": personnel_trace,
         "projects": projects,
+        "excluded_investment": excluded_investment,
         "pnl": pnl,
         "scenario_summary": pd.DataFrame(scenario_records),
         "product": product,
@@ -5557,7 +5669,6 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
     market_share = inputs["market_share"]
     utilization = inputs["utilization"]
     access_metrics = market_access_year_metrics(inputs.get("access_plan", {}), launch_year, adjustments)
-    unit_cost = (safe_float(inputs.get("cogs_per_unit")) or safe_float(product.get("Standard Cost"))) * adjustments["COGS"]
     planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
     planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
     commercial_gate_date = max(
@@ -5572,7 +5683,7 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
     y5_op = 0.0
     cumulative_revenue = 0.0
     cumulative_op = 0.0
-    sales_fte = inputs["sales_resources"]["Sales Force HC / FTE"]
+    _, personnel_costs, _ = launch_personnel_cost_model(inputs)
     project_df, project_opex, _ = launch_project_opex(get_launch_projects(str(case.get("Launch Case ID", "")), inputs["projects"]))
     for index, year in enumerate(LAUNCH_YEARS):
         funnel_row = funnel[funnel["Year"].eq(year)].iloc[0]
@@ -5596,12 +5707,15 @@ def calculate_launch_model_no_scenarios(data: dict[str, pd.DataFrame], case: pd.
         )
         sellable = min(demand_units, max(0.0, max_units)) if capacity_constrained else demand_units
         realized_net_price = safe_float(access_metrics.get(year, {}).get("Weighted Net Price"))
+        unit_cost = (
+            safe_float(inputs.get("cogs_per_unit", {}).get(year))
+            or safe_float(product.get("Standard Cost"))
+        ) * adjustments["COGS"]
         revenue = sellable * realized_net_price
         gross_profit = revenue - sellable * unit_cost
         opex = 0.0
-        for function, resource in inputs["personnel"].items():
-            fte_values = sales_fte if function == "Sales" and resource.get("FTE") is None else resource.get("FTE", launch_year_values(0))
-            opex += safe_float(fte_values.get(year)) * safe_float(resource.get("Average Cost per FTE"))
+        for annual_costs in personnel_costs.values():
+            opex += safe_float(annual_costs.get(year))
         for values in project_opex.values():
             opex += safe_float(values.get(year))
         operating_profit = gross_profit - opex
@@ -6590,7 +6704,6 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
             "Population-weighted Geographic Coverage %",
             "Target Account / Center Coverage %",
             "Target Accounts / Centers",
-            "Launch Investment Classification",
         },
         "Sales": {"Market Share", "Competitive Landscape"},
         "Medical": {"Expected Label / Indication", "Eligibility Restrictions"},
@@ -6608,6 +6721,7 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
             "Key Clinical Evidence Gap / Risk",
         },
         "Supply / Operations": {"Market Share"},
+        "Finance": {"Market Access Channel Plan"},
     }
     validators_mask = assumptions["Validators"].astype(str).map(lambda value: workspace in split_validators(value))
     queue = assumptions[validators_mask & ~assumptions["Owner"].eq(workspace)]
@@ -6738,12 +6852,12 @@ def render_marketing_workspace(case: pd.Series, data: dict[str, pd.DataFrame], a
     if not population.empty:
         render_population_reference(case_id, population.iloc[0])
     st.markdown("### My Inputs")
-    owned_names = {"Market Share", "Competitive Landscape"}
+    owned_names = {"Market Share", "Competitive Landscape", "Marketing FTE"}
     owned = assumptions[assumptions["Assumption Name"].isin(owned_names) & assumptions["Owner"].eq("Marketing")]
     for _, assumption in owned.iterrows():
         with st.container(border=True):
             render_launch_assumption_input(case_id, assumption)
-    model = calculate_launch_model(data, case, "Base")
+    model = calculate_launch_model(data, case, "Base", include_scenarios=False)
     refreshed_assumptions = launch_assumptions(data, case, model)
     st.markdown("### Launch Funnel")
     st.caption("Marketing sees the integrated funnel while each assumption remains controlled by its owner and alignment partners.")
@@ -6753,7 +6867,7 @@ def render_marketing_workspace(case: pd.Series, data: dict[str, pd.DataFrame], a
     st.markdown("### Marketing Input Package")
     render_launch_package_share(
         case_id,
-        launch_assumptions(data, case, calculate_launch_model(data, case, "Base")),
+        launch_assumptions(data, case, calculate_launch_model(data, case, "Base", include_scenarios=False)),
         "Marketing",
         launch_user_workstream() == "Marketing",
     )
@@ -6883,7 +6997,7 @@ def render_sales_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assum
         if can_edit:
             for _, assumption in coverage.iterrows():
                 update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Rationale / Comment": rationale})
-    model = calculate_launch_model(data, case, "Base")
+    model = calculate_launch_model(data, case, "Base", include_scenarios=False)
     st.markdown("### Needs My Alignment")
     render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Sales")
     st.markdown("### Sales Input Package")
@@ -7226,11 +7340,17 @@ def render_medical_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
     clinical_value = clinical_value[clinical_value["Category"].eq("Key Clinical Value")]
     render_medical_key_clinical_value(case_id, clinical_value, can_edit)
 
+    medical_fte = medical_assumption(launch_assumptions(data, case), "Medical FTE")
+    if medical_fte is not None:
+        st.markdown("### Launch Resource")
+        with st.container(border=True):
+            render_launch_assumption_input(case_id, medical_fte)
+
     st.markdown("### Needs My Alignment")
-    render_launch_validation_queue(case_id, launch_assumptions(data, case, calculate_launch_model(data, case, "Base")), "Medical")
+    render_launch_validation_queue(case_id, launch_assumptions(data, case, calculate_launch_model(data, case, "Base", include_scenarios=False)), "Medical")
 
     st.markdown("### Medical Input Package")
-    medical_package = launch_assumptions(data, case, calculate_launch_model(data, case, "Base"))
+    medical_package = launch_assumptions(data, case, calculate_launch_model(data, case, "Base", include_scenarios=False))
     medical_package = medical_package[
         medical_package["Workstream"].eq("Medical")
         | medical_package["Assumption Name"].isin(["Theoretical Units per Patient", "Adjusted Units per Patient"])
@@ -7572,7 +7692,7 @@ def render_market_access_workspace(case: pd.Series, data: dict[str, pd.DataFrame
     exceeded = [year for year in LAUNCH_YEARS if safe_float(metrics[year]["Raw Total Reach"]) > 1.0]
     if exceeded:
         st.warning(f"Total Market Access Rate exceeds 100% in {', '.join(exceeded)}. Funding channels are treated as mutually exclusive; revise Reach to avoid patient double counting.")
-    model = calculate_launch_model(data, case, "Base")
+    model = calculate_launch_model(data, case, "Base", include_scenarios=False)
     funnel = model.get("funnel", pd.DataFrame())
     if isinstance(funnel, pd.DataFrame) and not funnel.empty:
         st.dataframe(
@@ -7731,7 +7851,7 @@ def render_regulatory_workspace(case: pd.Series, data: dict[str, pd.DataFrame], 
                 if assumption is not None:
                     update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Value": value})
 
-    model = calculate_launch_model(data, case, "Base")
+    model = calculate_launch_model(data, case, "Base", include_scenarios=False)
     refreshed = launch_assumptions(data, case, model)
     st.markdown("### Needs My Alignment")
     render_launch_validation_queue(case_id, refreshed, "Regulatory")
@@ -7875,7 +7995,7 @@ def render_supply_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assu
                 if assumption is not None:
                     update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), values)
 
-        model = calculate_launch_model(data, case, "Base")
+        model = calculate_launch_model(data, case, "Base", include_scenarios=False)
         forecast = model.get("forecast", pd.DataFrame())
         if constrained and use_capacity_limit and isinstance(forecast, pd.DataFrame) and not forecast.empty:
             comparison = forecast[["Year", "Demand Units", "Sellable Units"]].copy()
@@ -7939,12 +8059,371 @@ def render_supply_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assu
                 if assumption is not None:
                     update_launch_assumption_record(case_id, str(assumption.get("Assumption ID", "")), {"Value": value})
 
-    refreshed_model = calculate_launch_model(data, case, "Base")
+    refreshed_model = calculate_launch_model(data, case, "Base", include_scenarios=False)
     refreshed = launch_assumptions(data, case, refreshed_model)
     st.markdown("### Needs My Alignment")
     render_launch_validation_queue(case_id, refreshed, "Supply / Operations")
     st.markdown("### Supply Input Package")
     render_launch_package_share(case_id, refreshed, "Supply / Operations", can_edit)
+
+
+def render_finance_pnl(pnl: pd.DataFrame) -> None:
+    if pnl.empty:
+        st.info("The integrated 5-Year P&L is not available for this case.")
+        return
+    major_rows = {"Net Revenue", "Gross Profit", "Total OPEX", "Operating Profit"}
+    secondary_rows = {"Gross Margin %", "Operating Margin %"}
+    always_show = major_rows | secondary_rows | {"COGS"}
+    visible = pnl[
+        pnl["Metric"].isin(always_show)
+        | pnl[LAUNCH_YEARS].apply(lambda row: any(abs(safe_float(value)) > 1e-9 for value in row), axis=1)
+    ]
+    header = "".join(f"<th style='padding:9px 12px;text-align:right;border-bottom:1px solid #d8dee8'>{escape(column)}</th>" for column in ["Metric", *LAUNCH_YEARS])
+    rows = []
+    for index, (_, row) in enumerate(visible.iterrows()):
+        metric = str(row.get("Metric", ""))
+        background = "#f7f9fc" if index % 2 else "#ffffff"
+        weight = "700" if metric in major_rows else "500"
+        font_style = "italic" if metric in secondary_rows else "normal"
+        color = "#536174" if metric in secondary_rows else "#172033"
+        values = [pct(row.get(year)) if metric in secondary_rows else money(row.get(year)) for year in LAUNCH_YEARS]
+        cells = f"<td style='padding:9px 12px;font-weight:{weight};font-style:{font_style};color:{color}'>{launch_definition_label(metric)}</td>"
+        cells += "".join(f"<td style='padding:9px 12px;text-align:right;font-weight:{weight};font-style:{font_style};color:{color}'>{escape(value)}</td>" for value in values)
+        rows.append(f"<tr style='background:{background}'>{cells}</tr>")
+    st.markdown(
+        "<table style='width:100%;border-collapse:collapse;border:1px solid #d8dee8;border-radius:6px;font-size:0.92rem'>"
+        f"<thead><tr style='background:#eef2f7'>{header}</tr></thead><tbody>{''.join(rows)}</tbody></table>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_finance_benchmark_comparison(model: dict[str, object], benchmark: dict[str, object]) -> None:
+    pnl = model.get("pnl", pd.DataFrame())
+    if not isinstance(pnl, pd.DataFrame) or pnl.empty:
+        return
+    indexed = pnl.set_index("Metric")
+    source = str(benchmark.get("Benchmark Source", "Benchmark"))
+    metric_config = [
+        ("Revenue", "Net Revenue", "Revenue Enabled", False),
+        ("Gross Profit", "Gross Profit", "Gross Profit Enabled", False),
+        ("Gross Margin %", "Gross Margin %", "Gross Margin Enabled", True),
+    ]
+    for benchmark_name, model_name, enabled_key, is_percentage in metric_config:
+        if not bool(benchmark.get(enabled_key, False)) or model_name not in indexed.index:
+            continue
+        values = benchmark.get(benchmark_name, {}) if isinstance(benchmark.get(benchmark_name), dict) else {}
+        rows = []
+        for year in LAUNCH_YEARS:
+            launch_value = safe_float(indexed.loc[model_name, year])
+            benchmark_value = safe_float(values.get(year))
+            variance = launch_value - benchmark_value
+            variance_pct = variance / abs(benchmark_value) if benchmark_value else 0.0
+            rows.append(
+                {
+                    "Year": year,
+                    "Launch Case": pct(launch_value) if is_percentage else money(launch_value),
+                    source: pct(benchmark_value) if is_percentage else money(benchmark_value),
+                    "Variance": f"{variance * 100:+.1f} pp" if is_percentage else money(variance),
+                    "Variance %": pct(variance_pct),
+                }
+            )
+        st.markdown(f"**{benchmark_name}**")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
+    case_id = str(case.get("Launch Case ID", ""))
+    can_edit = launch_user_workstream() == "Finance"
+    owned = assumptions[assumptions["Owner"].eq("Finance")]
+    cogs = medical_assumption(owned, "COGS per Unit")
+
+    if not can_edit:
+        model = calculate_launch_model(data, case, "Base", include_scenarios=False)
+        forecast = model.get("forecast", pd.DataFrame())
+        st.markdown("### Product Economics")
+        if isinstance(forecast, pd.DataFrame) and not forecast.empty:
+            economics = forecast[["Year", "Realized Net Price", "COGS", "Gross Profit", "Gross Margin %"]].copy()
+            economics = economics.rename(columns={"COGS": "Total COGS", "Gross Profit": "Total Gross Profit"})
+            economics["Total COGS"] = economics["Total COGS"].map(money)
+            economics["Total Gross Profit"] = economics["Total Gross Profit"].map(money)
+            st.dataframe(economics, use_container_width=True, hide_index=True)
+        st.markdown("### Personnel Cost Assumptions")
+        personnel = model.get("personnel", pd.DataFrame()).copy()
+        if isinstance(personnel, pd.DataFrame) and not personnel.empty:
+            personnel["Fully Loaded Cost per FTE"] = personnel["Fully Loaded Cost per FTE"].map(money)
+            personnel["Annual Cost Escalation %"] = personnel["Annual Cost Escalation %"].map(pct)
+            for year in LAUNCH_YEARS:
+                personnel[year] = personnel[year].map(money)
+            st.dataframe(personnel, use_container_width=True, hide_index=True)
+        st.markdown("### Functional Project Spend")
+        projects = model.get("projects", pd.DataFrame())
+        if isinstance(projects, pd.DataFrame) and not projects.empty:
+            project_view = projects[projects["Function"].isin(["Marketing", "Sales", "Medical"])][["Function", "Project / Initiative Name", *LAUNCH_YEARS, "Finance Alignment Status"]].copy()
+            for year in LAUNCH_YEARS:
+                project_view[year] = project_view[year].map(money)
+            st.dataframe(project_view, use_container_width=True, hide_index=True)
+        st.markdown("### Financial Benchmarks")
+        benchmark = get_launch_finance_benchmark(case_id, model)
+        st.caption(f"{benchmark.get('Benchmark Source', '')} · {benchmark.get('Benchmark Version / Date', '')} · As of {benchmark.get('As Of Date', '')}")
+        render_finance_benchmark_comparison(model, benchmark)
+        st.markdown("### Needs My Alignment")
+        render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Finance")
+        st.markdown("### 5-Year P&L")
+        render_finance_pnl(model.get("pnl", pd.DataFrame()))
+        st.markdown("### Finance Input Package")
+        render_launch_package_share(case_id, launch_assumptions(data, case, model), "Finance", False)
+        return
+
+    st.markdown("### Product Economics")
+    with st.container(border=True):
+        product = launch_product(data.get("products", pd.DataFrame()), str(case.get("Product", "")))
+        st.caption(f"{product.get('SKU', 'Launch product')} · {product.get('Product Name', case.get('Product', ''))}")
+        cogs_values = {year: safe_float(cogs.get(year, cogs.get("Value", 0))) if cogs is not None else 0.0 for year in LAUNCH_YEARS}
+        forecast_options = ["Constant Across Forecast", "By Year"]
+        current_mode = str(cogs.get("Forecast Mode", "Constant Across Forecast")) if cogs is not None else forecast_options[0]
+        forecast_mode = st.selectbox(
+            "COGS Forecast Mode",
+            forecast_options,
+            index=forecast_options.index(current_mode) if current_mode in forecast_options else 0,
+            key=f"launch_finance_cogs_mode_{case_id}",
+            disabled=not can_edit,
+            help=launch_definition("COGS per Unit"),
+        )
+        if forecast_mode == "Constant Across Forecast":
+            cogs_value = st.number_input(
+                "COGS per Unit",
+                min_value=0.0,
+                value=float(cogs_values["Y1"]),
+                key=f"launch_finance_cogs_constant_{case_id}",
+                disabled=not can_edit,
+            )
+            cogs_values = {year: safe_float(cogs_value) for year in LAUNCH_YEARS}
+        else:
+            cogs_columns = st.columns(5)
+            cogs_values = {
+                year: safe_float(cogs_columns[index].number_input(
+                    f"COGS {year}",
+                    min_value=0.0,
+                    value=float(cogs_values[year]),
+                    key=f"launch_finance_cogs_{case_id}_{year}",
+                    disabled=not can_edit,
+                ))
+                for index, year in enumerate(LAUNCH_YEARS)
+            }
+        source_columns = st.columns(2)
+        cogs_source = source_columns[0].text_input(
+            "COGS Source",
+            value=str(cogs.get("Source", "")) if cogs is not None else "",
+            key=f"launch_finance_cogs_source_{case_id}",
+            disabled=not can_edit,
+        )
+        cogs_rationale = source_columns[1].text_input(
+            "COGS Rationale / Source",
+            value=str(cogs.get("Rationale / Comment", "")) if cogs is not None else "",
+            key=f"launch_finance_cogs_rationale_{case_id}",
+            disabled=not can_edit,
+        )
+        if can_edit and cogs is not None:
+            update_launch_assumption_record(
+                case_id,
+                str(cogs.get("Assumption ID", "")),
+                {"Value": cogs_values["Y1"], "Forecast Mode": forecast_mode, "Source": cogs_source, "Rationale / Comment": cogs_rationale, **cogs_values},
+            )
+
+        model = calculate_launch_model(data, case, "Base", include_scenarios=False)
+        forecast = model.get("forecast", pd.DataFrame())
+        access_metrics = model.get("access_metrics", {})
+        if isinstance(forecast, pd.DataFrame) and not forecast.empty:
+            unit_rows = []
+            for year in LAUNCH_YEARS:
+                net_price = safe_float(access_metrics.get(year, {}).get("Weighted Net Price"))
+                unit_cogs = cogs_values[year]
+                gross_profit = net_price - unit_cogs
+                unit_rows.append({
+                    "Year": year,
+                    "Realized Net Price": money(net_price),
+                    "COGS per Unit": money(unit_cogs),
+                    "Gross Profit per Unit": money(gross_profit),
+                    "Gross Margin %": pct(gross_profit / net_price if net_price else 0),
+                })
+            st.markdown("#### Unit Economics")
+            st.dataframe(pd.DataFrame(unit_rows), use_container_width=True, hide_index=True)
+            st.caption("Realized Net Price is supplied by the enabled Market Access channels; Finance does not re-enter price.")
+
+    st.markdown("### Personnel Cost Assumptions")
+    with st.container(border=True):
+        role_config = [("Marketing", "Product Manager", "Marketing FTE"), ("Sales", "KAM / Sales FTE", "Sales FTE"), ("Medical", "MSL / Medical FTE", "Medical FTE")]
+        role_columns = st.columns(3)
+        for column, (function, role_name, _) in zip(role_columns, role_config):
+            cost_assumption = medical_assumption(owned, f"{role_name} Fully Loaded Cost per FTE")
+            escalation_assumption = medical_assumption(owned, f"{role_name} Annual Escalation %")
+            with column:
+                st.markdown(f"**{role_name}**")
+                st.caption(f"FTE source: {function}")
+                cost_value = st.number_input(
+                    "Y1 Fully Loaded Cost per FTE",
+                    min_value=0.0,
+                    value=float(safe_float(cost_assumption.get("Value"))) if cost_assumption is not None else 0.0,
+                    key=f"launch_finance_fte_cost_{case_id}_{function.lower()}",
+                    disabled=not can_edit,
+                    help=launch_definition("Fully Loaded Cost per FTE"),
+                )
+                escalation_value = st.number_input(
+                    "Annual Escalation (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(safe_float(escalation_assumption.get("Value")) * 100) if escalation_assumption is not None else 0.0,
+                    key=f"launch_finance_fte_escalation_{case_id}_{function.lower()}",
+                    disabled=not can_edit,
+                    format="%.1f",
+                )
+                if can_edit:
+                    if cost_assumption is not None:
+                        update_launch_assumption_record(case_id, str(cost_assumption.get("Assumption ID", "")), {"Value": safe_float(cost_value)})
+                    if escalation_assumption is not None:
+                        update_launch_assumption_record(case_id, str(escalation_assumption.get("Assumption ID", "")), {"Value": safe_float(escalation_value) / 100})
+
+        model = calculate_launch_model(data, case, "Base", include_scenarios=False)
+        personnel = model.get("personnel", pd.DataFrame()).copy()
+        if isinstance(personnel, pd.DataFrame) and not personnel.empty:
+            personnel["Fully Loaded Cost per FTE"] = personnel["Fully Loaded Cost per FTE"].map(money)
+            personnel["Annual Cost Escalation %"] = personnel["Annual Cost Escalation %"].map(pct)
+            for year in LAUNCH_YEARS:
+                personnel[year] = personnel[year].map(money)
+            st.dataframe(personnel, use_container_width=True, hide_index=True)
+        with st.expander("Personnel cost traceability"):
+            trace = model.get("personnel_trace", pd.DataFrame()).copy()
+            if isinstance(trace, pd.DataFrame) and not trace.empty:
+                trace["Cost per FTE"] = trace["Cost per FTE"].map(money)
+                trace["Personnel Cost"] = trace["Personnel Cost"].map(money)
+                st.dataframe(trace, use_container_width=True, hide_index=True)
+
+    st.markdown("### Functional Project Spend")
+    projects = model.get("projects", pd.DataFrame())
+    functional_projects = projects[projects["Function"].isin(["Marketing", "Sales", "Medical"])].copy() if isinstance(projects, pd.DataFrame) and not projects.empty else pd.DataFrame()
+    if functional_projects.empty:
+        st.caption("No Marketing, Sales or Medical launch-specific projects are recorded.")
+    else:
+        project_view = functional_projects[["Function", "Project / Initiative Name", *LAUNCH_YEARS, "Rationale / Business Need", "Finance Alignment Status"]].copy()
+        project_view = project_view.rename(columns={"Project / Initiative Name": "Project", "Rationale / Business Need": "Rationale", "Finance Alignment Status": "Alignment Status"})
+        for year in LAUNCH_YEARS:
+            project_view[year] = project_view[year].map(money)
+        st.dataframe(project_view, use_container_width=True, hide_index=True)
+        with st.expander("Project alignment"):
+            project_names = list(functional_projects["Project / Initiative Name"].astype(str))
+            selected_project = st.selectbox("Project", project_names, key=f"launch_finance_project_select_{case_id}")
+            selected_row = functional_projects[functional_projects["Project / Initiative Name"].astype(str).eq(selected_project)].iloc[0]
+            st.caption(f"Owner: {selected_row.get('Owner', selected_row.get('Function', ''))} · Status: {selected_row.get('Finance Alignment Status', 'Draft')}")
+            project_comment = st.text_area("Alignment comment", key=f"launch_finance_project_comment_{case_id}", height=68, disabled=not can_edit)
+            project_actions = st.columns(2)
+            if project_actions[0].button("Confirm Alignment", key=f"launch_finance_project_confirm_{case_id}", disabled=not can_edit):
+                update_launch_project_alignment(case_id, selected_project, "Aligned", project_comment)
+                st.success("Project spend aligned.")
+                st.rerun()
+            if project_actions[1].button("Request Change", key=f"launch_finance_project_change_{case_id}", disabled=not can_edit or not project_comment.strip()):
+                update_launch_project_alignment(case_id, selected_project, "Alignment Required", project_comment)
+                st.success("Change requested from the functional owner.")
+                st.rerun()
+
+    st.markdown("### Financial Benchmarks")
+    st.caption(launch_definition("Financial Benchmark"))
+    benchmark = get_launch_finance_benchmark(case_id, model)
+    benchmark_columns = st.columns(3)
+    source_options = ["Latest LRF", "Prior Approved Plan", "Prior Launch Case", "Actual Run Rate", "Other Corporate Forecast"]
+    current_source = str(benchmark.get("Benchmark Source", source_options[0]))
+    benchmark["Benchmark Source"] = benchmark_columns[0].selectbox(
+        "Benchmark Source",
+        source_options,
+        index=source_options.index(current_source) if current_source in source_options else 0,
+        key=f"launch_finance_benchmark_source_{case_id}",
+        disabled=not can_edit,
+    )
+    benchmark["Benchmark Version / Date"] = benchmark_columns[1].text_input(
+        "Benchmark Version / Date",
+        value=str(benchmark.get("Benchmark Version / Date", "")),
+        key=f"launch_finance_benchmark_version_{case_id}",
+        disabled=not can_edit,
+    )
+    benchmark_date = regulatory_date_value(benchmark.get("As Of Date"), date.today().year)
+    benchmark["As Of Date"] = benchmark_columns[2].date_input(
+        "As Of Date",
+        value=benchmark_date,
+        key=f"launch_finance_benchmark_date_{case_id}",
+        disabled=not can_edit,
+    ).isoformat()
+    benchmark["Short Comment / Rationale"] = st.text_input(
+        "Short Comment / Rationale",
+        value=str(benchmark.get("Short Comment / Rationale", "")),
+        key=f"launch_finance_benchmark_comment_{case_id}",
+        disabled=not can_edit,
+    )
+    metric_columns = st.columns(3)
+    for column, label, enabled_key, value_key in [
+        (metric_columns[0], "Revenue", "Revenue Enabled", "Revenue"),
+        (metric_columns[1], "Gross Profit", "Gross Profit Enabled", "Gross Profit"),
+        (metric_columns[2], "Gross Margin %", "Gross Margin Enabled", "Gross Margin %"),
+    ]:
+        enabled = column.checkbox(f"Use {label} benchmark", value=bool(benchmark.get(enabled_key, False)), key=f"launch_finance_benchmark_enabled_{case_id}_{value_key}", disabled=not can_edit)
+        benchmark[enabled_key] = enabled
+        values = benchmark.get(value_key, {}) if isinstance(benchmark.get(value_key), dict) else {}
+        if enabled:
+            year_values = {}
+            for year in LAUNCH_YEARS:
+                shown_value = safe_float(values.get(year)) * (100 if value_key == "Gross Margin %" else 1)
+                entered = column.number_input(
+                    f"{label} {year}",
+                    value=float(shown_value),
+                    key=f"launch_finance_benchmark_{case_id}_{value_key}_{year}",
+                    disabled=not can_edit,
+                )
+                year_values[year] = safe_float(entered) / 100 if value_key == "Gross Margin %" else safe_float(entered)
+            benchmark[value_key] = year_values
+    if can_edit:
+        set_launch_finance_benchmark(case_id, benchmark)
+    render_finance_benchmark_comparison(model, benchmark)
+
+    st.markdown("### Needs My Alignment")
+    plan_assumption = medical_assumption(assumptions, "Market Access Channel Plan")
+    if plan_assumption is not None:
+        plan = plan_assumption.get("Value", {}) if isinstance(plan_assumption.get("Value"), dict) else {}
+        price_rows = []
+        for entry in market_access_plan_entries(plan):
+            price_rows.append({
+                "Channel": entry.get("Access Path", entry.get("Channel", "")),
+                "Y1 List Price": money(entry.get("List Price", {}).get("Y1", 0)),
+                "Y1 Net Price": money(entry.get("Net Price", {}).get("Y1", 0)),
+                "Y5 List Price": money(entry.get("List Price", {}).get("Y5", 0)),
+                "Y5 Net Price": money(entry.get("Net Price", {}).get("Y5", 0)),
+                "Alignment Status": launch_alignment_status(plan_assumption.get("Validation Status", "Draft")),
+            })
+        if price_rows:
+            st.dataframe(pd.DataFrame(price_rows), use_container_width=True, hide_index=True)
+    render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Finance")
+
+    st.markdown("### 5-Year P&L")
+    st.caption("Revenue Source: Integrated Launch Model · Patient Flow → Access → Market Share → Utilization → Sellable Units → Net Price → Net Revenue")
+    y5 = model.get("forecast", pd.DataFrame())
+    y5 = y5[y5["Year"].eq("Y5")].iloc[0] if isinstance(y5, pd.DataFrame) and not y5.empty else pd.Series(dtype=object)
+    pnl = model.get("pnl", pd.DataFrame())
+    indexed_pnl = pnl.set_index("Metric") if isinstance(pnl, pd.DataFrame) and not pnl.empty else pd.DataFrame()
+    output_columns = st.columns(5)
+    output_columns[0].metric("Y5 Net Revenue", money(y5.get("Net Revenue", 0)))
+    output_columns[1].metric("Y5 Gross Margin %", y5.get("Gross Margin %", "Not calculated"))
+    output_columns[2].metric("Y5 Operating Profit", money(indexed_pnl.loc["Operating Profit", "Y5"] if "Operating Profit" in indexed_pnl.index else 0))
+    output_columns[3].metric("Y5 Operating Margin %", pct(indexed_pnl.loc["Operating Margin %", "Y5"] if "Operating Margin %" in indexed_pnl.index else 0))
+    cumulative_op = sum(safe_float(indexed_pnl.loc["Operating Profit", year]) for year in LAUNCH_YEARS) if "Operating Profit" in indexed_pnl.index else 0
+    output_columns[4].metric("5Y Cumulative Operating Profit", money(cumulative_op))
+    render_finance_pnl(pnl)
+    with st.expander("Project spend traceability"):
+        all_projects = model.get("projects", pd.DataFrame()).copy()
+        if isinstance(all_projects, pd.DataFrame) and not all_projects.empty:
+            for year in LAUNCH_YEARS:
+                all_projects[year] = all_projects[year].map(money)
+            st.dataframe(all_projects[["Function", "Project / Initiative Name", *LAUNCH_YEARS, "Category", "Rationale / Business Need"]], use_container_width=True, hide_index=True)
+
+    refreshed = launch_assumptions(data, case, model)
+    st.markdown("### Finance Input Package")
+    render_launch_package_share(case_id, refreshed, "Finance", can_edit)
 
 
 def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], workspace: str) -> None:
@@ -7969,6 +8448,9 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
     if workspace == "Supply / Operations":
         render_supply_workspace(case, data, assumptions)
         return
+    if workspace == "Finance":
+        render_finance_workspace(case, data, assumptions)
+        return
     owned = assumptions[(assumptions["Owner"].eq(workspace)) & (~assumptions["Calculated"].astype(bool))]
     st.markdown("### My Inputs")
     if owned.empty:
@@ -7981,17 +8463,9 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
     st.markdown("### Needs My Alignment")
     refreshed = launch_assumptions(data, case)
     render_launch_validation_queue(case_id, refreshed, workspace)
-    model = calculate_launch_model(data, case, "Base")
+    model = calculate_launch_model(data, case, "Base", include_scenarios=False)
     st.markdown("### Key Outputs / Dependencies")
     launch_key_outputs(workspace, model)
-    if workspace == "Finance":
-        st.caption("Revenue is system-calculated. Finance owns cost inputs and aligns the integrated financial result.")
-        st.dataframe(format_launch_financial_table(model["pnl"]), use_container_width=True, hide_index=True)
-        with st.expander("Personnel and project inputs"):
-            st.dataframe(model["personnel"], use_container_width=True, hide_index=True)
-            st.dataframe(model["projects"], use_container_width=True, hide_index=True)
-        with st.expander("Scenario analysis"):
-            st.dataframe(model["scenario_summary"], use_container_width=True, hide_index=True)
     st.markdown(f"### {'Supply' if workspace == 'Supply / Operations' else workspace} Input Package")
     render_launch_package_share(
         case_id,
@@ -8026,7 +8500,7 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
     launch_case_overview_card(case)
     sections = ["Overview", "Workstreams", "Assumptions", "Readiness", "Decision Case"]
     scenario = "Base"
-    model = calculate_launch_model(data, case, scenario)
+    model = calculate_launch_model(data, case, scenario, include_scenarios=False)
     assumptions = launch_assumptions(data, case, model)
     workstreams = launch_workstreams(selected_id, assumptions)
     primary_tabs = st.tabs(sections)
@@ -8053,7 +8527,7 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
 
     with primary_tabs[2]:
         st.markdown("<div class='enterprise-section-title'>Shared Assumption Register</div>", unsafe_allow_html=True)
-        register = launch_assumptions(data, case, calculate_launch_model(data, case, scenario)).copy()
+        register = launch_assumptions(data, case, calculate_launch_model(data, case, scenario, include_scenarios=False)).copy()
         register["Alignment Status"] = register["Validation Status"].map(launch_alignment_status)
         register["Alignment Partners"] = register["Validators"]
         register["Value"] = register.apply(launch_assumption_display_value, axis=1)
