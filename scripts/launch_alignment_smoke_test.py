@@ -62,15 +62,18 @@ for role in (
     app.run()
     assert_clean(app, f"{role} workspace")
 
-# Draft inputs are visible to the alignment partner but cannot be acted on.
 app.session_state["launch_current_role"] = "Marketing · Launch Coordinator"
 app.run()
-prevalence = record(app, "Prevalence")
-assumption_id = str(prevalence["Assumption ID"])
-confirm_key = f"launch_confirm_{CASE_ID}_marketing_{assumption_id}"
-request_key = f"launch_request_change_{CASE_ID}_marketing_{assumption_id}"
-comment_key = f"launch_add_comment_{CASE_ID}_marketing_{assumption_id}"
-text_key = f"launch_alignment_comment_{CASE_ID}_marketing_{assumption_id}"
+expander_labels = {expander.label for expander in app.expander}
+assert any(label.startswith("Medical Target Patient Package") for label in expander_labels)
+assert any(label.startswith("Sales Coverage & Execution Package") for label in expander_labels)
+assert any(label.startswith("Market Access Plan Package") for label in expander_labels)
+
+package_key = "marketing_medical_target_patient_package"
+confirm_key = f"launch_package_confirm_{CASE_ID}_{package_key}"
+request_key = f"launch_package_change_{CASE_ID}_{package_key}"
+comment_key = f"launch_package_add_comment_{CASE_ID}_{package_key}"
+text_key = f"launch_package_comment_{CASE_ID}_{package_key}"
 assert widget_by_key(app.button, confirm_key).disabled
 assert widget_by_key(app.button, request_key).disabled
 assert widget_by_key(app.button, comment_key).disabled
@@ -80,7 +83,7 @@ app.session_state["launch_current_role"] = "Medical"
 app.run()
 next(button for button in app.button if button.label == "Share Medical Input for Alignment").click().run()
 assert_clean(app, "Medical package share")
-assert record(app, "Prevalence")["Validation Status"] == "Shared for Alignment"
+assert record(app, "Disease / Indication")["Validation Status"] == "Shared for Alignment"
 
 app.session_state["launch_current_role"] = "Marketing · Launch Coordinator"
 app.run()
@@ -99,37 +102,35 @@ assert any(event.get("Action") == "Added Comment" for event in prevalence["Valid
 widget_by_key(app.text_area, text_key).set_value("Please reconcile the prevalence source with the latest evidence.").run()
 widget_by_key(app.button, request_key).click().run()
 assert_clean(app, "request alignment change")
-prevalence = record(app, "Prevalence")
-assert prevalence["Validation Status"] == "Alignment Required"
-assert any(event.get("Action") == "Requested Change" and event.get("Comment") for event in prevalence["Validation History"])
+disease = record(app, "Disease / Indication")
+assert disease["Validation Status"] == "Alignment Required"
+assert any(event.get("Action") == "Requested Change" and event.get("Comment") for event in disease["Validation History"])
 
 app.session_state["launch_current_role"] = "Medical"
 app.run()
 next(button for button in app.button if button.label == "Share Medical Input for Alignment").click().run()
 assert_clean(app, "Medical package re-share")
-assert record(app, "Prevalence")["Validation Status"] == "Shared for Alignment"
+assert record(app, "Disease / Indication")["Validation Status"] == "Shared for Alignment"
 
 app.session_state["launch_current_role"] = "Marketing · Launch Coordinator"
 app.run()
 widget_by_key(app.button, confirm_key).click().run()
 assert_clean(app, "confirm alignment")
-prevalence = record(app, "Prevalence")
-assert prevalence["Validation Status"] == "Aligned"
-assert any(event.get("Action") == "Confirmed Alignment" for event in prevalence["Validation History"])
-
-# Multi-partner inputs remain open until every configured partner confirms.
-evidence = record(app, "Key Clinical Evidence Gap / Risk")
-evidence_id = str(evidence["Assumption ID"])
-marketing_confirm = f"launch_confirm_{CASE_ID}_marketing_{evidence_id}"
-widget_by_key(app.button, marketing_confirm).click().run()
-assert_clean(app, "first multi-partner confirmation")
-assert record(app, "Key Clinical Evidence Gap / Risk")["Validation Status"] == "Shared for Alignment"
+disease = record(app, "Disease / Indication")
+assert disease["Validation Status"] == "Shared for Alignment"
+assert any(event.get("Action") == "Confirmed Alignment" for event in disease["Validation History"])
 
 app.session_state["launch_current_role"] = "Regulatory"
 app.run()
-regulatory_confirm = f"launch_confirm_{CASE_ID}_regulatory_{evidence_id}"
+regulatory_target_key = "regulatory_medical_target_patient_package"
+regulatory_confirm = f"launch_package_confirm_{CASE_ID}_{regulatory_target_key}"
 widget_by_key(app.button, regulatory_confirm).click().run()
 assert_clean(app, "final multi-partner confirmation")
+assert record(app, "Disease / Indication")["Validation Status"] == "Aligned"
+
+evidence_key = "regulatory_key_clinical_evidence_gap_risk"
+widget_by_key(app.button, f"launch_package_confirm_{CASE_ID}_{evidence_key}").click().run()
+assert_clean(app, "clinical evidence gap confirmation")
 assert record(app, "Key Clinical Evidence Gap / Risk")["Validation Status"] == "Aligned"
 
 print("launch alignment smoke test complete")

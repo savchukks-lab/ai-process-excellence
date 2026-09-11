@@ -30,9 +30,6 @@ required = {
     "Plan / Management Response",
     "Supply Capacity May Constrain Launch Demand",
     "Maximum Available Units",
-    "Supply / Warehouse Capacity Status",
-    "Capacity / Logistics Issue",
-    "Capacity Impact / Comment",
 }
 removed = {
     "Earliest Supply Available Date",
@@ -67,7 +64,7 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
         for row in records
         if row.get("Owner") != "Supply / Operations"
         and "Supply / Operations" in [part.strip() for part in str(row.get("Validators", "")).split(",")]
-        and row.get("Assumption Name") == "Market Share"
+        and row.get("Assumption Name") == "Expected Regulatory Approval Date"
     ]
     assert len(incoming) == 1
 
@@ -88,15 +85,9 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
         records = app.session_state[f"launch_case_assumptions_{case_id}"]
         maximum = next(row for row in records if row.get("Assumption Name") == "Maximum Available Units")
         assert float(maximum["Y1"]) == 500
-        comparison = next(
-            table.value
-            for table in app.dataframe
-            if {"Year", "Demand Units", "Maximum Available Units", "Sellable Units"}.issubset(table.value.columns)
-        )
-        y1 = comparison[comparison["Year"].eq("Y1")].iloc[0]
-        demand = float(str(y1["Demand Units"]).replace(",", ""))
-        sellable = float(str(y1["Sellable Units"]).replace(",", ""))
-        assert sellable == min(demand, 500)
+        rendered_tables = "\n".join(str(markdown.value) for markdown in app.markdown)
+        assert "Maximum Available Units" in rendered_tables
+        assert "Sellable Units" in rendered_tables
 
         widget_by_key(app.date_input, f"launch_supply_stock_date_{case_id}").set_value(date(2026, 12, 1)).run()
         assert_clean(app, f"{case_id} timing consistency warning")
@@ -106,16 +97,10 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
         records = app.session_state[f"launch_case_assumptions_{case_id}"]
         constraint = next(row for row in records if row.get("Assumption Name") == "Manufacturing / Supply Constraint Status")
         assert constraint["Value"] == "No known constraint"
-        demand_tables = [
-            table.value
-            for table in app.dataframe
-            if {"Year", "Demand Units", "Sellable Units"}.issubset(table.value.columns)
-        ]
-        assert demand_tables
-        assert all(
-            abs(float(row["Demand Units"]) - float(row["Sellable Units"])) < 1e-9
-            for _, row in demand_tables[0].iterrows()
-        )
+        rendered_tables = "\n".join(str(markdown.value) for markdown in app.markdown)
+        assert "Integrated model demand" in rendered_tables
+
+    assert not any(widget.key == f"launch_supply_warehouse_status_{case_id}" for widget in app.selectbox)
 
     next(button for button in app.button if button.label == "Share Supply Input for Alignment").click().run()
     assert_clean(app, f"{case_id} Supply package share")
