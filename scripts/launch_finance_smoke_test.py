@@ -77,6 +77,18 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
     by_name = {row.get("Assumption Name"): row for row in records}
     assert float(by_name["KAM / Sales FTE Fully Loaded Cost per FTE"]["Value"]) == 150000.0
     assert abs(float(by_name["KAM / Sales FTE Annual Escalation %"]["Value"]) - 0.04) < 1e-9
+    for role_name in ("Product Manager", "KAM / Sales FTE", "MSL / Medical FTE"):
+        assumption = by_name[f"{role_name} Fully Loaded Cost per FTE"]
+        assert str(assumption.get("Source", "")).strip(), f"{case_id}: missing {role_name} cost source"
+        assert str(assumption.get("Rationale / Comment", "")).strip(), f"{case_id}: missing {role_name} cost rationale"
+
+    widget_by_key(app.text_input, f"launch_finance_fte_source_{case_id}_sales").set_value("Finance workforce benchmark").run()
+    widget_by_key(app.text_area, f"launch_finance_fte_rationale_{case_id}_sales").set_value("Validated fully loaded KAM employment cost.").run()
+    assert_clean(app, f"{case_id} personnel source")
+    records = app.session_state[f"launch_case_assumptions_{case_id}"]
+    by_name = {row.get("Assumption Name"): row for row in records}
+    assert by_name["KAM / Sales FTE Fully Loaded Cost per FTE"]["Source"] == "Finance workforce benchmark"
+    assert by_name["KAM / Sales FTE Fully Loaded Cost per FTE"]["Rationale / Comment"] == "Validated fully loaded KAM employment cost."
 
     benchmark_key = f"launch_finance_benchmark_{case_id}"
     assert benchmark_key in app.session_state
@@ -91,6 +103,10 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
     project_rows = app.session_state[f"launch_projects_{case_id}"]
     project_functions = {row.get("Function") for row in project_rows}
     assert {"Marketing", "Sales", "Medical"}.issubset(project_functions)
+    expander_labels = {expander.label for expander in app.expander}
+    assert "Functional project spend alignment" in expander_labels
+    assert any(label.startswith("Market Access pricing") for label in expander_labels)
+    assert not any(label.startswith("Market Access Channel Plan") for label in expander_labels)
 
     next(button for button in app.button if button.label == "Share Finance Input for Alignment").click().run()
     assert_clean(app, f"{case_id} Finance package share")

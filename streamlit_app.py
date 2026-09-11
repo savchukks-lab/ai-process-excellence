@@ -4878,8 +4878,10 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     records[-1]["Forecast Mode"] = "Constant Across Forecast"
     for function, role_name in [("Marketing", "Product Manager"), ("Sales", "KAM / Sales FTE"), ("Medical", "MSL / Medical FTE")]:
         resource = inputs["personnel"][function]
-        add("Finance", "Personnel Cost Assumptions", f"{role_name} Fully Loaded Cost per FTE", resource["Fully Loaded Cost per FTE"], "Number", "Local currency / FTE", function)
-        add("Finance", "Personnel Cost Assumptions", f"{role_name} Annual Escalation %", resource["Annual Escalation %"], "Percentage", "%", function)
+        source = "Finance workforce planning reference"
+        rationale = f"Launch-specific fully loaded employment cost for the {role_name} role."
+        add("Finance", "Personnel Cost Assumptions", f"{role_name} Fully Loaded Cost per FTE", resource["Fully Loaded Cost per FTE"], "Number", "Local currency / FTE", function, source=source, rationale=rationale)
+        add("Finance", "Personnel Cost Assumptions", f"{role_name} Annual Escalation %", resource["Annual Escalation %"], "Percentage", "%", function, source=source, rationale=rationale)
     add("System", "Calculated", "Clinically Addressable Population", "Calculated", "Calculated", "Patients", calculated=True)
     add("System", "Calculated", "Net Revenue", "Calculated", "Calculated", "Local currency", calculated=True)
     add("System", "Calculated", "Operating Profit", "Calculated", "Calculated", "Local currency", calculated=True)
@@ -4957,6 +4959,11 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
         for field in ["Value", "Forecast Mode", "Source Type", "Source", "Rationale / Comment", "Confidence", "Validation Status", "Enabled", "Validation History", "Last Updated", "Case Snapshot", "Override Enabled", "Override Values", "Override Rationale", "Duration Unit", "Reference", "Reference Value", "Reference Last Updated", "Medical Schema Version"]:
             if field in existing:
                 merged[field] = deepcopy(existing[field])
+        if str(default.get("Category")) == "Personnel Cost Assumptions":
+            if not str(merged.get("Source", "")).strip():
+                merged["Source"] = default.get("Source", "")
+            if not str(merged.get("Rationale / Comment", "")).strip():
+                merged["Rationale / Comment"] = default.get("Rationale / Comment", "")
         merged["Validation Status"] = launch_alignment_status(merged.get("Validation Status", "Draft"))
         if name == "Competitive Landscape":
             merged["Value"] = normalize_competitive_events(merged.get("Value", []))
@@ -8097,6 +8104,45 @@ def render_finance_pnl(pnl: pd.DataFrame) -> None:
     )
 
 
+def render_finance_table(table: pd.DataFrame, right_align: set[str] | None = None) -> None:
+    """Render a small Finance table without Streamlit's internal scroll container."""
+    if not isinstance(table, pd.DataFrame) or table.empty:
+        return
+    right_align = right_align or set()
+    headers = "".join(
+        f"<th style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
+        "border-bottom:1px solid #d8dee8;background:#eef2f7;font-weight:650;white-space:normal'>"
+        f"{escape(str(column))}</th>"
+        for column in table.columns
+    )
+    body_rows = []
+    for row_index, (_, row) in enumerate(table.iterrows()):
+        background = "#f8fafc" if row_index % 2 else "#ffffff"
+        cells = "".join(
+            f"<td style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
+            "border-bottom:1px solid #e5e9f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere'>"
+            f"{escape('' if pd.isna(row.get(column)) else str(row.get(column)))}</td>"
+            for column in table.columns
+        )
+        body_rows.append(f"<tr style='background:{background}'>{cells}</tr>")
+    st.markdown(
+        "<table style='width:100%;border-collapse:collapse;border:1px solid #d8dee8;"
+        "font-size:0.82rem;line-height:1.25;table-layout:fixed'>"
+        f"<thead><tr>{headers}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>",
+        unsafe_allow_html=True,
+    )
+
+
+def finance_money_display(value: object) -> str:
+    text = str(value).strip()
+    return text if text.startswith("$") else money(value)
+
+
+def finance_pct_display(value: object) -> str:
+    text = str(value).strip()
+    return text if text.endswith("%") else pct(value)
+
+
 def render_finance_benchmark_comparison(model: dict[str, object], benchmark: dict[str, object]) -> None:
     pnl = model.get("pnl", pd.DataFrame())
     if not isinstance(pnl, pd.DataFrame) or pnl.empty:
@@ -8128,7 +8174,91 @@ def render_finance_benchmark_comparison(model: dict[str, object], benchmark: dic
                 }
             )
         st.markdown(f"**{benchmark_name}**")
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        render_finance_table(pd.DataFrame(rows), {"Launch Case", source, "Variance", "Variance %"})
+
+
+def render_finance_pricing_alignment(case_id: str, assumption: pd.Series, can_edit: bool) -> None:
+    status = launch_alignment_status(assumption.get("Validation Status", "Draft"))
+    with st.expander(f"Market Access pricing · Owner: Market Access · Status: {status}", expanded=False):
+        st.caption("Finance alignment covers List Price and Net Price only. Access design, reach and timing remain owned by Market Access.")
+        if status in {"Draft", "Not Started"}:
+            st.info("Pricing has not yet been shared for alignment.")
+        elif status == "Aligned":
+            st.success("Pricing alignment confirmed.")
+        can_interact = can_edit and status in {"Shared for Alignment", "Alignment Required"}
+        comment = st.text_area(
+            "Alignment comment",
+            key=f"launch_finance_pricing_comment_{case_id}",
+            height=70,
+            disabled=not can_interact,
+        )
+        actions = st.columns(3)
+        actions[0].markdown("<span class='launch-confirm-marker'></span>", unsafe_allow_html=True)
+        already_confirmed = launch_partner_has_confirmed(assumption, "Finance")
+        if actions[0].button(
+            "Confirm Alignment",
+            type="primary",
+            key=f"launch_finance_pricing_confirm_{case_id}",
+            disabled=not can_interact or already_confirmed,
+        ):
+            update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Confirmed Alignment", comment)
+            st.success("Pricing assumptions aligned.")
+            st.rerun()
+        if actions[1].button(
+            "Request Change",
+            key=f"launch_finance_pricing_change_{case_id}",
+            disabled=not can_interact,
+        ):
+            if not comment.strip():
+                st.warning("A comment is required to request a change.")
+            else:
+                update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Requested Change", comment)
+                st.success("Change requested from Market Access.")
+                st.rerun()
+        if actions[2].button(
+            "Add Comment",
+            key=f"launch_finance_pricing_add_comment_{case_id}",
+            disabled=not can_interact or not comment.strip(),
+        ):
+            update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Added Comment", comment)
+            st.success("Comment added.")
+            st.rerun()
+        render_launch_validation_history(assumption, expandable=False)
+
+
+def render_finance_project_alignment(case_id: str, projects: pd.DataFrame, can_edit: bool) -> None:
+    if not isinstance(projects, pd.DataFrame) or projects.empty:
+        return
+    project_names = list(projects["Project / Initiative Name"].astype(str))
+    with st.expander("Functional project spend alignment", expanded=False):
+        selected_project = st.selectbox("Project", project_names, key=f"launch_finance_project_select_{case_id}")
+        selected_row = projects[projects["Project / Initiative Name"].astype(str).eq(selected_project)].iloc[0]
+        st.caption(
+            f"Owner: {selected_row.get('Owner', selected_row.get('Function', ''))} · "
+            f"Status: {selected_row.get('Finance Alignment Status', 'Draft')}"
+        )
+        rationale = str(selected_row.get("Rationale / Business Need", "")).strip()
+        if rationale:
+            st.write(rationale)
+        project_comment = st.text_area(
+            "Alignment comment",
+            key=f"launch_finance_project_comment_{case_id}",
+            height=68,
+            disabled=not can_edit,
+        )
+        project_actions = st.columns(2)
+        if project_actions[0].button("Confirm Alignment", key=f"launch_finance_project_confirm_{case_id}", disabled=not can_edit):
+            update_launch_project_alignment(case_id, selected_project, "Aligned", project_comment)
+            st.success("Project spend aligned.")
+            st.rerun()
+        if project_actions[1].button(
+            "Request Change",
+            key=f"launch_finance_project_change_{case_id}",
+            disabled=not can_edit or not project_comment.strip(),
+        ):
+            update_launch_project_alignment(case_id, selected_project, "Alignment Required", project_comment)
+            st.success("Change requested from the functional owner.")
+            st.rerun()
 
 
 def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
@@ -8144,9 +8274,11 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
         if isinstance(forecast, pd.DataFrame) and not forecast.empty:
             economics = forecast[["Year", "Realized Net Price", "COGS", "Gross Profit", "Gross Margin %"]].copy()
             economics = economics.rename(columns={"COGS": "Total COGS", "Gross Profit": "Total Gross Profit"})
-            economics["Total COGS"] = economics["Total COGS"].map(money)
-            economics["Total Gross Profit"] = economics["Total Gross Profit"].map(money)
-            st.dataframe(economics, use_container_width=True, hide_index=True)
+            economics["Realized Net Price"] = economics["Realized Net Price"].map(finance_money_display)
+            economics["Total COGS"] = economics["Total COGS"].map(finance_money_display)
+            economics["Total Gross Profit"] = economics["Total Gross Profit"].map(finance_money_display)
+            economics["Gross Margin %"] = economics["Gross Margin %"].map(finance_pct_display)
+            render_finance_table(economics, {"Realized Net Price", "Total COGS", "Total Gross Profit", "Gross Margin %"})
         st.markdown("### Personnel Cost Assumptions")
         personnel = model.get("personnel", pd.DataFrame()).copy()
         if isinstance(personnel, pd.DataFrame) and not personnel.empty:
@@ -8154,20 +8286,22 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
             personnel["Annual Cost Escalation %"] = personnel["Annual Cost Escalation %"].map(pct)
             for year in LAUNCH_YEARS:
                 personnel[year] = personnel[year].map(money)
-            st.dataframe(personnel, use_container_width=True, hide_index=True)
+            render_finance_table(personnel, {"Y1 FTE", "Fully Loaded Cost per FTE", "Annual Cost Escalation %", *LAUNCH_YEARS})
         st.markdown("### Functional Project Spend")
         projects = model.get("projects", pd.DataFrame())
         if isinstance(projects, pd.DataFrame) and not projects.empty:
             project_view = projects[projects["Function"].isin(["Marketing", "Sales", "Medical"])][["Function", "Project / Initiative Name", *LAUNCH_YEARS, "Finance Alignment Status"]].copy()
             for year in LAUNCH_YEARS:
                 project_view[year] = project_view[year].map(money)
-            st.dataframe(project_view, use_container_width=True, hide_index=True)
+            render_finance_table(project_view, set(LAUNCH_YEARS))
         st.markdown("### Financial Benchmarks")
         benchmark = get_launch_finance_benchmark(case_id, model)
         st.caption(f"{benchmark.get('Benchmark Source', '')} · {benchmark.get('Benchmark Version / Date', '')} · As of {benchmark.get('As Of Date', '')}")
         render_finance_benchmark_comparison(model, benchmark)
         st.markdown("### Needs My Alignment")
-        render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Finance")
+        plan_assumption = medical_assumption(assumptions, "Market Access Channel Plan")
+        if plan_assumption is not None:
+            render_finance_pricing_alignment(case_id, plan_assumption, False)
         st.markdown("### 5-Year P&L")
         render_finance_pnl(model.get("pnl", pd.DataFrame()))
         st.markdown("### Finance Input Package")
@@ -8247,7 +8381,7 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
                     "Gross Margin %": pct(gross_profit / net_price if net_price else 0),
                 })
             st.markdown("#### Unit Economics")
-            st.dataframe(pd.DataFrame(unit_rows), use_container_width=True, hide_index=True)
+            render_finance_table(pd.DataFrame(unit_rows), {"Realized Net Price", "COGS per Unit", "Gross Profit per Unit", "Gross Margin %"})
             st.caption("Realized Net Price is supplied by the enabled Market Access channels; Finance does not re-enter price.")
 
     st.markdown("### Personnel Cost Assumptions")
@@ -8277,11 +8411,32 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
                     disabled=not can_edit,
                     format="%.1f",
                 )
+                source_value = st.text_input(
+                    "Source",
+                    value=str(cost_assumption.get("Source", "")) if cost_assumption is not None else "",
+                    key=f"launch_finance_fte_source_{case_id}_{function.lower()}",
+                    disabled=not can_edit,
+                )
+                rationale_value = st.text_area(
+                    "Rationale",
+                    value=str(cost_assumption.get("Rationale / Comment", "")) if cost_assumption is not None else "",
+                    key=f"launch_finance_fte_rationale_{case_id}_{function.lower()}",
+                    disabled=not can_edit,
+                    height=68,
+                )
                 if can_edit:
                     if cost_assumption is not None:
-                        update_launch_assumption_record(case_id, str(cost_assumption.get("Assumption ID", "")), {"Value": safe_float(cost_value)})
+                        update_launch_assumption_record(
+                            case_id,
+                            str(cost_assumption.get("Assumption ID", "")),
+                            {"Value": safe_float(cost_value), "Source": source_value, "Rationale / Comment": rationale_value},
+                        )
                     if escalation_assumption is not None:
-                        update_launch_assumption_record(case_id, str(escalation_assumption.get("Assumption ID", "")), {"Value": safe_float(escalation_value) / 100})
+                        update_launch_assumption_record(
+                            case_id,
+                            str(escalation_assumption.get("Assumption ID", "")),
+                            {"Value": safe_float(escalation_value) / 100, "Source": source_value, "Rationale / Comment": rationale_value},
+                        )
 
         model = calculate_launch_model(data, case, "Base", include_scenarios=False)
         personnel = model.get("personnel", pd.DataFrame()).copy()
@@ -8290,13 +8445,14 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
             personnel["Annual Cost Escalation %"] = personnel["Annual Cost Escalation %"].map(pct)
             for year in LAUNCH_YEARS:
                 personnel[year] = personnel[year].map(money)
-            st.dataframe(personnel, use_container_width=True, hide_index=True)
+            render_finance_table(personnel, {"Y1 FTE", "Fully Loaded Cost per FTE", "Annual Cost Escalation %", *LAUNCH_YEARS})
         with st.expander("Personnel cost traceability"):
             trace = model.get("personnel_trace", pd.DataFrame()).copy()
             if isinstance(trace, pd.DataFrame) and not trace.empty:
                 trace["Cost per FTE"] = trace["Cost per FTE"].map(money)
                 trace["Personnel Cost"] = trace["Personnel Cost"].map(money)
-                st.dataframe(trace, use_container_width=True, hide_index=True)
+                trace["FTE"] = trace["FTE"].map(lambda value: f"{safe_float(value):,.1f}")
+                render_finance_table(trace, {"FTE", "Cost per FTE", "Personnel Cost"})
 
     st.markdown("### Functional Project Spend")
     projects = model.get("projects", pd.DataFrame())
@@ -8308,22 +8464,7 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
         project_view = project_view.rename(columns={"Project / Initiative Name": "Project", "Rationale / Business Need": "Rationale", "Finance Alignment Status": "Alignment Status"})
         for year in LAUNCH_YEARS:
             project_view[year] = project_view[year].map(money)
-        st.dataframe(project_view, use_container_width=True, hide_index=True)
-        with st.expander("Project alignment"):
-            project_names = list(functional_projects["Project / Initiative Name"].astype(str))
-            selected_project = st.selectbox("Project", project_names, key=f"launch_finance_project_select_{case_id}")
-            selected_row = functional_projects[functional_projects["Project / Initiative Name"].astype(str).eq(selected_project)].iloc[0]
-            st.caption(f"Owner: {selected_row.get('Owner', selected_row.get('Function', ''))} · Status: {selected_row.get('Finance Alignment Status', 'Draft')}")
-            project_comment = st.text_area("Alignment comment", key=f"launch_finance_project_comment_{case_id}", height=68, disabled=not can_edit)
-            project_actions = st.columns(2)
-            if project_actions[0].button("Confirm Alignment", key=f"launch_finance_project_confirm_{case_id}", disabled=not can_edit):
-                update_launch_project_alignment(case_id, selected_project, "Aligned", project_comment)
-                st.success("Project spend aligned.")
-                st.rerun()
-            if project_actions[1].button("Request Change", key=f"launch_finance_project_change_{case_id}", disabled=not can_edit or not project_comment.strip()):
-                update_launch_project_alignment(case_id, selected_project, "Alignment Required", project_comment)
-                st.success("Change requested from the functional owner.")
-                st.rerun()
+        render_finance_table(project_view, set(LAUNCH_YEARS))
 
     st.markdown("### Financial Benchmarks")
     st.caption(launch_definition("Financial Benchmark"))
@@ -8397,8 +8538,12 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
                 "Alignment Status": launch_alignment_status(plan_assumption.get("Validation Status", "Draft")),
             })
         if price_rows:
-            st.dataframe(pd.DataFrame(price_rows), use_container_width=True, hide_index=True)
-    render_launch_validation_queue(case_id, launch_assumptions(data, case, model), "Finance")
+            render_finance_table(
+                pd.DataFrame(price_rows),
+                {"Y1 List Price", "Y1 Net Price", "Y5 List Price", "Y5 Net Price"},
+            )
+        render_finance_pricing_alignment(case_id, plan_assumption, can_edit)
+    render_finance_project_alignment(case_id, functional_projects, can_edit)
 
     st.markdown("### 5-Year P&L")
     st.caption("Revenue Source: Integrated Launch Model · Patient Flow → Access → Market Share → Utilization → Sellable Units → Net Price → Net Revenue")
@@ -8419,7 +8564,8 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
         if isinstance(all_projects, pd.DataFrame) and not all_projects.empty:
             for year in LAUNCH_YEARS:
                 all_projects[year] = all_projects[year].map(money)
-            st.dataframe(all_projects[["Function", "Project / Initiative Name", *LAUNCH_YEARS, "Category", "Rationale / Business Need"]], use_container_width=True, hide_index=True)
+            trace_view = all_projects[["Function", "Project / Initiative Name", *LAUNCH_YEARS, "Category", "Rationale / Business Need"]]
+            render_finance_table(trace_view, set(LAUNCH_YEARS))
 
     refreshed = launch_assumptions(data, case, model)
     st.markdown("### Finance Input Package")
