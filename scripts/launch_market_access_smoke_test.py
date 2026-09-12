@@ -65,6 +65,7 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
     app.session_state["launch_page"] = "Launch Case"
     app.session_state["selected_launch_case_id"] = case_id
     app.session_state["launch_current_role"] = "Market Access"
+    app.session_state[f"launch_case_section_{case_id}"] = "Workstreams"
     app.run()
     assert_clean(app, f"{case_id} Market Access")
 

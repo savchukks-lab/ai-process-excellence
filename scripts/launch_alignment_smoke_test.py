@@ -31,8 +31,10 @@ app.session_state["current_module"] = "launch"
 app.session_state["launch_page"] = "Launch Case"
 app.session_state["selected_launch_case_id"] = CASE_ID
 app.session_state["launch_current_role"] = "Marketing · Launch Coordinator"
+app.session_state[f"launch_case_section_{CASE_ID}"] = "Workstreams"
+app.session_state[f"launch_workstream_section_{CASE_ID}"] = "Marketing"
 app.run()
-assert_clean(app, "coordinator all-workspace render")
+assert_clean(app, "coordinator Marketing workspace render")
 
 package_labels = {
     "Share Marketing Input for Alignment",
@@ -43,11 +45,18 @@ package_labels = {
     "Share Supply Input for Alignment",
     "Share Finance Input for Alignment",
 }
-rendered_labels = [button.label for button in app.button]
-for label in package_labels:
-    assert rendered_labels.count(label) == 1, f"Expected one package action: {label}"
-assert "Share for Alignment" not in rendered_labels
-assert "Save & Share for Alignment" not in rendered_labels
+for workspace, label in zip(
+    ("Marketing", "Sales", "Medical", "Market Access", "Regulatory", "Supply / Operations", "Finance"),
+    sorted(package_labels),
+):
+    app.session_state[f"launch_workstream_section_{CASE_ID}"] = workspace
+    app.run()
+    assert_clean(app, f"coordinator {workspace} workspace")
+    rendered_labels = [button.label for button in app.button]
+    expected_label = f"Share {'Supply' if workspace == 'Supply / Operations' else workspace} Input for Alignment"
+    assert rendered_labels.count(expected_label) == 1, f"Expected one package action: {expected_label}"
+    assert "Share for Alignment" not in rendered_labels
+    assert "Save & Share for Alignment" not in rendered_labels
 
 for role in (
     "Marketing · Launch Coordinator",
@@ -63,6 +72,7 @@ for role in (
     assert_clean(app, f"{role} workspace")
 
 app.session_state["launch_current_role"] = "Marketing · Launch Coordinator"
+app.session_state[f"launch_workstream_section_{CASE_ID}"] = "Marketing"
 app.run()
 expander_labels = {expander.label for expander in app.expander}
 assert any(label.startswith("Medical Target Patient Package") for label in expander_labels)
@@ -86,6 +96,7 @@ assert_clean(app, "Medical package share")
 assert record(app, "Disease / Indication")["Validation Status"] == "Shared for Alignment"
 
 app.session_state["launch_current_role"] = "Marketing · Launch Coordinator"
+app.session_state[f"launch_workstream_section_{CASE_ID}"] = "Marketing"
 app.run()
 assert not widget_by_key(app.button, confirm_key).disabled
 assert not widget_by_key(app.button, request_key).disabled
@@ -113,6 +124,7 @@ assert_clean(app, "Medical package re-share")
 assert record(app, "Disease / Indication")["Validation Status"] == "Shared for Alignment"
 
 app.session_state["launch_current_role"] = "Marketing · Launch Coordinator"
+app.session_state[f"launch_workstream_section_{CASE_ID}"] = "Marketing"
 app.run()
 widget_by_key(app.button, confirm_key).click().run()
 assert_clean(app, "confirm alignment")

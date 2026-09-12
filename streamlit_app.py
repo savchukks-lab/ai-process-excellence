@@ -9004,9 +9004,10 @@ def launch_sensitivity_defaults() -> dict[str, dict[str, float]]:
 def get_launch_sensitivity(case_id: str) -> dict[str, dict[str, float]]:
     key = launch_sensitivity_state_key(case_id)
     defaults = launch_sensitivity_defaults()
-    current = st.session_state.get(key, {})
+    current = st.session_state.get(key)
     if not isinstance(current, dict):
-        current = {}
+        current = deepcopy(defaults)
+        st.session_state[key] = deepcopy(current)
     values = {
         driver: {
             scenario: safe_float(current.get(driver, {}).get(scenario, default_value))
@@ -9014,7 +9015,6 @@ def get_launch_sensitivity(case_id: str) -> dict[str, dict[str, float]]:
         }
         for driver, scenarios in defaults.items()
     }
-    st.session_state[key] = values
     return deepcopy(values)
 
 
@@ -9203,27 +9203,33 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
     sections = ["Overview", "Workstreams", "Sensitivity", "Readiness", "Decision Case"]
     model = calculate_launch_model(data, case, "Base", include_scenarios=False)
     assumptions = launch_assumptions(data, case, model)
-    primary_tabs = st.tabs(sections)
+    section = st.radio(
+        "Launch case section",
+        sections,
+        horizontal=True,
+        key=f"launch_case_section_{selected_id}",
+        label_visibility="collapsed",
+    )
 
-    with primary_tabs[0]:
+    if section == "Overview":
         render_launch_overview(case, data, model, assumptions)
-
-    with primary_tabs[1]:
+    elif section == "Workstreams":
         if launch_is_coordinator():
-            workstream_tabs = st.tabs(LAUNCH_WORKSTREAMS)
-            for tab, workspace in zip(workstream_tabs, LAUNCH_WORKSTREAMS):
-                with tab:
-                    render_launch_workspace(case, data, workspace)
+            workspace = st.radio(
+                "Launch workstream",
+                LAUNCH_WORKSTREAMS,
+                horizontal=True,
+                key=f"launch_workstream_section_{selected_id}",
+                label_visibility="collapsed",
+            )
+            render_launch_workspace(case, data, workspace)
         else:
             render_launch_workspace(case, data, launch_user_workstream())
-
-    with primary_tabs[2]:
+    elif section == "Sensitivity":
         render_launch_sensitivity(case, data, model)
-
-    with primary_tabs[3]:
+    elif section == "Readiness":
         render_launch_readiness(assumptions)
-
-    with primary_tabs[4]:
+    else:
         render_launch_decision_case()
 
 
