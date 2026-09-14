@@ -21,6 +21,7 @@ def widget_by_key(widgets, key: str):
 
 
 required_finance = {
+    "Discount Rate",
     "COGS per Unit",
     "Product Manager Fully Loaded Cost per FTE",
     "Product Manager Annual Escalation %",
@@ -55,6 +56,11 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
     assert medical_fte["Owner"] == "Medical"
 
     cogs = next(row for row in records if row.get("Assumption Name") == "COGS per Unit")
+    discount_rate = next(row for row in records if row.get("Assumption Name") == "Discount Rate")
+    assert discount_rate["Owner"] == "Finance"
+    assert discount_rate["Source"] == "Central Reference Data"
+    assert float(discount_rate["Reference Value"]) == float(discount_rate["Case Snapshot"])
+    assert not bool(discount_rate["Override Enabled"])
     assert cogs["Owner"] == "Finance"
     assert "Supply / Operations" not in str(cogs.get("Validators", ""))
     assert all(cogs.get(year) is not None for year in ("Y1", "Y2", "Y3", "Y4", "Y5"))

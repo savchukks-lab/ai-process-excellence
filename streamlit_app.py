@@ -27,6 +27,13 @@ from deal_logic import (
     score_deal,
     summarize_lines,
 )
+from launch_master_model import (
+    LAUNCH_YEARS as MASTER_MODEL_YEARS,
+    calculate_management_valuation,
+    evaluate_scenarios,
+    load_sensitivity_drivers,
+    normalize_sensitivity_settings,
+)
 
 try:
     faulthandler.enable()
@@ -4214,6 +4221,7 @@ def launch_cases(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
             "Market / Region": "Region A",
             "Launch Coordinator": "Marketing · Launch Coordinator",
             "Planned Launch Date": "2027-03-15",
+            "Decision / Deck Deadline": "2026-10-05",
             "Access Archetype": "Reimbursement Dependent",
             "Case Status": "Planning / Inputs in Progress",
             "Created Date": "2026-08-10",
@@ -4229,6 +4237,7 @@ def launch_cases(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
             "Market / Region": "Region B",
             "Launch Coordinator": "Marketing · Launch Coordinator",
             "Planned Launch Date": "2027-01-20",
+            "Decision / Deck Deadline": "2026-12-15",
             "Access Archetype": "Predominantly OOP / Broad Access",
             "Case Status": "Readiness Review",
             "Created Date": "2026-08-18",
@@ -4302,11 +4311,71 @@ LAUNCH_VALIDATION_STATUSES = [
 ]
 
 LAUNCH_YEARS = ["Y1", "Y2", "Y3", "Y4", "Y5"]
+LAUNCH_MASTER_MODEL_PATH = DEMO_DIR / "Launch_Master_Model.xlsx"
+assert tuple(LAUNCH_YEARS) == MASTER_MODEL_YEARS
 LAUNCH_SCENARIOS = ["Downside", "Base", "Upside"]
 LAUNCH_WORKSTREAMS = ["Marketing", "Sales", "Medical", "Market Access", "Regulatory", "Supply / Operations", "Finance"]
 LAUNCH_ROLES = ["Marketing · Launch Coordinator", "Sales", "Medical", "Market Access", "Regulatory", "Supply / Operations", "Finance"]
+LAUNCH_READINESS_CONFIG = {
+    "data_weight": 0.50,
+    "process_weight": 0.50,
+    "alignment_weight": 0.50,
+    "sensitivity_weight": 0.50,
+    "at_risk_30_days": 30,
+    "at_risk_30_days_min_readiness": 0.70,
+    "at_risk_14_days": 14,
+    "at_risk_14_days_min_readiness": 0.90,
+    "not_started_max_readiness": 0.05,
+}
+LAUNCH_READINESS_TOPICS = {
+    "Marketing": [
+        ("Market Share", ("Market Share",)),
+        ("Competitive Landscape", ("Competitive Landscape",)),
+        ("Marketing FTE", ("Marketing FTE",)),
+    ],
+    "Medical": [
+        ("Target Patient / Treatment Positioning", ("Disease / Indication", "Target Segment / Severity", "Line of Therapy")),
+        ("Funnel Assumptions", ("Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility")),
+        ("Treatment & Utilization", ("Dose per Administration", "Administration Frequency", "Treatment Duration", "Compliance")),
+        ("Key Clinical Value", ("Unmet Need Level", "Overall Clinical Value")),
+        ("Medical FTE", ("Medical FTE",)),
+    ],
+    "Sales": [
+        ("Sales Coverage & Execution Plan", ("Regions Covered", "Population-weighted Geographic Coverage %")),
+        ("Sales FTE", ("Sales FTE",)),
+    ],
+    "Market Access": [
+        ("Access Strategy & Eligibility", ("Access Archetype", "Access Strategy & Pathway", "Access Eligibility / Restrictions")),
+        ("Price–Reach–Speed Channel Plan", ("Market Access Channel Plan",)),
+    ],
+    "Regulatory": [
+        ("Regulatory Path & Timing", ("Regulatory Dossier Submission Date", "Expected Regulatory Approval Date", "Approval Timing Rationale / Key Drivers")),
+        ("Expected Label / Indication", ("Expected Label / Indication",)),
+        ("Material Regulatory Risk", ("Risk Level",)),
+    ],
+    "Supply / Operations": [
+        ("Product Availability", ("Expected Stock Available Date", "Supply Plan / Rationale")),
+        ("Manufacturing / Supply Constraints", ("Manufacturing / Supply Constraint Status",)),
+        ("Supply / Warehouse Capacity", ("Supply / Warehouse Capacity Status",)),
+    ],
+    "Finance": [
+        ("COGS", ("COGS per Unit",)),
+        ("Personnel Cost Assumptions", (
+            "Product Manager Fully Loaded Cost per FTE",
+            "KAM / Sales FTE Fully Loaded Cost per FTE",
+            "MSL / Medical FTE Fully Loaded Cost per FTE",
+        )),
+    ],
+}
 
 CENTRAL_REFERENCE_LIBRARY = {
+    "Discount Rate": {
+        "Corporate Standard": {
+            "Reference": "Corporate Launch Discount Rate",
+            "Last Updated": "2026-09-01",
+            "Value": 0.10,
+        },
+    },
     "Population": {
         "Region A": {
             "Reference": "Region A Population",
@@ -4370,11 +4439,18 @@ def central_population_reference(case: pd.Series) -> dict[str, object]:
     return reference
 
 
+def central_discount_rate_reference() -> dict[str, object]:
+    return central_reference("Discount Rate", "Corporate Standard", "Corporate Standard")
+
+
 def central_dosing_reference(case: pd.Series) -> dict[str, object]:
     return central_reference("Dosing", str(case.get("Product", "")), "Default")
 
 
 LAUNCH_DEFINITIONS = {
+    "Discount Rate": "Rate used to discount future launch-case cash flows to present value.",
+    "5Y NPV": "Discounted sum of Y1-Y5 Operating Profit less explicit one-off launch investments and non-operating launch cash outflows.",
+    "Payback Period": "Point when cumulative undiscounted Operating Profit less explicit one-off launch investments and non-operating launch cash outflows becomes positive.",
     "Population": "The total population in the selected market or region for the relevant year.",
     "Prevalence": "The proportion of the total population living with the disease in the relevant year.",
     "Disease Population": "Population multiplied by Prevalence.",
@@ -4556,6 +4632,47 @@ def launch_user_workstream() -> str:
 
 def launch_is_coordinator() -> bool:
     return st.session_state.get("launch_current_role") == "Marketing · Launch Coordinator"
+
+
+def launch_decision_deadline_key(case_id: str) -> str:
+    return f"launch_case_decision_deck_deadline_{case_id}"
+
+
+def launch_decision_deadline_widget_key(case_id: str) -> str:
+    return f"launch_decision_deck_deadline_widget_{case_id}"
+
+
+def launch_decision_deadline(case: pd.Series) -> date:
+    case_id = str(case.get("Launch Case ID", ""))
+    key = launch_decision_deadline_key(case_id)
+    if key not in st.session_state:
+        parsed = pd.to_datetime(case.get("Decision / Deck Deadline"), errors="coerce")
+        st.session_state[key] = parsed.date() if not pd.isna(parsed) else date.today() + timedelta(days=90)
+    value = st.session_state.get(key)
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    parsed = pd.to_datetime(value, errors="coerce")
+    return parsed.date() if not pd.isna(parsed) else date.today() + timedelta(days=90)
+
+
+def render_launch_decision_deadline(case: pd.Series) -> date:
+    case_id = str(case.get("Launch Case ID", ""))
+    current = launch_decision_deadline(case)
+    selected = st.date_input(
+        "Decision / Deck Deadline",
+        value=current,
+        key=launch_decision_deadline_widget_key(case_id),
+        disabled=not launch_is_coordinator(),
+        help=(
+            "Date by which the launch case should be sufficiently complete for management decision or deck submission. "
+            "It is separate from regulatory approval, stock availability and launch dates."
+        ),
+    )
+    if selected != current:
+        st.session_state[launch_decision_deadline_key(case_id)] = selected
+    return selected
 
 
 def split_validators(value: object) -> list[str]:
@@ -4874,6 +4991,30 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("Supply / Operations", "Supply / Warehouse Capacity", "Capacity / Logistics Issue", supply.get("Capacity / Logistics Issue", ""), "Text")
     add("Supply / Operations", "Supply / Warehouse Capacity", "Capacity Impact / Comment", supply.get("Impact / Comment", ""), "Text")
 
+    discount_reference = central_discount_rate_reference()
+    discount_rate = safe_float(discount_reference.get("Value", 0.10))
+    add(
+        "Finance",
+        "Valuation Reference",
+        "Discount Rate",
+        discount_rate,
+        "Percentage",
+        "%",
+        source="Central Reference Data",
+        confidence="",
+        assumption_type="MASTER DATA",
+        owner="Finance",
+    )
+    records[-1].update(
+        {
+            "Reference": discount_reference.get("Reference", "Corporate Launch Discount Rate"),
+            "Reference Last Updated": discount_reference.get("Last Updated", ""),
+            "Reference Value": discount_rate,
+            "Case Snapshot": discount_rate,
+            "Override Enabled": False,
+            "Override Rationale": "",
+        }
+    )
     add("Finance", "Product Economics", "COGS per Unit", product.get("Standard Cost", 0), "Yearly Number", "Local currency / unit", "Marketing", launch_year_values(safe_float(product.get("Standard Cost", 0))), source="Product cost reference", rationale="Direct product cost recognized per sellable unit.")
     records[-1]["Forecast Mode"] = "Constant Across Forecast"
     for function, role_name in [("Marketing", "Product Manager"), ("Sales", "KAM / Sales FTE"), ("Medical", "MSL / Medical FTE")]:
@@ -4885,6 +5026,54 @@ def build_launch_case_assumptions(case: pd.Series, product: dict[str, object]) -
     add("System", "Calculated", "Clinically Addressable Population", "Calculated", "Calculated", "Patients", calculated=True)
     add("System", "Calculated", "Net Revenue", "Calculated", "Calculated", "Local currency", calculated=True)
     add("System", "Calculated", "Operating Profit", "Calculated", "Calculated", "Local currency", calculated=True)
+
+    if case_id == "LAUNCH-1001":
+        demo_statuses = {
+            "Marketing": "Aligned",
+            "Sales": "Shared for Alignment",
+            "Medical": "Shared for Alignment",
+            "Market Access": "Aligned",
+            "Regulatory": "Shared for Alignment",
+            "Supply / Operations": "Draft",
+            "Finance": "Aligned",
+        }
+        issue_seeded = False
+        for record in records:
+            owner = str(record.get("Owner", ""))
+            if bool(record.get("Calculated", False)) or not str(record.get("Validators", "")).strip() or owner not in demo_statuses:
+                continue
+            status = demo_statuses[owner]
+            if owner == "Medical" and not issue_seeded:
+                status = "Alignment Required"
+                issue_seeded = True
+            record["Validation Status"] = status
+            if status != "Draft":
+                record["Validation History"] = [
+                    {
+                        "Role": owner,
+                        "Action": "Shared for Alignment",
+                        "Comment": "Demo input package shared for cross-functional review.",
+                        "Timestamp": "2026-09-08 09:00:00",
+                    }
+                ]
+            if status == "Aligned":
+                record["Validation History"].append(
+                    {
+                        "Role": split_validators(record.get("Validators", ""))[0],
+                        "Action": "Confirmed Alignment",
+                        "Comment": "Assumption aligned for the current launch case.",
+                        "Timestamp": "2026-09-09 14:30:00",
+                    }
+                )
+            elif status == "Alignment Required":
+                record["Validation History"].append(
+                    {
+                        "Role": split_validators(record.get("Validators", ""))[0],
+                        "Action": "Requested Change",
+                        "Comment": "Clarify the clinical evidence basis before alignment.",
+                        "Timestamp": "2026-09-10 11:15:00",
+                    }
+                )
     return records
 
 
@@ -4923,6 +5112,16 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
         return [deepcopy(row) for row in defaults]
 
     stored = [deepcopy(row) for row in st.session_state.get(key, []) if isinstance(row, dict)]
+    stored_alignment_rows = [
+        row for row in stored
+        if not bool(row.get("Calculated", False)) and str(row.get("Validators", "")).strip()
+    ]
+    seed_demo_alignment = (
+        case_id == "LAUNCH-1001"
+        and bool(stored_alignment_rows)
+        and all(launch_alignment_status(row.get("Validation Status", "Draft")) in {"Draft", "Not Started"} for row in stored_alignment_rows)
+        and not any(row.get("Validation History") for row in stored_alignment_rows)
+    )
     legacy_names = {
         "Prevalence": ["Prevalence", "Prevalence / Incidence"],
         "Treatment Rate / Treatment Eligibility": ["Treatment Rate / Treatment Eligibility", "Treatment Eligibility"],
@@ -4957,6 +5156,8 @@ def get_launch_assumption_records(case: pd.Series, product: dict[str, object]) -
         if safe_float(existing.get("Alignment Schema Version")) >= 3 and "Validators" in existing:
             merged["Validators"] = str(existing["Validators"])
         for field in ["Value", "Forecast Mode", "Source Type", "Source", "Rationale / Comment", "Confidence", "Validation Status", "Enabled", "Validation History", "Last Updated", "Case Snapshot", "Override Enabled", "Override Values", "Override Rationale", "Duration Unit", "Reference", "Reference Value", "Reference Last Updated", "Medical Schema Version"]:
+            if seed_demo_alignment and field in {"Validation Status", "Validation History"}:
+                continue
             if field in existing:
                 merged[field] = deepcopy(existing[field])
         if str(default.get("Category")) == "Personnel Cost Assumptions":
@@ -5068,6 +5269,7 @@ def apply_launch_assumptions_to_inputs(inputs: dict[str, object], records: list[
     updated["supply"]["Warehouse Capacity Status"] = str(value("Supply / Warehouse Capacity Status", updated["supply"].get("Warehouse Capacity Status", "Yes")))
     updated["supply"]["Capacity / Logistics Issue"] = str(value("Capacity / Logistics Issue", updated["supply"].get("Capacity / Logistics Issue", "")))
     updated["supply"]["Impact / Comment"] = str(value("Capacity Impact / Comment", updated["supply"].get("Impact / Comment", "")))
+    updated["discount_rate"] = max(0.0, safe_float(value("Discount Rate", 0.10)))
     cogs_default = safe_float(updated.get("cogs_per_unit", 0)) or 0.0
     updated["cogs_per_unit"] = years("COGS per Unit", launch_year_values(cogs_default))
     updated["personnel"]["Marketing"]["FTE"] = years("Marketing FTE", updated["personnel"]["Marketing"]["FTE"])
@@ -5137,10 +5339,22 @@ def market_access_plan_entries(plan: dict[str, object]) -> list[dict[str, object
     return entries
 
 
+def launch_adjustment_for_year(
+    adjustments: dict[str, object],
+    name: str,
+    year: str,
+    default: float,
+) -> float:
+    value = adjustments.get(name, default)
+    if isinstance(value, dict):
+        value = value.get(year, default)
+    return safe_float(value)
+
+
 def market_access_year_metrics(
     plan: dict[str, object],
     launch_year: int,
-    adjustments: dict[str, float] | None = None,
+    adjustments: dict[str, object] | None = None,
 ) -> dict[str, dict[str, object]]:
     adjustments = adjustments or {}
     entries = market_access_plan_entries(plan)
@@ -5150,7 +5364,8 @@ def market_access_year_metrics(
         for entry in entries:
             raw_reach = max(0.0, safe_float(entry.get("Reach", {}).get(year)))
             start_fraction = launch_availability_fraction(entry.get("Access Start Date"), launch_year, year_index)
-            effective_reach = raw_reach * safe_float(adjustments.get("Access Rate", 1.0)) * start_fraction
+            access_multiplier = launch_adjustment_for_year(adjustments, "Access Rate", year, 1.0)
+            effective_reach = max(0.0, raw_reach * access_multiplier) * start_fraction
             list_price = max(0.0, safe_float(entry.get("List Price", {}).get(year)))
             if bool(entry.get("Show Price Bridge", False)):
                 rebate = min(1.0, max(0.0, safe_float(entry.get("Rebate / Discount", {}).get(year))))
@@ -5166,11 +5381,18 @@ def market_access_year_metrics(
                     "Effective Reach": effective_reach,
                     "Access Start Date": entry.get("Access Start Date", ""),
                     "List Price": list_price,
-                    "Net Price": net_price * safe_float(adjustments.get("Net Price", 1.0)),
+                    "Net Price": net_price * launch_adjustment_for_year(adjustments, "Net Price", year, 1.0),
                 }
             )
         raw_total = sum(safe_float(row["Raw Reach"]) for row in year_rows)
         effective_total = sum(safe_float(row["Effective Reach"]) for row in year_rows)
+        access_delta = launch_adjustment_for_year(adjustments, "Access Rate PP", year, 0.0)
+        target_reach = min(1.0, max(0.0, effective_total + access_delta))
+        if effective_total > 0 and target_reach != effective_total:
+            scale = target_reach / effective_total
+            for row in year_rows:
+                row["Effective Reach"] = safe_float(row["Effective Reach"]) * scale
+            effective_total = target_reach
         if effective_total > 1.0:
             scale = 1.0 / effective_total
             for row in year_rows:
@@ -5258,7 +5480,7 @@ def calculate_launch_funnel(
     )
     rows = []
     for year in LAUNCH_YEARS:
-        population = yearly("Population", year) * safe_float(adjustments.get("Population", 1.0))
+        population = yearly("Population", year) * launch_adjustment_for_year(adjustments, "Population", year, 1.0)
         prevalence = yearly("Prevalence", year)
         disease_population = population * prevalence
         diagnosis_rate = yearly("Diagnosis Rate", year)
@@ -5268,7 +5490,7 @@ def calculate_launch_funnel(
             max(
                 0.0,
                 yearly("Treatment Rate / Treatment Eligibility", year)
-                * safe_float(adjustments.get("Treatment Eligibility", 1.0)),
+                * launch_adjustment_for_year(adjustments, "Treatment Eligibility", year, 1.0),
             ),
         )
         treated_patients = diagnosed_patients * treatment_rate
@@ -5278,8 +5500,10 @@ def calculate_launch_funnel(
             1.0,
             max(
                 0.0,
-                yearly("Market Share", year) * safe_float(adjustments.get("Market Share", 1.0))
-                + safe_float(adjustments.get("Market Share PP", 0.0)),
+                yearly("Market Share", year)
+                * launch_adjustment_for_year(adjustments, "Market Share", year, 1.0)
+                * launch_adjustment_for_year(adjustments, "Sales Coverage", year, 1.0)
+                + launch_adjustment_for_year(adjustments, "Market Share PP", year, 0.0),
             ),
         )
         patients_on_product = accessible_patients * market_share
@@ -5499,7 +5723,7 @@ def calculate_launch_model(
     case: pd.Series,
     scenario: str = "Base",
     include_scenarios: bool = True,
-    adjustment_overrides: dict[str, float] | None = None,
+    adjustment_overrides: dict[str, object] | None = None,
 ) -> dict[str, pd.DataFrame | dict[str, object]]:
     products = data.get("products", pd.DataFrame())
     product = launch_product(products, str(case.get("Product", "")))
@@ -5508,8 +5732,13 @@ def calculate_launch_model(
     inputs = apply_launch_assumptions_to_inputs(inputs, assumption_records)
     adjustments = launch_scenario_adjustments(inputs, scenario)
     if adjustment_overrides:
-        adjustments.update({key: safe_float(value) for key, value in adjustment_overrides.items()})
-    multiplier = adjustments["Population"]
+        adjustments.update(
+            {
+                key: deepcopy(value) if isinstance(value, dict) else safe_float(value)
+                for key, value in adjustment_overrides.items()
+            }
+        )
+    multiplier = launch_adjustment_for_year(adjustments, "Population", "Y5", 1.0)
     flow_rows = [dict(row) for row in inputs["patient_flow"]]
     patient_flow = calculate_patient_flow(flow_rows, multiplier)
     launch_year = launch_year_from_case(case)
@@ -5523,24 +5752,28 @@ def calculate_launch_model(
     archetype = str(inputs.get("access_archetype") or case.get("Access Archetype", ""))
     planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
     planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
+    regulatory_approval_date = str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date))
+    stock_available_date = str(supply.get("Expected Stock Available Date", planned_launch_date))
     commercial_gate_date = max(
-        str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)),
+        shift_launch_date(regulatory_approval_date, launch_adjustment_for_year(adjustments, "Timing Shift Days", "Y5", 0.0)),
         planned_launch_date,
-        str(supply.get("Expected Stock Available Date", planned_launch_date)),
+        stock_available_date,
     )
-    commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
 
     forecast_rows = []
     channel_rows = []
     for index, year in enumerate(LAUNCH_YEARS):
         funnel_row = funnel[funnel["Year"].eq(year)].iloc[0]
         clinical_patients = safe_float(funnel_row.get("Treated Patients"))
-        reg_fraction = launch_availability_fraction(regulatory.get("Expected Regulatory Approval Date"), launch_year, index)
+        timing_shift = launch_adjustment_for_year(adjustments, "Timing Shift Days", year, 0.0)
+        shifted_approval_date = shift_launch_date(regulatory_approval_date, timing_shift)
+        reg_fraction = launch_availability_fraction(shifted_approval_date, launch_year, index)
         launch_fraction = launch_availability_fraction(planned_launch_date, launch_year, index)
+        year_commercial_gate = max(shifted_approval_date, planned_launch_date, stock_available_date)
         availability_fraction = min(
             reg_fraction,
             launch_fraction,
-            launch_availability_fraction(commercial_gate_date, launch_year, index),
+            launch_availability_fraction(year_commercial_gate, launch_year, index),
         )
         accessible_patients = safe_float(funnel_row.get("Accessible Patients")) * availability_fraction
         patients_on_product = safe_float(funnel_row.get("Patients on Product")) * availability_fraction
@@ -5561,7 +5794,7 @@ def calculate_launch_model(
         unit_cost = (
             safe_float(inputs.get("cogs_per_unit", {}).get(year))
             or safe_float(product.get("Standard Cost"))
-        ) * adjustments["COGS"]
+        ) * launch_adjustment_for_year(adjustments, "COGS", year, 1.0)
         revenue = sellable_units * realized_net_price
         total_reach = safe_float(year_access.get("Total Reach"))
         for channel in year_access.get("Rows", []):
@@ -5682,88 +5915,24 @@ def calculate_launch_model_no_scenarios(
     data: dict[str, pd.DataFrame],
     case: pd.Series,
     scenario: str,
-    adjustment_overrides: dict[str, float] | None = None,
+    adjustment_overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    products = data.get("products", pd.DataFrame())
-    product = launch_product(products, str(case.get("Product", "")))
-    inputs = launch_default_model_inputs(str(case.get("Launch Case ID", "")), case, product)
-    assumption_records = get_launch_assumption_records(case, product)
-    inputs = apply_launch_assumptions_to_inputs(inputs, assumption_records)
-    adjustments = launch_scenario_adjustments(inputs, scenario)
-    if adjustment_overrides:
-        adjustments.update({key: safe_float(value) for key, value in adjustment_overrides.items()})
-    multiplier = adjustments["Population"]
-    patient_flow = calculate_patient_flow([dict(row) for row in inputs["patient_flow"]], multiplier)
-    launch_year = launch_year_from_case(case)
-    funnel = calculate_launch_funnel(assumption_records, adjustments, launch_year)
-    regulatory = inputs["regulatory"]
-    supply = inputs["supply"]
-    market_share = inputs["market_share"]
-    utilization = inputs["utilization"]
-    access_metrics = market_access_year_metrics(inputs.get("access_plan", {}), launch_year, adjustments)
-    planned_launch = pd.to_datetime(case.get("Planned Launch Date"), errors="coerce")
-    planned_launch_date = planned_launch.date().isoformat() if not pd.isna(planned_launch) else f"{launch_year}-01-01"
-    commercial_gate_date = max(
-        str(regulatory.get("Expected Regulatory Approval Date", planned_launch_date)),
-        planned_launch_date,
-        str(supply.get("Expected Stock Available Date", planned_launch_date)),
+    model = calculate_launch_model(
+        data,
+        case,
+        scenario,
+        include_scenarios=False,
+        adjustment_overrides=adjustment_overrides,
     )
-    archetype = str(inputs.get("access_archetype") or case.get("Access Archetype", ""))
-    commercial_gate_date = shift_launch_date(commercial_gate_date, adjustments["Timing Shift Days"])
-    y5_patients = 0.0
-    y5_revenue = 0.0
-    y5_op = 0.0
-    cumulative_revenue = 0.0
-    cumulative_op = 0.0
-    _, personnel_costs, _ = launch_personnel_cost_model(inputs)
-    project_df, project_opex, _ = launch_project_opex(get_launch_projects(str(case.get("Launch Case ID", "")), inputs["projects"]))
-    for index, year in enumerate(LAUNCH_YEARS):
-        funnel_row = funnel[funnel["Year"].eq(year)].iloc[0]
-        availability_fraction = min(
-            launch_availability_fraction(regulatory.get("Expected Regulatory Approval Date"), launch_year, index),
-            launch_availability_fraction(planned_launch_date, launch_year, index),
-            launch_availability_fraction(commercial_gate_date, launch_year, index),
-        )
-        accessible = safe_float(funnel_row.get("Accessible Patients")) * availability_fraction
-        patients = safe_float(funnel_row.get("Patients on Product")) * availability_fraction
-        units_per_patient = safe_float(utilization.get("Units per Patient"))
-        if utilization.get("Compliance Enabled", True):
-            units_per_patient *= safe_float(utilization.get("Compliance"))
-        if utilization.get("Persistence Enabled", True):
-            units_per_patient *= safe_float(utilization.get("Persistence"))
-        demand_units = patients * units_per_patient
-        max_units = safe_float(supply.get("Maximum Available Units", {}).get(year, 0))
-        capacity_constrained = (
-            bool(supply.get("Capacity Constraint Enabled", False))
-            and str(supply.get("Constraint Status", "No known constraint")) != "No known constraint"
-        )
-        sellable = min(demand_units, max(0.0, max_units)) if capacity_constrained else demand_units
-        realized_net_price = safe_float(access_metrics.get(year, {}).get("Weighted Net Price"))
-        unit_cost = (
-            safe_float(inputs.get("cogs_per_unit", {}).get(year))
-            or safe_float(product.get("Standard Cost"))
-        ) * adjustments["COGS"]
-        revenue = sellable * realized_net_price
-        gross_profit = revenue - sellable * unit_cost
-        opex = 0.0
-        for annual_costs in personnel_costs.values():
-            opex += safe_float(annual_costs.get(year))
-        for values in project_opex.values():
-            opex += safe_float(values.get(year))
-        operating_profit = gross_profit - opex
-        cumulative_revenue += revenue
-        cumulative_op += operating_profit
-        if year == "Y5":
-            y5_patients = patients
-            y5_revenue = revenue
-            y5_op = operating_profit
+    forecast = model.get("forecast", pd.DataFrame())
+    y5 = forecast[forecast["Year"].eq("Y5")].iloc[0] if isinstance(forecast, pd.DataFrame) and not forecast.empty else pd.Series(dtype=object)
     return {
         "Scenario": scenario,
-        "Y5 Patients": round(y5_patients),
-        "Y5 Revenue": money(y5_revenue),
-        "5Y Cumulative Revenue": money(cumulative_revenue),
-        "Y5 Operating Profit": money(y5_op),
-        "5Y Cumulative Operating Profit": money(cumulative_op),
+        "Y5 Patients": round(safe_float(y5.get("Patients on Product"))),
+        "Y5 Revenue": money(y5.get("Net Revenue", 0)),
+        "5Y Cumulative Revenue": money(sum(safe_float(value) for value in forecast.get("Net Revenue", pd.Series(dtype=float)))) if isinstance(forecast, pd.DataFrame) else money(0),
+        "Y5 Operating Profit": money(launch_pnl_value(model, "Operating Profit")),
+        "5Y Cumulative Operating Profit": money(sum(launch_pnl_value(model, "Operating Profit", year) for year in LAUNCH_YEARS)),
     }
 
 
@@ -6113,6 +6282,7 @@ def page_launch_new_case(data: dict[str, pd.DataFrame]) -> None:
             "Market / Region": market,
             "Launch Coordinator": "Marketing · Launch Coordinator",
             "Planned Launch Date": launch_date.isoformat(),
+            "Decision / Deck Deadline": (date.today() + timedelta(days=120)).isoformat(),
             "Access Archetype": archetype,
             "Case Status": "Planning / Inputs in Progress",
             "Created Date": date.today().isoformat(),
@@ -6453,6 +6623,72 @@ def render_population_reference(case_id: str, assumption: pd.Series) -> None:
             else:
                 st.warning("A rationale is required before the case-specific override is applied.")
         render_launch_validation_history(assumption)
+
+
+def render_discount_rate_reference(case_id: str, assumption: pd.Series | None, can_edit: bool) -> None:
+    if assumption is None:
+        st.info("The Finance discount-rate reference is unavailable for this case.")
+        return
+    reference_value = safe_float(assumption.get("Reference Value", assumption.get("Case Snapshot", 0.10)))
+    snapshot = safe_float(assumption.get("Case Snapshot", reference_value))
+    current_value = safe_float(assumption.get("Value", snapshot))
+    with st.container(border=True):
+        st.markdown(f"**{launch_definition_label('Discount Rate')} · REFERENCE DATA**", unsafe_allow_html=True)
+        st.caption(
+            f"Reference: {assumption.get('Reference', 'Corporate Launch Discount Rate')} · "
+            f"Source: Central Reference Data · Last Updated: {assumption.get('Reference Last Updated', '')}"
+        )
+        summary_columns = st.columns(2)
+        summary_columns[0].metric("Saved Case Snapshot", pct(snapshot))
+        summary_columns[1].metric("Current Case Rate", pct(current_value))
+        if not can_edit:
+            basis = "Case Override" if bool(assumption.get("Override Enabled", False)) else "Reference Value"
+            st.caption(f"Basis: {basis}. Finance owns changes to this assumption.")
+            return
+        basis = st.radio(
+            "Discount Rate basis",
+            ["Use Reference Value", "Override for This Case"],
+            index=1 if bool(assumption.get("Override Enabled", False)) else 0,
+            key=f"launch_discount_rate_basis_{case_id}",
+            horizontal=True,
+        )
+        if basis == "Use Reference Value":
+            if bool(assumption.get("Override Enabled", False)) or abs(current_value - snapshot) > 1e-9:
+                update_launch_assumption_record(
+                    case_id,
+                    str(assumption.get("Assumption ID", "")),
+                    {"Value": snapshot, "Override Enabled": False, "Override Rationale": ""},
+                )
+            st.caption("The case uses its saved central-reference snapshot. Central reference data is not modified.")
+            return
+        override_columns = st.columns([1, 2])
+        override_value = override_columns[0].number_input(
+            "Case Discount Rate (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=current_value * 100,
+            step=0.5,
+            format="%.1f",
+            key=f"launch_discount_rate_override_{case_id}",
+        )
+        rationale = override_columns[1].text_input(
+            "Override Rationale *",
+            value=str(assumption.get("Override Rationale", "")),
+            key=f"launch_discount_rate_rationale_{case_id}",
+        )
+        if rationale.strip():
+            update_launch_assumption_record(
+                case_id,
+                str(assumption.get("Assumption ID", "")),
+                {
+                    "Value": safe_float(override_value) / 100,
+                    "Override Enabled": True,
+                    "Override Rationale": rationale.strip(),
+                },
+            )
+            st.caption("Case override saved. The central reference remains unchanged.")
+        else:
+            st.warning("A short rationale is required before the case-specific override is applied.")
 
 
 def render_launch_assumption_input(case_id: str, assumption: pd.Series) -> None:
@@ -7003,6 +7239,8 @@ def render_marketing_workspace(case: pd.Series, data: dict[str, pd.DataFrame], a
     st.markdown("### Reference Data")
     if not population.empty:
         render_population_reference(case_id, population.iloc[0])
+    st.markdown("### Decision Timing")
+    render_launch_decision_deadline(case)
     st.markdown("### My Inputs")
     owned_names = {"Market Share", "Competitive Landscape", "Marketing FTE"}
     owned = assumptions[assumptions["Assumption Name"].isin(owned_names) & assumptions["Owner"].eq("Marketing")]
@@ -8243,14 +8481,14 @@ def render_supply_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assu
     render_launch_package_share(case_id, refreshed, "Supply / Operations", can_edit)
 
 
-def render_finance_pnl(pnl: pd.DataFrame) -> None:
+def render_finance_pnl(pnl: pd.DataFrame, show_all: bool = False) -> None:
     if pnl.empty:
         st.info("The integrated 5-Year P&L is not available for this case.")
         return
     major_rows = {"Net Revenue", "Gross Profit", "Total OPEX", "Operating Profit"}
     secondary_rows = {"Gross Margin %", "Operating Margin %"}
     always_show = major_rows | secondary_rows | {"COGS"}
-    visible = pnl[
+    visible = pnl if show_all else pnl[
         pnl["Metric"].isin(always_show)
         | pnl[LAUNCH_YEARS].apply(lambda row: any(abs(safe_float(value)) > 1e-9 for value in row), axis=1)
     ]
@@ -8273,11 +8511,16 @@ def render_finance_pnl(pnl: pd.DataFrame) -> None:
     )
 
 
-def render_finance_table(table: pd.DataFrame, right_align: set[str] | None = None) -> None:
+def render_finance_table(
+    table: pd.DataFrame,
+    right_align: set[str] | None = None,
+    secondary_rows: set[str] | None = None,
+) -> None:
     """Render a small Finance table without Streamlit's internal scroll container."""
     if not isinstance(table, pd.DataFrame) or table.empty:
         return
     right_align = right_align or set()
+    secondary_rows = secondary_rows or set()
     headers = "".join(
         f"<th style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
         "border-bottom:1px solid #d8dee8;background:#eef2f7;font-weight:650;white-space:normal'>"
@@ -8287,9 +8530,11 @@ def render_finance_table(table: pd.DataFrame, right_align: set[str] | None = Non
     body_rows = []
     for row_index, (_, row) in enumerate(table.iterrows()):
         background = "#f8fafc" if row_index % 2 else "#ffffff"
+        first_value = str(row.iloc[0]) if len(row) else ""
+        row_style = "font-style:italic;color:#68768a;" if first_value in secondary_rows else ""
         cells = "".join(
             f"<td style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
-            "border-bottom:1px solid #e5e9f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere'>"
+            f"border-bottom:1px solid #e5e9f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere;{row_style}'>"
             f"{escape('' if pd.isna(row.get(column)) else str(row.get(column)))}</td>"
             for column in table.columns
         )
@@ -8434,7 +8679,11 @@ def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], ass
     case_id = str(case.get("Launch Case ID", ""))
     can_edit = launch_user_workstream() == "Finance"
     owned = assumptions[assumptions["Owner"].eq("Finance")]
+    discount_rate = medical_assumption(owned, "Discount Rate")
     cogs = medical_assumption(owned, "COGS per Unit")
+
+    st.markdown("### Valuation Reference")
+    render_discount_rate_reference(case_id, discount_rate, can_edit)
 
     if not can_edit:
         model = calculate_launch_model(data, case, "Base", include_scenarios=False)
@@ -8811,14 +9060,31 @@ def launch_pnl_value(model: dict[str, object], metric: str, year: str = "Y5") ->
     return safe_float(row.iloc[0].get(year)) if not row.empty else 0.0
 
 
+def launch_management_valuation(
+    model: dict[str, object],
+    discount_rate_override: float | None = None,
+) -> tuple[float, str]:
+    inputs = model.get("inputs", {})
+    base_discount_rate = safe_float(inputs.get("discount_rate", 0.10)) if isinstance(inputs, dict) else 0.10
+    discount_rate = max(0.0, safe_float(discount_rate_override)) if discount_rate_override is not None else max(0.0, base_discount_rate)
+    excluded = model.get("excluded_investment", {})
+    excluded = excluded if isinstance(excluded, dict) else {}
+    operating_profit = {year: launch_pnl_value(model, "Operating Profit", year) for year in LAUNCH_YEARS}
+    npv, payback, _ = calculate_management_valuation(operating_profit, excluded, discount_rate)
+    return npv, payback
+
+
 def launch_management_snapshot(case: pd.Series, model: dict[str, object]) -> None:
     forecast = model.get("forecast", pd.DataFrame())
     y5 = forecast[forecast["Year"].eq("Y5")].iloc[0] if isinstance(forecast, pd.DataFrame) and not forecast.empty else pd.Series(dtype=object)
+    inputs = model.get("inputs", {})
+    supply = inputs.get("supply", {}) if isinstance(inputs, dict) else {}
+    npv, payback = launch_management_valuation(model)
     cards = st.columns(5)
-    cards[0].metric("Planned Launch Date", str(case.get("Planned Launch Date", "Not set") or "Not set"))
-    cards[1].metric("Y5 Patients on Product", f"{safe_float(y5.get('Patients on Product')):,.0f}")
-    cards[2].metric("Y5 Net Revenue", money(y5.get("Net Revenue", 0)))
-    cards[3].metric("Y5 Operating Profit", money(launch_pnl_value(model, "Operating Profit")))
+    cards[0].metric("Commercial Stock Available Date", str(supply.get("Expected Stock Available Date", "Not set") or "Not set"))
+    cards[1].metric("5Y NPV", money(npv), help=launch_definition("5Y NPV"))
+    cards[2].metric("Payback Period", payback, help=launch_definition("Payback Period"))
+    cards[3].metric("Y5 Net Revenue", money(y5.get("Net Revenue", 0)))
     cards[4].metric("Y5 Operating Margin %", pct(launch_pnl_value(model, "Operating Margin %")))
 
 
@@ -8843,7 +9109,9 @@ def launch_integrated_journey(model: dict[str, object]) -> None:
         "Sellable Units",
         "Net Revenue",
         "Gross Profit",
+        "Gross Margin %",
         "Operating Profit",
+        "Operating Margin %",
     ]:
         row = {"Management Output": metric}
         for year in LAUNCH_YEARS:
@@ -8856,14 +9124,27 @@ def launch_integrated_journey(model: dict[str, object]) -> None:
             elif metric == "Sellable Units":
                 value = forecast_by_year.loc[year, metric] if year in forecast_by_year.index else 0
                 row[year] = f"{safe_float(value):,.0f}"
+            elif metric in {"Gross Margin %", "Operating Margin %"}:
+                value = pnl_by_metric.loc[metric, year] if metric in pnl_by_metric.index else 0
+                row[year] = pct(value)
             else:
                 value = pnl_by_metric.loc[metric, year] if metric in pnl_by_metric.index else 0
                 row[year] = money(value)
         rows.append(row)
-    render_finance_table(pd.DataFrame(rows), set(LAUNCH_YEARS))
+    render_finance_table(
+        pd.DataFrame(rows),
+        set(LAUNCH_YEARS),
+        {"Gross Margin %", "Operating Margin %"},
+    )
 
 
-def launch_functional_status(assumptions: pd.DataFrame) -> pd.DataFrame:
+def launch_functional_status(
+    assumptions: pd.DataFrame,
+    model: dict[str, object] | None = None,
+) -> pd.DataFrame:
+    inputs = (model or {}).get("inputs", {})
+    regulatory = inputs.get("regulatory", {}) if isinstance(inputs, dict) else {}
+    supply = inputs.get("supply", {}) if isinstance(inputs, dict) else {}
     rows = []
     for workspace in LAUNCH_WORKSTREAMS:
         package = assumptions[
@@ -8876,9 +9157,13 @@ def launch_functional_status(assumptions: pd.DataFrame) -> pd.DataFrame:
         updated = pd.to_datetime(package.get("Last Updated", pd.Series(dtype=str)), errors="coerce").dropna()
         last_updated = updated.max().strftime("%d %b %Y") if not updated.empty else "Not set"
         open_issues = int(aligned["Validation Status"].map(launch_alignment_status).eq("Alignment Required").sum()) if not aligned.empty else 0
+        if workspace == "Regulatory" and str(regulatory.get("Risk Level", "")).strip() in {"Medium", "High", "Critical"}:
+            open_issues = max(open_issues, 1)
+        if workspace == "Supply / Operations" and str(supply.get("Constraint Status", "No known constraint")) != "No known constraint":
+            open_issues = max(open_issues, 1)
         rows.append(
             {
-                "Function": "Supply" if workspace == "Supply / Operations" else workspace,
+                "Function": workspace,
                 "Input Package Status": package_status,
                 "Alignment Status": alignment_status,
                 "Last Updated": last_updated,
@@ -8892,19 +9177,27 @@ def launch_key_milestones(case: pd.Series, model: dict[str, object]) -> pd.DataF
     inputs = model.get("inputs", {})
     regulatory = inputs.get("regulatory", {}) if isinstance(inputs, dict) else {}
     supply = inputs.get("supply", {}) if isinstance(inputs, dict) else {}
-    access_plan = inputs.get("access_plan", {}) if isinstance(inputs, dict) else {}
-    access_dates = []
-    for entry in market_access_plan_entries(access_plan if isinstance(access_plan, dict) else {}):
-        parsed = pd.to_datetime(entry.get("Access Start Date"), errors="coerce")
-        if not pd.isna(parsed):
-            access_dates.append(parsed)
-    first_access = min(access_dates).date().isoformat() if access_dates else "Not set"
+    access_metrics = model.get("access_metrics", {})
+    access_50 = next(
+        (
+            f"{year} / {pct(access_metrics.get(year, {}).get('Total Reach', 0))}"
+            for year in LAUNCH_YEARS
+            if safe_float(access_metrics.get(year, {}).get("Total Reach")) >= 0.50
+        ),
+        "Not reached within 5 years",
+    )
+    funnel = model.get("funnel", pd.DataFrame())
+    if isinstance(funnel, pd.DataFrame) and not funnel.empty and "Market Share" in funnel.columns:
+        peak_row = funnel.loc[pd.to_numeric(funnel["Market Share"], errors="coerce").fillna(0).idxmax()]
+        peak_share = f"{peak_row.get('Year', 'Not set')} / {pct(peak_row.get('Market Share', 0))}"
+    else:
+        peak_share = "Not set"
     milestones = [
         ("Regulatory Dossier Submission Date", regulatory.get("Regulatory Dossier Submission Date")),
-        ("Expected Regulatory Approval Date", regulatory.get("Expected Regulatory Approval Date")),
-        ("Expected Stock Available Date", supply.get("Expected Stock Available Date")),
-        ("First Access Start Date", first_access),
-        ("Planned Launch Date", case.get("Planned Launch Date")),
+        ("Regulatory Approval Date", regulatory.get("Expected Regulatory Approval Date")),
+        ("Commercial Stock Available Date", supply.get("Expected Stock Available Date")),
+        ("50% Market Access Reached", access_50),
+        ("Peak Planned Market Share Reached", peak_share),
     ]
     return pd.DataFrame(
         [{"Milestone": name, "Current Plan": str(value or "Not set")} for name, value in milestones]
@@ -8913,58 +9206,71 @@ def launch_key_milestones(case: pd.Series, model: dict[str, object]) -> pd.DataF
 
 def launch_open_items(case: pd.Series, assumptions: pd.DataFrame, model: dict[str, object]) -> list[str]:
     issues: list[str] = []
-    required = assumptions[assumptions["Validation Status"].map(launch_alignment_status).eq("Alignment Required")]
-    for workspace in required["Owner"].dropna().astype(str).unique().tolist():
-        issues.append(f"{workspace} input package requires alignment changes.")
     inputs = model.get("inputs", {})
     regulatory = inputs.get("regulatory", {}) if isinstance(inputs, dict) else {}
     risk_level = str(regulatory.get("Risk Level", "")).strip()
     if risk_level in {"Medium", "High", "Critical"}:
         detail = str(regulatory.get("Risk / Issue", "")).strip()
-        issues.append(f"Regulatory risk ({risk_level}): {detail or 'material issue recorded.'}")
+        issues.append(f"REGULATORY · {risk_level} — {detail or 'Material issue recorded.'}")
     supply = inputs.get("supply", {}) if isinstance(inputs, dict) else {}
     constraint = str(supply.get("Constraint Status", "No known constraint"))
     if constraint != "No known constraint":
         detail = str(supply.get("Constraint / Risk", "")).strip()
-        issues.append(f"Supply feasibility is {constraint.lower()}: {detail or 'review required.'}")
+        issues.append(f"SUPPLY · {constraint} — {detail or 'Review required.'}")
     evidence = assumptions[assumptions["Assumption Name"].eq("Key Clinical Evidence Gap / Risk")]
     if not evidence.empty and str(evidence.iloc[0].get("Value", "")).strip():
-        issues.append(f"Clinical evidence gap: {str(evidence.iloc[0].get('Value', '')).strip()}")
+        issues.append(f"CLINICAL · Evidence Gap — {str(evidence.iloc[0].get('Value', '')).strip()}")
+    required = assumptions[assumptions["Validation Status"].map(launch_alignment_status).eq("Alignment Required")]
+    required_workstreams = required["Owner"].dropna().astype(str).unique().tolist()
+    if required_workstreams:
+        issues.append(f"ALIGNMENT · Open — Changes are required from {', '.join(required_workstreams)}.")
     case_issue = str(case.get("Critical Open Issues", "")).strip()
     if case_issue and case_issue != "No critical issues recorded.":
-        issues.append(case_issue)
+        issues.append(f"CASE · Open — {case_issue}")
     return list(dict.fromkeys(issues))[:5]
 
 
-def render_launch_benchmark_snapshot(case_id: str, model: dict[str, object]) -> None:
-    key = launch_finance_benchmark_state_key(case_id)
-    if key not in st.session_state:
-        return
+def render_launch_benchmark_snapshot(
+    case_id: str,
+    model: dict[str, object],
+    key_prefix: str = "launch_overview",
+) -> None:
     benchmark = get_launch_finance_benchmark(case_id, model)
-    rows = []
-    metrics = [
-        ("Y5 Net Revenue", "Revenue Enabled", "Revenue", launch_pnl_value(model, "Net Revenue"), False),
-        ("Y5 Gross Profit", "Gross Profit Enabled", "Gross Profit", launch_pnl_value(model, "Gross Profit"), False),
-        ("Y5 Gross Margin %", "Gross Margin Enabled", "Gross Margin %", launch_pnl_value(model, "Gross Margin %"), True),
+    metric_config = [
+        ("Revenue", "Revenue Enabled", "Revenue", "Net Revenue", False),
+        ("Gross Profit", "Gross Profit Enabled", "Gross Profit", "Gross Profit", False),
+        ("Gross Margin %", "Gross Margin Enabled", "Gross Margin %", "Gross Margin %", True),
     ]
-    for label, enabled_key, value_key, case_value, is_percent in metrics:
-        if not bool(benchmark.get(enabled_key, False)):
-            continue
-        values = benchmark.get(value_key, {}) if isinstance(benchmark.get(value_key), dict) else {}
-        benchmark_value = safe_float(values.get("Y5"))
-        variance = (case_value - benchmark_value) / abs(benchmark_value) if benchmark_value else 0.0
+    available = [item for item in metric_config if bool(benchmark.get(item[1], False))]
+    if not available:
+        return
+    st.markdown("### Current Case vs Benchmark")
+    st.caption(f"Reference: {benchmark.get('Benchmark Source', '')} · {benchmark.get('Benchmark Version / Date', '')}")
+    labels = [item[0] for item in available]
+    selected_label = st.selectbox(
+        "Benchmark Metric",
+        labels,
+        index=labels.index("Revenue") if "Revenue" in labels else 0,
+        key=f"{key_prefix}_benchmark_metric_{case_id}",
+    )
+    _, _, value_key, model_metric, is_percent = next(item for item in available if item[0] == selected_label)
+    values = benchmark.get(value_key, {}) if isinstance(benchmark.get(value_key), dict) else {}
+    rows = []
+    for year in LAUNCH_YEARS:
+        case_value = launch_pnl_value(model, model_metric, year)
+        benchmark_value = safe_float(values.get(year))
+        variance = case_value - benchmark_value
+        variance_pct = (case_value / benchmark_value) - 1 if benchmark_value else None
         rows.append(
             {
-                "Metric": label,
+                "Year": year,
                 "Launch Case": pct(case_value) if is_percent else money(case_value),
                 "Benchmark": pct(benchmark_value) if is_percent else money(benchmark_value),
-                "Variance %": pct(variance),
+                "Variance": f"{variance * 100:+.1f} pp" if is_percent else money(variance),
+                "Variance %": pct(variance_pct) if variance_pct is not None else "—",
             }
         )
-    if rows:
-        st.markdown("### Current Case vs Benchmark")
-        st.caption(f"Reference: {benchmark.get('Benchmark Source', '')} · {benchmark.get('Benchmark Version / Date', '')}")
-        render_finance_table(pd.DataFrame(rows), {"Launch Case", "Benchmark", "Variance %"})
+    render_finance_table(pd.DataFrame(rows), {"Launch Case", "Benchmark", "Variance", "Variance %"})
 
 
 def render_launch_overview(case: pd.Series, data: dict[str, pd.DataFrame], model: dict[str, object], assumptions: pd.DataFrame) -> None:
@@ -8973,7 +9279,7 @@ def render_launch_overview(case: pd.Series, data: dict[str, pd.DataFrame], model
     launch_integrated_journey(model)
     st.markdown("### Cross-functional Status")
     st.caption("Current input-package and alignment state from the seven functional workstreams.")
-    render_finance_table(launch_functional_status(assumptions), {"Open Issues"})
+    render_finance_table(launch_functional_status(assumptions, model), {"Open Issues"})
     st.markdown("### Key Milestones")
     render_finance_table(launch_key_milestones(case, model))
     st.markdown("### Key Risks & Open Items")
@@ -8990,204 +9296,1095 @@ def launch_sensitivity_state_key(case_id: str) -> str:
     return f"launch_sensitivity_{case_id}"
 
 
-def launch_sensitivity_defaults() -> dict[str, dict[str, float]]:
-    return {
-        "Market Share": {"Downside": -5.0, "Upside": 5.0},
-        "Treatment Eligibility": {"Downside": -10.0, "Upside": 5.0},
-        "Access": {"Downside": -10.0, "Upside": 10.0},
-        "Net Price": {"Downside": -10.0, "Upside": 5.0},
-        "Regulatory Timing": {"Downside": 90.0, "Upside": -30.0},
-        "COGS": {"Downside": 10.0, "Upside": -5.0},
-    }
+def launch_sensitivity_drivers():
+    return load_sensitivity_drivers(str(LAUNCH_MASTER_MODEL_PATH))
 
 
-def get_launch_sensitivity(case_id: str) -> dict[str, dict[str, float]]:
+def get_launch_sensitivity(case_id: str) -> dict[str, object]:
     key = launch_sensitivity_state_key(case_id)
-    defaults = launch_sensitivity_defaults()
     current = st.session_state.get(key)
-    if not isinstance(current, dict):
-        current = deepcopy(defaults)
-        st.session_state[key] = deepcopy(current)
-    values = {
-        driver: {
-            scenario: safe_float(current.get(driver, {}).get(scenario, default_value))
-            for scenario, default_value in scenarios.items()
+    normalized = normalize_sensitivity_settings(current, launch_sensitivity_drivers())
+    if not isinstance(current, dict) or "Completed Drivers" not in current:
+        demo_completed = {
+            "LAUNCH-1001": ["Market Share", "Treatment Eligibility", "Access Reach", "Net Price", "COGS", "Discount Rate"],
+            "LAUNCH-1002": [driver.name for driver in launch_sensitivity_drivers()],
         }
-        for driver, scenarios in defaults.items()
-    }
-    return deepcopy(values)
+        normalized["Completed Drivers"] = demo_completed.get(case_id, [])
+    if st.session_state.get(key) != normalized:
+        st.session_state[key] = deepcopy(normalized)
+    return deepcopy(normalized)
 
 
-def sensitivity_base_values(model: dict[str, object]) -> dict[str, str]:
+def sensitivity_sales_coverage(case: pd.Series, data: dict[str, pd.DataFrame], model: dict[str, object]) -> tuple[str, dict[str, float]]:
+    product = launch_product(data.get("products", pd.DataFrame()), str(case.get("Product", "")))
+    records = get_launch_assumption_records(case, product)
+    inputs = model.get("inputs", {})
+    resources = inputs.get("sales_resources", {}) if isinstance(inputs, dict) else {}
+    candidates = [
+        "Population-weighted Geographic Coverage %",
+        "Target Account / Center Coverage %",
+    ]
+    for name in candidates:
+        assumption = next((row for row in records if str(row.get("Assumption Name")) == name), {})
+        values = resources.get(name, {}) if isinstance(resources, dict) else {}
+        if bool(assumption.get("Enabled", False)) and isinstance(values, dict):
+            return name, {year: safe_float(values.get(year)) for year in LAUNCH_YEARS}
+    return "No active Sales coverage metric", {year: 0.0 for year in LAUNCH_YEARS}
+
+
+def sensitivity_base_inputs(
+    case: pd.Series,
+    data: dict[str, pd.DataFrame],
+    model: dict[str, object],
+) -> tuple[dict[str, object], str]:
     funnel = model.get("funnel", pd.DataFrame())
-    y5_funnel = funnel[funnel["Year"].eq("Y5")].iloc[0] if isinstance(funnel, pd.DataFrame) and not funnel.empty else pd.Series(dtype=object)
-    access = model.get("access_metrics", {}).get("Y5", {})
     inputs = model.get("inputs", {})
     regulatory = inputs.get("regulatory", {}) if isinstance(inputs, dict) else {}
     cogs = inputs.get("cogs_per_unit", {}) if isinstance(inputs, dict) else {}
-    return {
-        "Market Share": pct(y5_funnel.get("Market Share", 0)),
-        "Treatment Eligibility": pct(y5_funnel.get("Treatment Rate / Treatment Eligibility", 0)),
-        "Access": pct(access.get("Total Reach", 0)),
-        "Net Price": money(access.get("Weighted Net Price", 0)),
-        "Regulatory Timing": str(regulatory.get("Expected Regulatory Approval Date", "Not set") or "Not set"),
-        "COGS": money(cogs.get("Y5", 0)),
+    coverage_name, coverage = sensitivity_sales_coverage(case, data, model)
+    funnel_rows = {
+        year: funnel[funnel["Year"].eq(year)].iloc[0]
+        if isinstance(funnel, pd.DataFrame) and not funnel[funnel["Year"].eq(year)].empty
+        else pd.Series(dtype=object)
+        for year in LAUNCH_YEARS
     }
-
-
-def launch_sensitivity_overrides(values: dict[str, dict[str, float]], scenario: str) -> dict[str, float]:
-    if scenario == "Base":
-        return {
-            "Population": 1.0,
-            "Treatment Eligibility": 1.0,
-            "Access Rate": 1.0,
-            "Market Share": 1.0,
-            "Market Share PP": 0.0,
-            "Net Price": 1.0,
-            "COGS": 1.0,
-            "Timing Shift Days": 0.0,
-        }
-    return {
-        "Population": 1.0,
-        "Treatment Eligibility": max(0.0, 1.0 + safe_float(values["Treatment Eligibility"][scenario]) / 100),
-        "Access Rate": max(0.0, 1.0 + safe_float(values["Access"][scenario]) / 100),
-        "Market Share": 1.0,
-        "Market Share PP": safe_float(values["Market Share"][scenario]) / 100,
-        "Net Price": max(0.0, 1.0 + safe_float(values["Net Price"][scenario]) / 100),
-        "COGS": max(0.0, 1.0 + safe_float(values["COGS"][scenario]) / 100),
-        "Timing Shift Days": safe_float(values["Regulatory Timing"][scenario]),
+    access_metrics = model.get("access_metrics", {})
+    access_metrics = access_metrics if isinstance(access_metrics, dict) else {}
+    base_inputs: dict[str, object] = {
+        "Market Share": {year: safe_float(funnel_rows[year].get("Market Share")) for year in LAUNCH_YEARS},
+        "Treatment Eligibility": {
+            year: safe_float(funnel_rows[year].get("Treatment Rate / Treatment Eligibility"))
+            for year in LAUNCH_YEARS
+        },
+        "Sales Coverage": coverage,
+        "Access Reach": {year: safe_float(access_metrics.get(year, {}).get("Total Reach")) for year in LAUNCH_YEARS},
+        "Net Price": {year: safe_float(access_metrics.get(year, {}).get("Weighted Net Price")) for year in LAUNCH_YEARS},
+        "Regulatory Timing": {year: 0.0 for year in LAUNCH_YEARS},
+        "COGS": {year: safe_float(cogs.get(year)) for year in LAUNCH_YEARS},
+        "Discount Rate": safe_float(inputs.get("discount_rate", 0.10)) if isinstance(inputs, dict) else 0.10,
+        "Regulatory Approval Date": str(regulatory.get("Expected Regulatory Approval Date", "Not set") or "Not set"),
     }
+    return base_inputs, coverage_name
 
 
-def launch_sensitivity_result(model: dict[str, object], scenario: str) -> dict[str, object]:
+def sensitivity_first_commercial_year(model: dict[str, object]) -> str:
+    forecast = model.get("forecast", pd.DataFrame())
+    if isinstance(forecast, pd.DataFrame) and not forecast.empty:
+        for year in LAUNCH_YEARS:
+            row = forecast[forecast["Year"].eq(year)]
+            if not row.empty and safe_float(row.iloc[0].get("Patients on Product")) > 0:
+                return year
+    return "Y1"
+
+
+def sensitivity_base_display(driver: str, base_inputs: dict[str, object], year: str = "Y5") -> str:
+    value = base_inputs.get(driver, 0)
+    if isinstance(value, dict):
+        value = value.get(year, 0)
+    if driver in {"Market Share", "Treatment Eligibility", "Sales Coverage", "Access Reach", "Discount Rate"}:
+        return pct(value)
+    if driver in {"Net Price", "COGS"}:
+        return money(value)
+    if driver == "Regulatory Timing":
+        return str(base_inputs.get("Regulatory Approval Date", "Not set"))
+    return str(value)
+
+
+def sensitivity_adjustment_display(value: float, unit: str) -> str:
+    if unit == "pp":
+        return f"{value:+.1f}pp"
+    if unit == "% relative":
+        return f"{value:+.1f}%"
+    if unit == "days":
+        return f"{value:+.0f}d"
+    return f"{value:+.1f}"
+
+
+def sensitivity_method_label(method: str) -> str:
+    return {
+        "RAMP_PP": "Ramp to Y5",
+        "RAMP_RELATIVE": "Coverage-linked adoption",
+        "ALL_YEARS_RELATIVE": "Relative all years",
+        "DAYS_SHIFT": "Date shift",
+        "NPV_PP": "NPV only",
+    }.get(method, method)
+
+
+def sensitivity_methodology(driver, mode: str, coverage_name: str) -> str:
+    applies = {
+        "RAMP_PP": "Deviation ramps from the first commercially relevant year to Y5." if mode == "Terminal / Y5" else "Explicit Y1-Y5 percentage-point deviations.",
+        "RAMP_RELATIVE": "Coverage deviation ramps to Y5; Market Share changes proportionally to coverage versus Base." if mode == "Terminal / Y5" else "Explicit Y1-Y5 relative coverage changes; Market Share changes proportionally to coverage versus Base.",
+        "ALL_YEARS_RELATIVE": "Relative change applies to all years." if mode == "Terminal / Y5" else "Explicit Y1-Y5 relative changes.",
+        "DAYS_SHIFT": "Approval and dependent commercial availability dates shift by the stated number of days.",
+        "NPV_PP": "Percentage-point change applies only to the rate used for 5Y NPV.",
+    }.get(driver.method, "Controlled master-model adjustment.")
+    note = f"Unit: {driver.unit}. {applies} Affects: {driver.affects}. Downstream: {driver.downstream}."
+    if driver.name == "Sales Coverage":
+        note += (
+            f" Active Base metric: {coverage_name}. Demo methodology: Sales coverage is used as a first-order proxy for commercial execution. "
+            "Market Share changes proportionally to coverage versus Base. In production, this relationship can be replaced by company-specific response curves or elasticity."
+        )
+    return note
+
+
+def launch_sensitivity_result(
+    model: dict[str, object],
+    scenario: str,
+    discount_rate: float,
+) -> dict[str, object]:
     forecast = model.get("forecast", pd.DataFrame())
     y5 = forecast[forecast["Year"].eq("Y5")].iloc[0] if isinstance(forecast, pd.DataFrame) and not forecast.empty else pd.Series(dtype=object)
+    npv, payback = launch_management_valuation(model, discount_rate)
     return {
         "Scenario": scenario,
         "Y5 Patients on Product": f"{safe_float(y5.get('Patients on Product')):,.0f}",
         "Y5 Net Revenue": money(y5.get("Net Revenue", 0)),
         "5Y Cumulative Revenue": money(sum(safe_float(value) for value in forecast.get("Net Revenue", pd.Series(dtype=float)))) if isinstance(forecast, pd.DataFrame) else money(0),
+        "Y5 Gross Margin %": pct(launch_pnl_value(model, "Gross Margin %")),
         "Y5 Operating Profit": money(launch_pnl_value(model, "Operating Profit")),
         "5Y Cumulative Operating Profit": money(sum(launch_pnl_value(model, "Operating Profit", year) for year in LAUNCH_YEARS)),
         "Y5 Operating Margin %": pct(launch_pnl_value(model, "Operating Margin %")),
+        "5Y NPV": money(npv),
+        "Payback Period": payback,
     }
 
 
 def render_launch_sensitivity(case: pd.Series, data: dict[str, pd.DataFrame], base_model: dict[str, object]) -> None:
     case_id = str(case.get("Launch Case ID", ""))
+    drivers = launch_sensitivity_drivers()
     values = get_launch_sensitivity(case_id)
-    base_values = sensitivity_base_values(base_model)
-    owners = {
-        "Market Share": "Marketing",
-        "Treatment Eligibility": "Medical",
-        "Access": "Market Access",
-        "Net Price": "Market Access",
-        "Regulatory Timing": "Regulatory",
-        "COGS": "Finance",
-    }
-    units = {
-        "Market Share": "percentage points",
-        "Treatment Eligibility": "% change",
-        "Access": "% change",
-        "Net Price": "% change",
-        "Regulatory Timing": "days",
-        "COGS": "% change",
-    }
+    base_inputs, coverage_name = sensitivity_base_inputs(case, data, base_model)
     st.markdown("### Sensitivity Drivers")
-    st.caption("Base values come directly from Workstreams. Downside and Upside apply controlled changes without creating separate input models.")
+    st.caption("Base values come directly from Workstreams and the controlled master model. Downside and Upside are analytical overlays only.")
+    st.caption("Calculation path: Workstream Base Inputs + Sensitivity Adjustment → Launch Master Model → Scenario Outputs.")
     updated = deepcopy(values)
-    for owner in ["Marketing", "Medical", "Market Access", "Regulatory", "Finance"]:
+    mode = st.radio(
+        "Sensitivity Mode",
+        ["Terminal / Y5", "By Year"],
+        index=["Terminal / Y5", "By Year"].index(str(values.get("Mode", "Terminal / Y5"))),
+        horizontal=True,
+        key=f"launch_sensitivity_mode_{case_id}",
+    )
+    updated["Mode"] = mode
+    updated_drivers = updated["Drivers"]
+    value_drivers = values["Drivers"]
+    for owner in ["Marketing", "Medical", "Sales", "Market Access", "Regulatory", "Finance"]:
         st.markdown(f"#### {owner}")
-        owner_drivers = [driver for driver, function in owners.items() if function == owner]
+        owner_drivers = [driver for driver in drivers if driver.owner == owner]
         for driver in owner_drivers:
-            columns = st.columns([1.45, 1, 1, 1])
-            columns[0].markdown(f"**{driver}**")
-            columns[0].caption(units[driver])
-            columns[1].text_input(
-                f"{driver} Base",
-                value=base_values[driver],
-                key=f"launch_sensitivity_base_{case_id}_{re.sub(r'[^A-Za-z0-9]+', '_', driver).lower()}",
-                disabled=True,
-            )
+            driver_key = re.sub(r"[^A-Za-z0-9]+", "_", driver.name).strip("_").lower()
             can_edit = launch_is_coordinator() or launch_user_workstream() == owner
-            updated[driver]["Downside"] = safe_float(columns[2].number_input(
-                f"{driver} Downside",
-                value=float(values[driver]["Downside"]),
-                key=f"launch_sensitivity_downside_{case_id}_{re.sub(r'[^A-Za-z0-9]+', '_', driver).lower()}",
-                disabled=not can_edit,
-            ))
-            updated[driver]["Upside"] = safe_float(columns[3].number_input(
-                f"{driver} Upside",
-                value=float(values[driver]["Upside"]),
-                key=f"launch_sensitivity_upside_{case_id}_{re.sub(r'[^A-Za-z0-9]+', '_', driver).lower()}",
-                disabled=not can_edit,
-            ))
+            if mode == "By Year" and driver.method not in {"DAYS_SHIFT", "NPV_PP"}:
+                st.markdown(f"**{driver.name}**")
+                st.caption("Base · " + " | ".join(f"{year} {sensitivity_base_display(driver.name, base_inputs, year)}" for year in LAUNCH_YEARS))
+                for scenario in ["Downside", "Upside"]:
+                    columns = st.columns([1.05, 1, 1, 1, 1, 1])
+                    columns[0].markdown(f"**{scenario}**")
+                    for index, year in enumerate(LAUNCH_YEARS, start=1):
+                        updated_drivers[driver.name]["By Year"][scenario][year] = safe_float(columns[index].number_input(
+                            f"{driver.name} {scenario} {year}",
+                            value=float(value_drivers[driver.name]["By Year"][scenario][year]),
+                            key=f"launch_sensitivity_{case_id}_{driver_key}_{scenario.lower()}_{year.lower()}",
+                            disabled=not can_edit,
+                        ))
+            else:
+                columns = st.columns([1.45, 1, 1, 1])
+                columns[0].markdown(f"**{driver.name}**")
+                columns[0].caption(driver.unit)
+                columns[1].text_input(
+                    f"{driver.name} Base",
+                    value=sensitivity_base_display(driver.name, base_inputs),
+                    key=f"launch_sensitivity_base_{case_id}_{driver_key}",
+                    disabled=True,
+                )
+                for index, scenario in enumerate(["Downside", "Upside"], start=2):
+                    updated_drivers[driver.name][scenario] = safe_float(columns[index].number_input(
+                        f"{driver.name} {scenario}",
+                        value=float(value_drivers[driver.name][scenario]),
+                        key=f"launch_sensitivity_{case_id}_{driver_key}_{scenario.lower()}_terminal",
+                        disabled=not can_edit,
+                    ))
+            with st.expander(f"{driver.name} methodology", expanded=False):
+                st.caption(sensitivity_methodology(driver, mode, coverage_name))
+    completed_drivers = set(str(name) for name in values.get("Completed Drivers", []))
+    for driver in drivers:
+        if updated_drivers.get(driver.name) != value_drivers.get(driver.name):
+            completed_drivers.add(driver.name)
+    updated["Completed Drivers"] = [driver.name for driver in drivers if driver.name in completed_drivers]
     if updated != values:
         st.session_state[launch_sensitivity_state_key(case_id)] = deepcopy(updated)
 
     st.markdown("### Driver Summary")
-    summary_rows = [
-        {
-            "Driver": driver,
-            "Owner": owners[driver],
-            "Downside": f"{updated[driver]['Downside']:+.1f} {units[driver]}",
-            "Base": base_values[driver],
-            "Upside": f"{updated[driver]['Upside']:+.1f} {units[driver]}",
-        }
-        for driver in owners
-    ]
+    summary_rows = []
+    for driver in drivers:
+        driver_values = updated_drivers[driver.name]
+        if mode == "By Year" and driver.method not in {"DAYS_SHIFT", "NPV_PP"}:
+            downside = " / ".join(sensitivity_adjustment_display(driver_values["By Year"]["Downside"][year], driver.unit) for year in LAUNCH_YEARS)
+            upside = " / ".join(sensitivity_adjustment_display(driver_values["By Year"]["Upside"][year], driver.unit) for year in LAUNCH_YEARS)
+        else:
+            downside = sensitivity_adjustment_display(driver_values["Downside"], driver.unit)
+            upside = sensitivity_adjustment_display(driver_values["Upside"], driver.unit)
+        summary_rows.append(
+            {
+                "Driver": driver.name,
+                "Owner": driver.owner,
+                "Downside": downside,
+                "Base": sensitivity_base_display(driver.name, base_inputs),
+                "Upside": upside,
+                "Method": sensitivity_method_label(driver.method),
+            }
+        )
     render_finance_table(pd.DataFrame(summary_rows))
 
     st.markdown("### Scenario Results")
-    result_rows = []
-    for scenario in LAUNCH_SCENARIOS:
-        scenario_model = calculate_launch_model(
+    scenario_results = evaluate_scenarios(
+        base_inputs,
+        updated,
+        drivers,
+        sensitivity_first_commercial_year(base_model),
+        lambda adjustments: calculate_launch_model(
             data,
             case,
             "Base",
             include_scenarios=False,
-            adjustment_overrides=launch_sensitivity_overrides(updated, scenario),
+            adjustment_overrides=adjustments,
+        ),
+    )
+    result_rows = [
+        launch_sensitivity_result(
+            scenario_results[scenario]["model"],
+            scenario,
+            safe_float(scenario_results[scenario]["discount_rate"]),
         )
-        result_rows.append(launch_sensitivity_result(scenario_model, scenario))
+        for scenario in LAUNCH_SCENARIOS
+    ]
     render_finance_table(
         pd.DataFrame(result_rows),
-        {"Y5 Patients on Product", "Y5 Net Revenue", "5Y Cumulative Revenue", "Y5 Operating Profit", "5Y Cumulative Operating Profit", "Y5 Operating Margin %"},
+        {
+            "Y5 Patients on Product",
+            "Y5 Net Revenue",
+            "5Y Cumulative Revenue",
+            "Y5 Gross Margin %",
+            "Y5 Operating Profit",
+            "5Y Cumulative Operating Profit",
+            "Y5 Operating Margin %",
+            "5Y NPV",
+            "Payback Period",
+        },
     )
+    warnings = sorted({warning for result in scenario_results.values() for warning in result.get("warnings", [])})
+    for warning in warnings:
+        st.warning(warning)
     st.caption("Sensitivity assumptions autosave as Draft. They do not change the Workstream Base Case or alignment packages.")
 
 
-def render_launch_readiness(assumptions: pd.DataFrame) -> None:
-    status = launch_functional_status(assumptions)
-    open_alignment = int(pd.to_numeric(status["Open Issues"], errors="coerce").fillna(0).sum()) if not status.empty else 0
-    st.markdown("### Launch Readiness")
-    rows = pd.DataFrame(
-        [
-            {"Dimension": "Completeness", "Current Status": "Coming next", "Context": "Input completeness rules will be added in the next phase."},
-            {"Dimension": "Alignment", "Current Status": f"{open_alignment} open alignment item{'s' if open_alignment != 1 else ''}", "Context": "Based on current functional package status."},
-            {"Dimension": "Consistency", "Current Status": "Coming next", "Context": "Cross-functional consistency checks are not yet scored."},
-            {"Dimension": "Feasibility", "Current Status": "Coming next", "Context": "Integrated feasibility assessment will follow."},
-        ]
-    )
-    render_finance_table(rows)
-    st.info("A combined readiness score is intentionally not calculated in this phase.")
+def launch_readiness_has_value(assumption: pd.Series | dict[str, object]) -> bool:
+    if not bool(assumption.get("Enabled", True)):
+        return True
+    value_type = str(assumption.get("Value Type", ""))
+    if value_type.startswith("Yearly"):
+        return all(assumption.get(year) is not None and not pd.isna(assumption.get(year)) for year in LAUNCH_YEARS)
+    value = assumption.get("Value")
+    if isinstance(value, (dict, list, tuple, set)):
+        return bool(value)
+    if isinstance(value, bool):
+        return True
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return False
+    return bool(str(value).strip())
 
 
-def render_launch_decision_case() -> None:
-    st.markdown("### Decision Case")
-    st.caption("This workspace will assemble the integrated launch case for management review without duplicating functional inputs.")
-    sections = [
-        "Executive Summary",
-        "Patient & Market Opportunity",
-        "Access & Commercial Strategy",
-        "Volume & Revenue",
-        "Financial Case",
-        "Launch Readiness",
-        "Critical Milestones & Risks",
-        "Decision Required",
+def launch_readiness_data_topics(assumptions: pd.DataFrame, benchmark: dict[str, object]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for workspace, topics in LAUNCH_READINESS_TOPICS.items():
+        owned = assumptions[assumptions["Owner"].eq(workspace) & (~assumptions["Calculated"].astype(bool))]
+        for topic, names in topics:
+            topic_rows = owned[owned["Assumption Name"].isin(names)]
+            enabled = topic_rows[
+                topic_rows.get("Enabled", pd.Series(True, index=topic_rows.index)).map(
+                    lambda value: True if pd.isna(value) else bool(value)
+                )
+            ]
+            present_names = set(enabled["Assumption Name"].astype(str))
+            complete = all(
+                name in present_names
+                and launch_readiness_has_value(enabled[enabled["Assumption Name"].eq(name)].iloc[0])
+                for name in names
+            )
+            rows.append({"Function": workspace, "Topic": topic, "Complete": complete})
+
+    benchmark_enabled = [
+        ("Revenue", "Revenue Enabled"),
+        ("Gross Profit", "Gross Profit Enabled"),
+        ("Gross Margin %", "Gross Margin Enabled"),
     ]
-    for section in sections:
-        st.markdown(f"**{section}**")
-    st.info("Decision Case generation will be implemented in a future phase.")
+    enabled_metrics = [metric for metric, enabled_key in benchmark_enabled if bool(benchmark.get(enabled_key, False))]
+    if enabled_metrics:
+        benchmark_complete = bool(str(benchmark.get("Benchmark Source", "")).strip()) and bool(
+            str(benchmark.get("Benchmark Version / Date", "")).strip()
+        )
+        for metric in enabled_metrics:
+            values = benchmark.get(metric, {})
+            benchmark_complete = benchmark_complete and isinstance(values, dict) and all(
+                values.get(year) is not None and not pd.isna(values.get(year)) for year in LAUNCH_YEARS
+            )
+        rows.append({"Function": "Finance", "Topic": "Financial Benchmark", "Complete": benchmark_complete})
+    return pd.DataFrame(rows)
+
+
+def launch_readiness_alignment(
+    assumptions: pd.DataFrame,
+    current_workspace: str,
+) -> tuple[pd.DataFrame, list[dict[str, object]]]:
+    summary_rows: list[dict[str, object]] = []
+    topic_rows: list[dict[str, object]] = []
+    for workspace in LAUNCH_WORKSTREAMS:
+        owned = assumptions[
+            assumptions["Owner"].eq(workspace)
+            & (~assumptions["Calculated"].astype(bool))
+            & assumptions["Validators"].astype(str).str.strip().ne("")
+        ]
+        for category, topic in owned.groupby("Category", sort=False):
+            status = launch_package_status(topic)
+            partners = sorted({
+                partner for _, assumption in topic.iterrows() for partner in launch_alignment_partners(assumption)
+            })
+            needs_attention = False
+            if status == "Alignment Required" and current_workspace == workspace:
+                needs_attention = True
+            elif status == "Shared for Alignment" and current_workspace in partners:
+                partner_rows = topic[topic["Validators"].map(lambda value: current_workspace in split_validators(value))]
+                needs_attention = any(
+                    not launch_partner_has_confirmed(assumption, current_workspace)
+                    for _, assumption in partner_rows.iterrows()
+                )
+            topic_rows.append(
+                {
+                    "Function": workspace,
+                    "Topic": str(category),
+                    "Status": status,
+                    "Partners": partners,
+                    "Needs My Attention": needs_attention,
+                }
+            )
+
+        owned_topics = [row for row in topic_rows if row["Function"] == workspace]
+        summary_rows.append(
+            {
+                "Function": workspace,
+                "Items To Review": len(owned_topics),
+                "Aligned": sum(row["Status"] == "Aligned" for row in owned_topics),
+                "Pending": sum(row["Status"] in {"Draft", "Not Started", "Shared for Alignment"} for row in owned_topics),
+                "Change Requested / Question": sum(row["Status"] == "Alignment Required" for row in owned_topics),
+                "Needs My Attention": sum(bool(row["Needs My Attention"]) for row in owned_topics),
+            }
+        )
+    return pd.DataFrame(summary_rows), topic_rows
+
+
+def launch_readiness_sensitivity(drivers: tuple, settings: dict[str, object]) -> pd.DataFrame:
+    completed = {str(name) for name in settings.get("Completed Drivers", [])}
+    rows = []
+    for workspace in LAUNCH_WORKSTREAMS:
+        required = [driver.name for driver in drivers if driver.owner == workspace]
+        completed_topics = [name for name in required if name in completed]
+        if not required:
+            status = "Not Required"
+        elif not completed_topics:
+            status = "Not Started"
+        elif len(completed_topics) == len(required):
+            status = "Complete"
+        else:
+            status = "Draft"
+        rows.append(
+            {
+                "Function": workspace,
+                "Required Sensitivity Topics": ", ".join(required) if required else "None",
+                "Completed": f"{len(completed_topics)} / {len(required)}" if required else "—",
+                "Status": status,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def launch_readiness_snapshot(
+    case: pd.Series,
+    assumptions: pd.DataFrame,
+    model: dict[str, object],
+) -> dict[str, object]:
+    case_id = str(case.get("Launch Case ID", ""))
+    deadline = launch_decision_deadline(case)
+    days_remaining = (deadline - date.today()).days
+    benchmark = get_launch_finance_benchmark(case_id, model)
+    data_topics = launch_readiness_data_topics(assumptions, benchmark)
+    completed_topics = int(data_topics["Complete"].sum()) if not data_topics.empty else 0
+    required_topics = len(data_topics)
+    data_readiness = completed_topics / required_topics if required_topics else 1.0
+
+    alignment, alignment_topics = launch_readiness_alignment(assumptions, launch_user_workstream())
+    total_alignment = len(alignment_topics)
+    aligned = sum(row["Status"] == "Aligned" for row in alignment_topics)
+    alignment_readiness = aligned / total_alignment if total_alignment else 1.0
+
+    drivers = launch_sensitivity_drivers()
+    sensitivity_settings = get_launch_sensitivity(case_id)
+    sensitivity = launch_readiness_sensitivity(drivers, sensitivity_settings)
+    required_driver_names = {driver.name for driver in drivers}
+    completed_driver_names = {str(name) for name in sensitivity_settings.get("Completed Drivers", [])} & required_driver_names
+    sensitivity_readiness = len(completed_driver_names) / len(required_driver_names) if required_driver_names else 1.0
+    process_readiness = (
+        LAUNCH_READINESS_CONFIG["alignment_weight"] * alignment_readiness
+        + LAUNCH_READINESS_CONFIG["sensitivity_weight"] * sensitivity_readiness
+    )
+    overall_readiness = (
+        LAUNCH_READINESS_CONFIG["data_weight"] * data_readiness
+        + LAUNCH_READINESS_CONFIG["process_weight"] * process_readiness
+    )
+    change_requested = sum(row["Status"] == "Alignment Required" for row in alignment_topics)
+    needs_attention = sum(bool(row["Needs My Attention"]) for row in alignment_topics)
+
+    if overall_readiness <= LAUNCH_READINESS_CONFIG["not_started_max_readiness"]:
+        overall_status = "Not Started"
+    elif overall_readiness >= 1.0 and change_requested == 0 and needs_attention == 0:
+        overall_status = "Ready"
+    elif (
+        (days_remaining < 0 and overall_readiness < 1.0)
+        or (days_remaining < LAUNCH_READINESS_CONFIG["at_risk_14_days"] and overall_readiness < LAUNCH_READINESS_CONFIG["at_risk_14_days_min_readiness"])
+        or (days_remaining < LAUNCH_READINESS_CONFIG["at_risk_30_days"] and overall_readiness < LAUNCH_READINESS_CONFIG["at_risk_30_days_min_readiness"])
+    ):
+        overall_status = "At Risk"
+    elif overall_readiness >= 0.50:
+        overall_status = "On Track"
+    else:
+        overall_status = "In Progress"
+
+    workstream_rows = []
+    functional_rows = []
+    for workspace in LAUNCH_WORKSTREAMS:
+        package = assumptions[assumptions["Owner"].eq(workspace) & (~assumptions["Calculated"].astype(bool))]
+        aligned_package = package[package["Validators"].astype(str).str.strip().ne("")]
+        workspace_topics = data_topics[data_topics["Function"].eq(workspace)]
+        incomplete = int((~workspace_topics["Complete"]).sum()) if not workspace_topics.empty else 0
+        input_complete = int(workspace_topics["Complete"].sum()) if not workspace_topics.empty else 0
+        package_status = launch_package_status(aligned_package)
+        if input_complete == 0:
+            package_status = "Not Started"
+        updated = pd.to_datetime(package.get("Last Updated", pd.Series(dtype=str)), errors="coerce").dropna()
+        last_updated = updated.max().strftime("%d %b %Y") if not updated.empty else "Not set"
+        alignment_row = alignment[alignment["Function"].eq(workspace)].iloc[0]
+        sensitivity_row = sensitivity[sensitivity["Function"].eq(workspace)].iloc[0]
+        if int(alignment_row["Change Requested / Question"]) > 0:
+            functional_status = "At Risk"
+        elif incomplete == 0 and int(alignment_row["Pending"]) == 0 and str(sensitivity_row["Status"]) in {"Complete", "Not Required"}:
+            functional_status = "Complete"
+        else:
+            functional_status = "In Progress"
+        open_actions = incomplete + int(alignment_row["Pending"]) + int(alignment_row["Change Requested / Question"])
+        if str(sensitivity_row["Status"]) in {"Not Started", "Draft"}:
+            open_actions += 1
+        workstream_rows.append(
+            {
+                "Function": workspace,
+                "Primary Input Status": package_status,
+                "Last Updated": last_updated,
+                "Open Input Issues": incomplete,
+            }
+        )
+        functional_rows.append(
+            {
+                "Function": workspace,
+                "Workstream": package_status,
+                "Alignment": "N/A" if int(alignment_row["Items To Review"]) == 0 else (
+                    "Alignment Required" if int(alignment_row["Change Requested / Question"]) else
+                    "Pending" if int(alignment_row["Pending"]) else "Aligned"
+                ),
+                "Sensitivity": str(sensitivity_row["Status"]),
+                "Open Actions": open_actions,
+                "Overall Functional Status": functional_status,
+            }
+        )
+
+    actions: list[tuple[int, str]] = []
+    for row in alignment_topics:
+        function = str(row["Function"])
+        if row["Status"] == "Alignment Required":
+            actions.append((1, f"{function} to resolve the requested change in {row['Topic']}."))
+        elif bool(row["Needs My Attention"]):
+            actions.append((1, f"{launch_user_workstream()} to review {function} — {row['Topic']}."))
+    for _, row in data_topics[~data_topics["Complete"]].iterrows():
+        actions.append((2, f"{row['Function']} to complete {row['Topic']}."))
+    for _, row in sensitivity.iterrows():
+        if row["Status"] in {"Not Started", "Draft"}:
+            actions.append((3, f"{row['Function']} sensitivity input is incomplete: {row['Required Sensitivity Topics']}."))
+    for row in alignment_topics:
+        if row["Status"] in {"Draft", "Not Started"}:
+            actions.append((4, f"{row['Function']} has not shared {row['Topic']} for alignment."))
+        elif row["Status"] == "Shared for Alignment":
+            actions.append((4, f"{row['Function']} — {row['Topic']} is pending partner alignment."))
+    if overall_status == "At Risk":
+        actions.append((5, f"Decision / Deck Deadline is in {days_remaining} days with overall readiness at {overall_readiness:.0%}."))
+    unique_actions = []
+    for _, action in sorted(actions, key=lambda item: item[0]):
+        if action not in unique_actions:
+            unique_actions.append(action)
+
+    return {
+        "Overall Status": overall_status,
+        "Overall Readiness": overall_readiness,
+        "Data Readiness": data_readiness,
+        "Process Readiness": process_readiness,
+        "Days Remaining": days_remaining,
+        "Deadline": deadline,
+        "Completed Topics": completed_topics,
+        "Required Topics": required_topics,
+        "Aligned Items": aligned,
+        "Alignment Items": total_alignment,
+        "Completed Sensitivity": len(completed_driver_names),
+        "Required Sensitivity": len(required_driver_names),
+        "Workstream Status": pd.DataFrame(workstream_rows),
+        "Functional Readiness": pd.DataFrame(functional_rows),
+        "Alignment Status": alignment,
+        "Sensitivity Status": sensitivity,
+        "Top Open Actions": unique_actions[:5],
+    }
+
+
+def render_launch_readiness(case: pd.Series, assumptions: pd.DataFrame, model: dict[str, object]) -> None:
+    snapshot = launch_readiness_snapshot(case, assumptions, model)
+    st.markdown("### Launch Readiness")
+    cards = st.columns(4)
+    cards[0].metric("Overall Status", snapshot["Overall Status"], f"Overall readiness {snapshot['Overall Readiness']:.0%}")
+    cards[1].metric("Data Readiness %", f"{snapshot['Data Readiness']:.0%}", f"{snapshot['Completed Topics']} / {snapshot['Required Topics']} topics")
+    cards[2].metric("Process Readiness %", f"{snapshot['Process Readiness']:.0%}", "50% alignment · 50% sensitivity")
+    cards[3].metric("Days Remaining", str(snapshot["Days Remaining"]), snapshot["Deadline"].strftime("%d %b %Y"))
+
+    st.markdown("### Functional Readiness")
+    render_finance_table(snapshot["Functional Readiness"], {"Open Actions"})
+    st.markdown("### Workstream Input Status")
+    st.caption("Primary input status is derived from topic completeness and the existing package-level alignment state.")
+    render_finance_table(snapshot["Workstream Status"], {"Open Input Issues"})
+
+    st.markdown("### Alignment Status")
+    st.caption(f"{snapshot['Aligned Items']} aligned · {snapshot['Alignment Items'] - snapshot['Aligned Items']} pending or requiring action")
+    render_finance_table(
+        snapshot["Alignment Status"],
+        {"Items To Review", "Aligned", "Pending", "Change Requested / Question", "Needs My Attention"},
+    )
+
+    st.markdown("### Sensitivity Completion")
+    st.caption("Completion is measured by driver topic. Y1–Y5 values do not count as separate readiness items.")
+    render_finance_table(snapshot["Sensitivity Status"])
+
+    st.markdown("### Top Open Actions")
+    if snapshot["Top Open Actions"]:
+        for action in snapshot["Top Open Actions"]:
+            st.warning(action)
+    else:
+        st.success("No open readiness action identified.")
+
+    st.markdown("### Timeline Readiness")
+    st.write(f"Decision / Deck Deadline: **{snapshot['Deadline'].strftime('%d %b %Y')}**")
+    st.caption(
+        "This deadline is the management decision or deck-submission target. It is separate from regulatory approval, "
+        "commercial stock availability and launch dates."
+    )
+    with st.expander("Readiness methodology", expanded=False):
+        st.caption(
+            "Data Readiness gives equal weight to required business topics. Process Readiness is 50% required alignment "
+            "completion and 50% required sensitivity-driver completion. Overall Readiness is 50% Data Readiness and "
+            "50% Process Readiness. Timeline risk thresholds compare this readiness with days remaining and are held in "
+            "configurable application constants."
+        )
+
+
+def launch_decision_assumption(assumptions: pd.DataFrame, name: str) -> pd.Series:
+    matches = assumptions[assumptions["Assumption Name"].eq(name)]
+    return matches.iloc[0] if not matches.empty else pd.Series(dtype=object)
+
+
+def launch_decision_value(assumptions: pd.DataFrame, name: str, fallback: object = "Not set") -> object:
+    assumption = launch_decision_assumption(assumptions, name)
+    value = assumption.get("Value", fallback)
+    return fallback if value is None or str(value).strip() == "" else value
+
+
+def launch_decision_year(assumptions: pd.DataFrame, name: str, year: str) -> float:
+    return safe_float(launch_decision_assumption(assumptions, name).get(year))
+
+
+def launch_decision_sources(
+    section: str,
+    assumptions: pd.DataFrame,
+    assumption_names: list[str],
+    model_outputs: list[tuple[str, str]] | None = None,
+) -> None:
+    rows = []
+    for name in assumption_names:
+        assumption = launch_decision_assumption(assumptions, name)
+        if assumption.empty:
+            continue
+        rows.append(
+            {
+                "Source Workstream": str(assumption.get("Workstream", assumption.get("Owner", ""))),
+                "Source Assumption / Output": name,
+                "Owner": str(assumption.get("Owner", "")),
+                "Last Updated": str(assumption.get("Last Updated", "Not set")),
+            }
+        )
+    for output, upstream in model_outputs or []:
+        rows.append(
+            {
+                "Source Workstream": "Integrated Master Model",
+                "Source Assumption / Output": output,
+                "Owner": "Controlled Model",
+                "Last Updated": upstream,
+            }
+        )
+    with st.expander(f"View Sources / Assumptions · {section}", expanded=False):
+        render_finance_table(pd.DataFrame(rows))
+
+
+def launch_decision_sensitivity(
+    case: pd.Series,
+    data: dict[str, pd.DataFrame],
+    base_model: dict[str, object],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    case_id = str(case.get("Launch Case ID", ""))
+    drivers = launch_sensitivity_drivers()
+    settings = get_launch_sensitivity(case_id)
+    base_inputs, _ = sensitivity_base_inputs(case, data, base_model)
+    scenario_results = evaluate_scenarios(
+        base_inputs,
+        settings,
+        drivers,
+        sensitivity_first_commercial_year(base_model),
+        lambda adjustments: calculate_launch_model(
+            data,
+            case,
+            "Base",
+            include_scenarios=False,
+            adjustment_overrides=adjustments,
+        ),
+    )
+    results = []
+    for scenario in LAUNCH_SCENARIOS:
+        result = launch_sensitivity_result(
+            scenario_results[scenario]["model"],
+            scenario,
+            safe_float(scenario_results[scenario]["discount_rate"]),
+        )
+        results.append(
+            {
+                key: value for key, value in result.items()
+                if key in {
+                    "Scenario",
+                    "Y5 Patients on Product",
+                    "Y5 Net Revenue",
+                    "5Y Cumulative Revenue",
+                    "Y5 Operating Profit",
+                    "Y5 Operating Margin %",
+                    "5Y NPV",
+                    "Payback Period",
+                }
+            }
+        )
+
+    mode = str(settings.get("Mode", "Terminal / Y5"))
+    driver_rows = []
+    for driver in drivers:
+        values = settings["Drivers"][driver.name]
+        if mode == "By Year" and driver.method not in {"DAYS_SHIFT", "NPV_PP"}:
+            downside = " / ".join(sensitivity_adjustment_display(values["By Year"]["Downside"][year], driver.unit) for year in LAUNCH_YEARS)
+            upside = " / ".join(sensitivity_adjustment_display(values["By Year"]["Upside"][year], driver.unit) for year in LAUNCH_YEARS)
+        else:
+            downside = sensitivity_adjustment_display(values["Downside"], driver.unit)
+            upside = sensitivity_adjustment_display(values["Upside"], driver.unit)
+        driver_rows.append(
+            {
+                "Driver": driver.name,
+                "Downside": downside,
+                "Base": sensitivity_base_display(driver.name, base_inputs),
+                "Upside": upside,
+            }
+        )
+    return pd.DataFrame(results), pd.DataFrame(driver_rows)
+
+
+def launch_decision_access_summary(model: dict[str, object]) -> pd.DataFrame:
+    inputs = model.get("inputs", {})
+    plan = inputs.get("access_plan", {}) if isinstance(inputs, dict) else {}
+    metrics = model.get("access_metrics", {})
+    rows = []
+    for entry in market_access_plan_entries(plan if isinstance(plan, dict) else {}):
+        if not bool(entry.get("Enabled", True)):
+            continue
+        channel = str(entry.get("Access Path", entry.get("Channel", "")))
+        rows.append(
+            {
+                "Funding Channel": channel,
+                "Access Timing": str(entry.get("Access Start Date", "Not set")),
+                "Y1 Reach": pct(entry.get("Reach", {}).get("Y1", 0)),
+                "Y5 Reach": pct(entry.get("Reach", {}).get("Y5", 0)),
+                "Y5 List Price": money(entry.get("List Price", {}).get("Y5", 0)),
+                "Y5 Net Price": money(entry.get("Net Price", {}).get("Y5", 0)),
+            }
+        )
+    if not rows and isinstance(metrics, dict):
+        rows.append(
+            {
+                "Funding Channel": "Integrated access plan",
+                "Access Timing": "Not set",
+                "Y1 Reach": pct(metrics.get("Y1", {}).get("Total Reach", 0)),
+                "Y5 Reach": pct(metrics.get("Y5", {}).get("Total Reach", 0)),
+                "Y5 List Price": money(metrics.get("Y5", {}).get("Weighted List Price", 0)),
+                "Y5 Net Price": money(metrics.get("Y5", {}).get("Weighted Net Price", 0)),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def launch_decision_appendix_assumptions(
+    assumptions: pd.DataFrame,
+    names: list[str],
+) -> pd.DataFrame:
+    rows = []
+    for name in names:
+        assumption = launch_decision_assumption(assumptions, name)
+        if assumption.empty:
+            continue
+        value_type = str(assumption.get("Value Type", ""))
+        if value_type.startswith("Yearly"):
+            row = {"Assumption": name}
+            for year in LAUNCH_YEARS:
+                value = assumption.get(year)
+                row[year] = pct(value) if value_type == "Yearly Percentage" else f"{safe_float(value):,.1f}"
+            rows.append(row)
+        else:
+            rows.append({"Assumption": name, "Current Value": launch_assumption_display_value(assumption)})
+    return pd.DataFrame(rows)
+
+
+def render_launch_decision_appendix(
+    case: pd.Series,
+    model: dict[str, object],
+    assumptions: pd.DataFrame,
+) -> None:
+    inputs = model.get("inputs", {})
+    funnel = model.get("funnel", pd.DataFrame())
+    st.markdown("## Functional Appendix")
+
+    with st.container(border=True):
+        st.markdown("### Marketing Appendix")
+        render_finance_table(launch_decision_appendix_assumptions(assumptions, ["Population", "Market Share", "Marketing FTE"]))
+        competitive = launch_decision_value(assumptions, "Competitive Landscape", [])
+        if isinstance(competitive, list) and competitive:
+            render_finance_table(pd.DataFrame(competitive)[[column for column in ["Competitor / Event Name", "Event Type", "Expected Year", "Market Share Impact Y5", "Comment"] if column in pd.DataFrame(competitive).columns]])
+        if isinstance(funnel, pd.DataFrame) and not funnel.empty:
+            render_finance_table(funnel[[column for column in ["Year", "Disease Population", "Treated Patients", "Accessible Patients", "Patients on Product"] if column in funnel.columns]].assign(**{
+                column: lambda frame, column=column: frame[column].map(lambda value: f"{safe_float(value):,.0f}")
+                for column in ["Disease Population", "Treated Patients", "Accessible Patients", "Patients on Product"] if column in funnel.columns
+            }))
+
+    with st.container(border=True):
+        st.markdown("### Sales Appendix")
+        render_finance_table(launch_decision_appendix_assumptions(assumptions, ["Sales FTE", "Regions Covered", "Population-weighted Geographic Coverage %", "Target Account / Center Coverage %", "Target Accounts / Centers"]))
+        st.write(f"Sales execution strategy: {str(inputs.get('sales_resources', {}).get('Sales Execution Strategy', '') or 'Not yet documented.')}")
+        st.caption("Sales coverage is linked transparently to adoption in the Sensitivity model; Marketing retains ownership of Base Market Share.")
+
+    with st.container(border=True):
+        st.markdown("### Medical Appendix")
+        render_finance_table(launch_decision_appendix_assumptions(assumptions, [
+            "Disease / Indication", "Target Segment / Severity", "Line of Therapy", "Prevalence", "Diagnosis Rate",
+            "Treatment Rate / Treatment Eligibility", "Dose per Administration", "Administration Frequency", "Treatment Duration",
+            "Compliance", "Unmet Need Level", "Main Clinical Comparators", "Overall Clinical Value", "Medical FTE",
+        ]))
+
+    with st.container(border=True):
+        st.markdown("### Market Access Appendix")
+        render_finance_table(launch_decision_appendix_assumptions(assumptions, ["Access Archetype", "Access Strategy & Pathway", "Access Eligibility / Restrictions"]))
+        access_metrics = model.get("access_metrics", {})
+        access_journey = pd.DataFrame([
+            {
+                "Year": year,
+                "Total Reach": pct(access_metrics.get(year, {}).get("Total Reach", 0)),
+                "Weighted List Price": money(access_metrics.get(year, {}).get("Weighted List Price", 0)),
+                "Weighted Net Price": money(access_metrics.get(year, {}).get("Weighted Net Price", 0)),
+            }
+            for year in LAUNCH_YEARS
+        ])
+        render_finance_table(access_journey, {"Total Reach", "Weighted List Price", "Weighted Net Price"})
+        render_finance_table(launch_decision_access_summary(model))
+
+    with st.container(border=True):
+        st.markdown("### Regulatory Appendix")
+        render_finance_table(launch_decision_appendix_assumptions(assumptions, [
+            "Regulatory Dossier Submission Date", "Expected Regulatory Approval Date", "Regulatory Timing Benchmark",
+            "Expected Label / Indication", "Risk Level", "Risk / Issue", "Potential Impact", "Response / Management Consideration",
+        ]))
+
+    with st.container(border=True):
+        st.markdown("### Supply / Operations Appendix")
+        approval = pd.to_datetime(launch_decision_value(assumptions, "Expected Regulatory Approval Date", None), errors="coerce")
+        stock = pd.to_datetime(launch_decision_value(assumptions, "Expected Stock Available Date", None), errors="coerce")
+        time_to_availability = "Not set" if pd.isna(approval) or pd.isna(stock) else f"{(stock - approval).days} days"
+        supply_rows = launch_decision_appendix_assumptions(assumptions, [
+            "Expected Stock Available Date", "Supply Plan / Rationale", "Manufacturing / Supply Constraint Status",
+            "Constraint / Risk", "Constraint Potential Impact", "Plan / Management Response",
+            "Supply / Warehouse Capacity Status", "Capacity / Logistics Issue", "Capacity Impact / Comment",
+        ])
+        render_finance_table(supply_rows)
+        st.metric("Time from Regulatory Approval to Stock Availability", time_to_availability)
+
+    with st.container(border=True):
+        st.markdown("### Finance Appendix")
+        npv, payback = launch_management_valuation(model)
+        finance_cards = st.columns(3)
+        finance_cards[0].metric("5Y NPV", money(npv))
+        finance_cards[1].metric("Payback Period", payback)
+        finance_cards[2].metric("Discount Rate", pct(inputs.get("discount_rate", 0.10)))
+        render_finance_table(launch_decision_appendix_assumptions(assumptions, [
+            "COGS per Unit", "Discount Rate", "Product Manager Fully Loaded Cost per FTE",
+            "KAM / Sales FTE Fully Loaded Cost per FTE", "MSL / Medical FTE Fully Loaded Cost per FTE",
+        ]))
+        projects = model.get("projects", pd.DataFrame())
+        if isinstance(projects, pd.DataFrame) and not projects.empty:
+            project_view = projects[[column for column in ["Function", "Project / Initiative Name", *LAUNCH_YEARS, "Category"] if column in projects.columns]].copy()
+            for year in LAUNCH_YEARS:
+                if year in project_view.columns:
+                    project_view[year] = project_view[year].map(money)
+            render_finance_table(project_view, set(LAUNCH_YEARS))
+        render_finance_pnl(model.get("pnl", pd.DataFrame()), show_all=True)
+        render_launch_benchmark_snapshot(str(case.get("Launch Case ID", "")), model, "launch_decision_appendix")
+
+
+def render_launch_decision_case(
+    case: pd.Series,
+    data: dict[str, pd.DataFrame],
+    model: dict[str, object],
+    assumptions: pd.DataFrame,
+) -> None:
+    case_id = str(case.get("Launch Case ID", ""))
+    refresh_key = f"launch_decision_case_last_refreshed_{case_id}"
+    st.markdown("### Decision Case")
+    st.caption("Browser-based management decision deck assembled from the latest controlled Launch Sandbox inputs and outputs.")
+    if st.button("Generate / Refresh Decision Case", key=f"launch_decision_case_refresh_{case_id}", type="primary"):
+        st.session_state[refresh_key] = datetime.now().strftime("%d %b %Y · %H:%M:%S")
+    st.caption(f"Last refreshed: {st.session_state.get(refresh_key, 'Not yet refreshed')}")
+
+    forecast = model.get("forecast", pd.DataFrame())
+    funnel = model.get("funnel", pd.DataFrame())
+    y1 = forecast[forecast["Year"].eq("Y1")].iloc[0] if isinstance(forecast, pd.DataFrame) and not forecast.empty else pd.Series(dtype=object)
+    y5 = forecast[forecast["Year"].eq("Y5")].iloc[0] if isinstance(forecast, pd.DataFrame) and not forecast.empty else pd.Series(dtype=object)
+    funnel_y1 = funnel[funnel["Year"].eq("Y1")].iloc[0] if isinstance(funnel, pd.DataFrame) and not funnel.empty else pd.Series(dtype=object)
+    funnel_y5 = funnel[funnel["Year"].eq("Y5")].iloc[0] if isinstance(funnel, pd.DataFrame) and not funnel.empty else pd.Series(dtype=object)
+    inputs = model.get("inputs", {})
+    regulatory = inputs.get("regulatory", {}) if isinstance(inputs, dict) else {}
+    supply = inputs.get("supply", {}) if isinstance(inputs, dict) else {}
+    access_metrics = model.get("access_metrics", {})
+    readiness = launch_readiness_snapshot(case, assumptions, model)
+    npv, payback = launch_management_valuation(model)
+
+    with st.container(border=True):
+        st.markdown("## 1. Executive Summary")
+        st.markdown(f"**{case.get('Product', '')} · {case.get('Market / Region', '')}**")
+        st.caption(
+            f"Commercial stock: {supply.get('Expected Stock Available Date', 'Not set')} · "
+            f"Decision deadline: {readiness['Deadline'].strftime('%d %b %Y')} · Readiness: {readiness['Overall Status']}"
+        )
+        cards = st.columns(5)
+        cards[0].metric("Y5 Patients on Product", f"{safe_float(funnel_y5.get('Patients on Product')):,.0f}")
+        cards[1].metric("Y5 Net Revenue", money(y5.get("Net Revenue", 0)))
+        cards[2].metric("5Y NPV", money(npv))
+        cards[3].metric("Payback Period", payback)
+        cards[4].metric("Y5 Operating Margin %", pct(launch_pnl_value(model, "Operating Margin %")))
+        st.markdown("#### Launch Thesis")
+        st.write(
+            f"{case.get('Product', 'The product')} is planned for commercial availability on "
+            f"{supply.get('Expected Stock Available Date', 'the current supply date')} in {case.get('Market / Region', 'the selected market')}. "
+            f"The Base Case reaches {safe_float(funnel_y5.get('Patients on Product')):,.0f} patients on product by Y5, "
+            f"generating {money(y5.get('Net Revenue', 0))} in Y5 net revenue and a "
+            f"{pct(launch_pnl_value(model, 'Operating Margin %'))} operating margin. "
+            f"The case is {str(readiness['Overall Status']).lower()}, with key exposure to access reach, market share and regulatory timing."
+        )
+        st.markdown("#### Decision Required")
+        st.info("Management decision on the Base Case launch plan, commercial resource envelope and the conditions required before submission.")
+        launch_decision_sources(
+            "Executive Summary",
+            assumptions,
+            ["Expected Stock Available Date", "Market Share", "Discount Rate"],
+            [("Y5 Net Revenue", "Patient Flow + Access + Adoption + Utilization + Net Price"), ("5Y NPV", "Finance P&L + Discount Rate")],
+        )
+
+    with st.container(border=True):
+        st.markdown("## 2. Patient & Market Opportunity")
+        cards = st.columns(4)
+        cards[0].metric("Y5 Treated Patients", f"{safe_float(funnel_y5.get('Treated Patients')):,.0f}")
+        cards[1].metric("Y5 Accessible Patients", f"{safe_float(funnel_y5.get('Accessible Patients')):,.0f}")
+        cards[2].metric("Y5 Market Share", pct(funnel_y5.get("Market Share", 0)))
+        cards[3].metric("Y5 Patients on Product", f"{safe_float(funnel_y5.get('Patients on Product')):,.0f}")
+        opportunity_rows = []
+        for metric in ["Population", "Disease Population", "Diagnosed Patients", "Treated Patients", "Accessible Patients", "Patients on Product"]:
+            source_name = "Population" if metric == "Population" else metric
+            y1_value = launch_decision_year(assumptions, "Population", "Y1") if metric == "Population" else safe_float(funnel_y1.get(source_name))
+            y5_value = launch_decision_year(assumptions, "Population", "Y5") if metric == "Population" else safe_float(funnel_y5.get(source_name))
+            opportunity_rows.append({"Patient Opportunity": metric, "Y1": f"{y1_value:,.0f}", "Y5": f"{y5_value:,.0f}"})
+        render_finance_table(pd.DataFrame(opportunity_rows), {"Y1", "Y5"})
+        st.markdown("#### Unmet Need")
+        st.write(f"{launch_decision_value(assumptions, 'Unmet Need Level')}: {launch_decision_value(assumptions, 'Current Treatment Gap / Rationale')}")
+        competitive = launch_decision_value(assumptions, "Competitive Landscape", [])
+        if isinstance(competitive, list) and competitive:
+            event = competitive[0]
+            st.markdown("#### Competitive Landscape")
+            st.write(
+                f"{event.get('Competitor / Event Name', 'Market event')} · {event.get('Event Type', '')} · "
+                f"{event.get('Expected Year', 'Timing not set')} · Y5 share impact {safe_float(event.get('Market Share Impact Y5')):+.1f}pp. "
+                f"{event.get('Comment', '')}"
+            )
+        launch_decision_sources(
+            "Patient & Market Opportunity",
+            assumptions,
+            ["Population", "Prevalence", "Diagnosis Rate", "Treatment Rate / Treatment Eligibility", "Market Share", "Competitive Landscape", "Unmet Need Level"],
+            [("Accessible Patients", "Integrated patient funnel + Market Access reach"), ("Patients on Product", "Accessible Patients × Market Share")],
+        )
+
+    with st.container(border=True):
+        st.markdown("## 3. Key Launch Elements")
+        access_rows = launch_decision_access_summary(model)
+        sales_resources = inputs.get("sales_resources", {}) if isinstance(inputs, dict) else {}
+        approval_date = pd.to_datetime(regulatory.get("Expected Regulatory Approval Date"), errors="coerce")
+        stock_date = pd.to_datetime(supply.get("Expected Stock Available Date"), errors="coerce")
+        days_to_stock = "Not set" if pd.isna(approval_date) or pd.isna(stock_date) else f"{(stock_date - approval_date).days} days"
+        st.markdown("#### A. Market Access")
+        st.write(
+            f"Access archetype: **{inputs.get('access_archetype', case.get('Access Archetype', 'Not set'))}** · "
+            f"Y1 / Y5 reach: **{pct(access_metrics.get('Y1', {}).get('Total Reach', 0))} / {pct(access_metrics.get('Y5', {}).get('Total Reach', 0))}** · "
+            f"Representative Y5 list / net price: **{money(access_metrics.get('Y5', {}).get('Weighted List Price', 0))} / {money(access_metrics.get('Y5', {}).get('Weighted Net Price', 0))}**"
+        )
+        render_finance_table(access_rows.head(5))
+        st.caption("Price–Reach–Speed remains channel-based: realized price, reachable patient share and access timing are evaluated together.")
+        st.markdown("#### B. Sales / Commercial Execution")
+        st.write(
+            f"Sales FTE Y1 / Y5: **{safe_float(sales_resources.get('Sales Force HC / FTE', {}).get('Y1')):,.0f} / "
+            f"{safe_float(sales_resources.get('Sales Force HC / FTE', {}).get('Y5')):,.0f}** · Population-weighted coverage Y1 / Y5: "
+            f"**{pct(sales_resources.get('Population-weighted Geographic Coverage %', {}).get('Y1', 0))} / "
+            f"{pct(sales_resources.get('Population-weighted Geographic Coverage %', {}).get('Y5', 0))}**"
+        )
+        st.write(str(sales_resources.get("Sales Execution Strategy", "") or "Sales execution strategy is not yet documented."))
+        st.caption("Coverage supports execution capacity; Base Market Share remains a Marketing-owned assumption.")
+        st.markdown("#### C. Regulatory")
+        st.write(
+            f"Dossier submission: **{regulatory.get('Regulatory Dossier Submission Date', 'Not set')}** · Expected approval: "
+            f"**{regulatory.get('Expected Regulatory Approval Date', 'Not set')}** · Timing benchmark: "
+            f"**{launch_assumption_display_value(launch_decision_assumption(assumptions, 'Regulatory Timing Benchmark'))}**"
+        )
+        st.write(f"Material risk: **{regulatory.get('Risk Level', 'Not set')}** · {regulatory.get('Risk / Issue', 'No material risk recorded.')}")
+        st.markdown("#### D. Supply")
+        st.write(
+            f"Commercial stock: **{supply.get('Expected Stock Available Date', 'Not set')}** · Approval-to-stock interval: **{days_to_stock}** · "
+            f"Supply constraint: **{supply.get('Constraint Status', 'Not set')}** · Warehouse / capacity: **{supply.get('Warehouse Capacity Status', 'Not set')}**"
+        )
+        launch_decision_sources(
+            "Key Launch Elements",
+            assumptions,
+            ["Market Access Channel Plan", "Sales FTE", "Population-weighted Geographic Coverage %", "Regulatory Dossier Submission Date", "Expected Regulatory Approval Date", "Expected Stock Available Date", "Manufacturing / Supply Constraint Status"],
+        )
+
+    with st.container(border=True):
+        st.markdown("## 4. Financial Case")
+        cards = st.columns(5)
+        cards[0].metric("5Y NPV", money(npv))
+        cards[1].metric("Payback Period", payback)
+        cards[2].metric("Y5 Net Revenue", money(y5.get("Net Revenue", 0)))
+        cards[3].metric("Y5 Gross Margin %", pct(launch_pnl_value(model, "Gross Margin %")))
+        cards[4].metric("Y5 Operating Margin %", pct(launch_pnl_value(model, "Operating Margin %")))
+        st.markdown("#### Integrated 5-Year P&L")
+        render_finance_pnl(model.get("pnl", pd.DataFrame()), show_all=True)
+        render_launch_benchmark_snapshot(case_id, model, "launch_decision")
+        launch_decision_sources(
+            "Financial Case",
+            assumptions,
+            ["COGS per Unit", "Discount Rate"],
+            [("Integrated 5-Year P&L", "Volume + Price + COGS + Personnel + Functional Projects"), ("NPV / Payback", "Management cash-flow proxy from the controlled model")],
+        )
+
+    with st.container(border=True):
+        st.markdown("## 5. Sensitivity Analysis")
+        scenario_table, driver_table = launch_decision_sensitivity(case, data, model)
+        render_finance_table(scenario_table, set(scenario_table.columns) - {"Scenario"})
+        st.markdown("#### Key Scenario Drivers")
+        render_finance_table(driver_table)
+        launch_decision_sources(
+            "Sensitivity Analysis",
+            assumptions,
+            ["Market Share", "Treatment Rate / Treatment Eligibility", "Population-weighted Geographic Coverage %", "Market Access Channel Plan", "Expected Regulatory Approval Date", "COGS per Unit", "Discount Rate"],
+            [("Downside / Base / Upside", "Base Workstream inputs + controlled Sensitivity overlays")],
+        )
+
+    with st.container(border=True):
+        st.markdown("## 6. Launch Readiness & Key Risks")
+        cards = st.columns(5)
+        cards[0].metric("Overall Status", readiness["Overall Status"])
+        cards[1].metric("Overall Readiness %", f"{readiness['Overall Readiness']:.0%}")
+        cards[2].metric("Data Readiness %", f"{readiness['Data Readiness']:.0%}")
+        cards[3].metric("Process Readiness %", f"{readiness['Process Readiness']:.0%}")
+        cards[4].metric("Days Remaining", str(readiness["Days Remaining"]))
+        functional = readiness["Functional Readiness"][["Function", "Workstream", "Alignment", "Sensitivity", "Overall Functional Status"]].rename(columns={"Overall Functional Status": "Overall Status"})
+        render_finance_table(functional)
+        st.markdown("#### Key Risks & Open Items")
+        risks = launch_open_items(case, assumptions, model)
+        for risk in risks[:5]:
+            st.warning(risk)
+        if not risks:
+            st.success("No material open issue currently identified.")
+        st.markdown("#### Key Milestones")
+        render_finance_table(launch_key_milestones(case, model))
+        launch_decision_sources(
+            "Launch Readiness & Key Risks",
+            assumptions,
+            ["Risk Level", "Risk / Issue", "Key Clinical Evidence Gap / Risk", "Expected Stock Available Date", "Manufacturing / Supply Constraint Status"],
+            [("Overall Readiness", "Topic completeness + Alignment + Sensitivity + Decision Deadline")],
+        )
+
+    with st.container(border=True):
+        st.markdown("## 7. Key Takeaways / Decision Required")
+        st.markdown("#### A. Why This Launch Matters")
+        st.write(
+            f"{launch_decision_value(assumptions, 'Overall Clinical Value')} The Y5 opportunity includes "
+            f"{safe_float(funnel_y5.get('Treated Patients')):,.0f} treated patients and "
+            f"{safe_float(funnel_y5.get('Accessible Patients')):,.0f} commercially accessible patients."
+        )
+        st.markdown("#### B. Economics")
+        st.write(
+            f"Y5 Net Revenue **{money(y5.get('Net Revenue', 0))}** · 5Y NPV **{money(npv)}** · "
+            f"Payback **{payback}** · Y5 Operating Margin **{pct(launch_pnl_value(model, 'Operating Margin %'))}**"
+        )
+        st.markdown("#### C. Critical Assumptions")
+        critical = pd.DataFrame(
+            [
+                {"Assumption": "Regulatory Approval Timing", "Current Base Case": str(regulatory.get("Expected Regulatory Approval Date", "Not set"))},
+                {"Assumption": "Y5 Access Reach", "Current Base Case": pct(access_metrics.get("Y5", {}).get("Total Reach", 0))},
+                {"Assumption": "Y5 Market Share", "Current Base Case": pct(funnel_y5.get("Market Share", 0))},
+                {"Assumption": "Y5 Net Price", "Current Base Case": money(access_metrics.get("Y5", {}).get("Weighted Net Price", 0))},
+                {"Assumption": "Commercial Stock Availability", "Current Base Case": str(supply.get("Expected Stock Available Date", "Not set"))},
+            ]
+        )
+        render_finance_table(critical)
+        st.markdown("#### D. Conditions / Open Decisions")
+        if readiness["Top Open Actions"]:
+            for action in readiness["Top Open Actions"][:5]:
+                st.write(f"• {action}")
+        else:
+            st.write("No outstanding readiness condition has been identified.")
+        st.markdown("#### Decision Required")
+        st.info("Management decision on the Base Case launch plan and proposed commercial resource envelope, considering the listed readiness conditions and scenario exposures.")
+        launch_decision_sources(
+            "Key Takeaways / Decision Required",
+            assumptions,
+            ["Overall Clinical Value", "Expected Regulatory Approval Date", "Market Share", "Market Access Channel Plan", "Expected Stock Available Date"],
+            [("Economics", "Integrated Master Model"), ("Open Conditions", "Calculated Readiness view")],
+        )
+
+    render_launch_decision_appendix(case, model, assumptions)
 
 
 def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
@@ -9228,9 +10425,9 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
     elif section == "Sensitivity":
         render_launch_sensitivity(case, data, model)
     elif section == "Readiness":
-        render_launch_readiness(assumptions)
+        render_launch_readiness(case, assumptions, model)
     else:
-        render_launch_decision_case()
+        render_launch_decision_case(case, data, model, assumptions)
 
 
 def page_launch_sandbox(data: dict[str, pd.DataFrame]) -> None:
