@@ -45,6 +45,7 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
         labels = {metric.label for metric in app.metric}
         required = {"Overall Status", "Data Readiness %", "Process Readiness %", "Days Remaining"}
         assert required.issubset(labels), f"{case_id} {role}: missing KPIs {required - labels}"
+        assert all(metric.delta in (None, "") for metric in app.metric if metric.label in required)
         content = "\n".join(str(item.value) for item in app.markdown)
         for heading in (
             "Functional Readiness",
@@ -55,6 +56,23 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
             "Timeline Readiness",
         ):
             assert heading in content, f"{case_id} {role}: missing {heading}"
+        for current_label in (
+            "Workstream Status",
+            "Open Issues / Conflicts",
+            "Assigned Reviews",
+            "Changes / Questions",
+            "Sensitivity Drivers",
+            "Completed Drivers",
+        ):
+            assert current_label in content, f"{case_id} {role}: missing {current_label}"
+        for legacy_label in (
+            "Primary Input Status",
+            "Open Input Issues",
+            "Items To Review",
+            "Change Requested / Question",
+            "Required Sensitivity Topics",
+        ):
+            assert legacy_label not in content, f"{case_id} {role}: legacy wording {legacy_label}"
 
         sensitivity = app.session_state[f"launch_sensitivity_{case_id}"]
         completed = set(sensitivity.get("Completed Drivers", []))
@@ -97,5 +115,31 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
     assert_clean(viewer, f"{case_id} Finance deadline view")
     deadline_text = "\n".join(str(item.value) for item in viewer.markdown)
     assert "Decision / Deck Deadline" in deadline_text
+
+# Drill-downs use the existing top-level navigation and preserve role ownership.
+coordinator = AppTest.from_file(str(APP_PATH), default_timeout=90)
+coordinator.session_state["current_module"] = "launch"
+coordinator.session_state["launch_page"] = "Launch Case"
+coordinator.session_state["selected_launch_case_id"] = "LAUNCH-1001"
+coordinator.session_state["launch_current_role"] = "Marketing · Launch Coordinator"
+coordinator.session_state["launch_case_section_LAUNCH-1001"] = "Readiness"
+coordinator.run()
+assert_clean(coordinator, "coordinator readiness drill-down")
+by_key(coordinator.button, "readiness_sensitivity_LAUNCH-1001_0").click().run()
+assert_clean(coordinator, "coordinator sensitivity navigation")
+assert coordinator.session_state["launch_case_section_LAUNCH-1001"] == "Sensitivity"
+
+viewer = AppTest.from_file(str(APP_PATH), default_timeout=90)
+viewer.session_state["current_module"] = "launch"
+viewer.session_state["launch_page"] = "Launch Case"
+viewer.session_state["selected_launch_case_id"] = "LAUNCH-1001"
+viewer.session_state["launch_current_role"] = "Finance"
+viewer.session_state["launch_case_section_LAUNCH-1001"] = "Readiness"
+viewer.run()
+assert_clean(viewer, "viewer readiness drill-down")
+by_key(viewer.button, "readiness_input_LAUNCH-1001_0").click().run()
+assert_clean(viewer, "viewer denied workstream navigation")
+assert viewer.session_state["launch_case_section_LAUNCH-1001"] == "Readiness"
+assert any("cannot edit that Workstream" in str(item.value) for item in viewer.info)
 
 print("launch readiness smoke test complete")

@@ -1354,6 +1354,7 @@ def init_state() -> None:
     st.session_state.setdefault("launch_assumption_overrides", {})
     st.session_state.setdefault("launch_current_role", "Marketing · Launch Coordinator")
     st.session_state.setdefault("launch_runtime_cases", [])
+    st.session_state.setdefault("launch_approval_records", {})
 
 
 def add_audit(
@@ -1367,12 +1368,14 @@ def add_audit(
     previous_status: str = "",
     new_status: str = "",
     sensitive_fields_visible: str | None = None,
+    actor: str | None = None,
+    role: str | None = None,
 ) -> None:
     event = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Deal ID": deal_id,
-        "Actor": st.session_state.get("persona", "Demo User"),
-        "Role": st.session_state.get("role", "Demo Role"),
+        "Actor": actor or st.session_state.get("persona", "Demo User"),
+        "Role": role or st.session_state.get("role", "Demo Role"),
         "Action": action,
         "Entity": entity,
         "Details": details,
@@ -1390,7 +1393,7 @@ def add_audit(
         event["Previous Status"] = previous_status
     if new_status:
         event["New Status"] = new_status
-    st.session_state.audit_events.append(event)
+    st.session_state.audit_events = [*st.session_state.get("audit_events", []), event]
 
 
 def seed_demo_workflow_state(data: dict[str, pd.DataFrame]) -> None:
@@ -4249,6 +4252,12 @@ def launch_cases(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     runtime_rows = st.session_state.get("launch_runtime_cases", [])
     if isinstance(runtime_rows, list):
         rows.extend(dict(row) for row in runtime_rows if isinstance(row, dict))
+    approval_records = st.session_state.get("launch_approval_records", {})
+    if isinstance(approval_records, dict):
+        for row in rows:
+            record = approval_records.get(str(row.get("Launch Case ID", "")), {})
+            if isinstance(record, dict) and record.get("Status"):
+                row["Case Status"] = str(record["Status"])
     return pd.DataFrame(rows)
 
 
@@ -4315,7 +4324,7 @@ LAUNCH_MASTER_MODEL_PATH = DEMO_DIR / "Launch_Master_Model.xlsx"
 assert tuple(LAUNCH_YEARS) == MASTER_MODEL_YEARS
 LAUNCH_SCENARIOS = ["Downside", "Base", "Upside"]
 LAUNCH_WORKSTREAMS = ["Marketing", "Sales", "Medical", "Market Access", "Regulatory", "Supply / Operations", "Finance"]
-LAUNCH_ROLES = ["Marketing · Launch Coordinator", "Sales", "Medical", "Market Access", "Regulatory", "Supply / Operations", "Finance"]
+LAUNCH_ROLES = ["Marketing · Launch Coordinator", "Sales", "Medical", "Market Access", "Regulatory", "Supply / Operations", "Finance", "General Manager"]
 LAUNCH_READINESS_CONFIG = {
     "data_weight": 0.50,
     "process_weight": 0.50,
@@ -4634,6 +4643,119 @@ def launch_is_coordinator() -> bool:
     return st.session_state.get("launch_current_role") == "Marketing · Launch Coordinator"
 
 
+def launch_approval_record(case_id: str) -> dict[str, object]:
+    records = st.session_state.get("launch_approval_records", {})
+    if not isinstance(records, dict):
+        return {}
+    record = records.get(case_id, {})
+    return deepcopy(record) if isinstance(record, dict) else {}
+
+
+def launch_case_approval_status(case_id: str, fallback: str = "Planning / Inputs in Progress") -> str:
+    return str(launch_approval_record(case_id).get("Status", fallback))
+
+
+def launch_case_is_locked(case_id: str) -> bool:
+    return launch_case_approval_status(case_id, "") in {"Pending Approval", "Approved", "Rejected"}
+
+
+def launch_current_case_is_locked() -> bool:
+    case_id = str(st.session_state.get("selected_launch_case_id") or "")
+    return bool(case_id) and launch_case_is_locked(case_id)
+
+
+def launch_actor_name() -> str:
+    role = str(st.session_state.get("launch_current_role", LAUNCH_ROLES[0]))
+    return "Sarah Morgan" if role == "General Manager" else role
+
+
+def set_launch_approval_record(case_id: str, record: dict[str, object]) -> None:
+    records = {
+        str(key): deepcopy(value)
+        for key, value in st.session_state.get("launch_approval_records", {}).items()
+        if isinstance(value, dict)
+    }
+    records[case_id] = deepcopy(record)
+    st.session_state.launch_approval_records = records
+
+
+def submit_launch_case_for_approval(case: pd.Series, readiness: dict[str, object]) -> None:
+    case_id = str(case.get("Launch Case ID", ""))
+    previous = launch_approval_record(case_id)
+    previous_status = str(previous.get("Status", case.get("Case Status", "Planning / Inputs in Progress")))
+    version = int(safe_float(previous.get("Submitted Version", 0))) + 1
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    assumption_snapshot = deepcopy(st.session_state.get(launch_assumption_state_key(case_id), []))
+    sensitivity_snapshot = deepcopy(st.session_state.get(launch_sensitivity_state_key(case_id), {}))
+    record = {
+        **previous,
+        "Status": "Pending Approval",
+        "Submitted By": launch_actor_name(),
+        "Submitted Role": str(st.session_state.get("launch_current_role", "")),
+        "Submitted At": timestamp,
+        "Submitted Version": version,
+        "Submitted Case": {str(key): value for key, value in case.to_dict().items()},
+        "Submitted Assumptions": assumption_snapshot,
+        "Submitted Sensitivity": sensitivity_snapshot,
+        "Submitted Readiness": {
+            "Overall Status": str(readiness.get("Overall Status", "")),
+            "Overall Readiness": safe_float(readiness.get("Overall Readiness")),
+            "Open Action Count": int(safe_float(readiness.get("Open Action Count"))),
+        },
+        "Decision": "",
+        "Decision By": "",
+        "Decision At": "",
+        "Decision Comment": "",
+    }
+    set_launch_approval_record(case_id, record)
+    action = "Resubmitted" if previous_status == "Returned for Changes" else "Sent for Approval"
+    add_audit(
+        case_id,
+        action,
+        entity="Launch Approval",
+        details=f"Launch Decision Case version {version} submitted to General Manager.",
+        previous_status=previous_status,
+        new_status="Pending Approval",
+        actor=launch_actor_name(),
+        role=str(st.session_state.get("launch_current_role", "")),
+    )
+
+
+def decide_launch_case(case_id: str, decision: str, comment: str) -> None:
+    record = launch_approval_record(case_id)
+    previous_status = str(record.get("Status", "Pending Approval"))
+    new_status = {
+        "Approve": "Approved",
+        "Return for Changes": "Returned for Changes",
+        "Reject": "Rejected",
+    }[decision]
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    updated = {
+        **record,
+        "Status": new_status,
+        "Decision": decision,
+        "Decision By": launch_actor_name(),
+        "Decision Role": "General Manager",
+        "Decision At": timestamp,
+        "Decision Comment": comment.strip(),
+    }
+    set_launch_approval_record(case_id, updated)
+    action = "Returned for Changes" if decision == "Return for Changes" else ("Approved" if decision == "Approve" else "Rejected")
+    add_audit(
+        case_id,
+        action,
+        entity="Launch Approval",
+        details=f"General Manager decision: {decision}.",
+        decision=decision,
+        comment=comment.strip(),
+        approval_step="General Manager",
+        previous_status=previous_status,
+        new_status=new_status,
+        actor=launch_actor_name(),
+        role="General Manager",
+    )
+
+
 def launch_decision_deadline_key(case_id: str) -> str:
     return f"launch_case_decision_deck_deadline_{case_id}"
 
@@ -4664,7 +4786,7 @@ def render_launch_decision_deadline(case: pd.Series) -> date:
         "Decision / Deck Deadline",
         value=current,
         key=launch_decision_deadline_widget_key(case_id),
-        disabled=not launch_is_coordinator(),
+        disabled=not launch_is_coordinator() or launch_case_is_locked(case_id),
         help=(
             "Date by which the launch case should be sufficiently complete for management decision or deck submission. "
             "It is separate from regulatory approval, stock availability and launch dates."
@@ -6204,10 +6326,43 @@ def set_launch_case_selection(case_id: str, case_ids: tuple[str, ...]) -> None:
         st.session_state.selected_launch_case_id = None
 
 
+def render_launch_gm_inbox(cases: pd.DataFrame) -> None:
+    st.markdown("<div class='enterprise-section-title'>Launch Approval Inbox</div>", unsafe_allow_html=True)
+    pending = cases[cases["Case Status"].astype(str).eq("Pending Approval")].copy()
+    if pending.empty:
+        st.info("No Launch Decision Cases are currently awaiting General Manager approval.")
+        return
+    headers = st.columns([1.0, 2.2, 1.25, 1.3, 1.25, 1.25, 0.8])
+    for column, label in zip(
+        headers,
+        ["Case ID", "Launch / Product", "Market / Region", "Submitted By", "Submitted Date", "Status", "Open"],
+    ):
+        column.markdown(f"**{label}**")
+    for _, row in pending.iterrows():
+        case_id = str(row.get("Launch Case ID", ""))
+        record = launch_approval_record(case_id)
+        submitted_at = pd.to_datetime(record.get("Submitted At"), errors="coerce")
+        submitted_text = submitted_at.strftime("%d %b %Y") if not pd.isna(submitted_at) else "Not recorded"
+        columns = st.columns([1.0, 2.2, 1.25, 1.3, 1.25, 1.25, 0.8])
+        columns[0].write(case_id)
+        columns[1].write(f"{row.get('Launch Name', '')} · {row.get('Product', '')}")
+        columns[2].write(str(row.get("Market / Region", "")))
+        columns[3].write(str(record.get("Submitted By", "Launch Coordinator")))
+        columns[4].write(submitted_text)
+        columns[5].write("Pending Approval")
+        if columns[6].button("Open", key=f"launch_gm_open_{case_id}"):
+            st.session_state.selected_launch_case_id = case_id
+            st.session_state.launch_page = "Launch Case"
+            st.rerun()
+
+
 def page_launch_home(data: dict[str, pd.DataFrame]) -> None:
     launch_top_navigation()
     render_header("Launch Sandbox", "Cross-functional launch planning, alignment and decision preparation.")
     cases = launch_cases(data)
+    if str(st.session_state.get("launch_current_role", "")) == "General Manager":
+        render_launch_gm_inbox(cases)
+        return
     case_ids = tuple(cases["Launch Case ID"].astype(str).tolist())
     selected_id = st.session_state.get("selected_launch_case_id")
     if selected_id not in case_ids:
@@ -6305,9 +6460,9 @@ def launch_assumption_permission(assumption: pd.Series | dict[str, object]) -> s
     owner = str(assumption.get("Owner", ""))
     validators = split_validators(assumption.get("Validators", ""))
     permissions = {"VIEW"}
-    if owner == role_workstream:
+    if owner == role_workstream and not launch_current_case_is_locked():
         permissions.add("EDIT")
-    if role_workstream in validators:
+    if role_workstream in validators and not launch_current_case_is_locked():
         permissions.add("VALIDATE")
     return permissions
 
@@ -6564,6 +6719,7 @@ def render_competitive_events_input(case_id: str, assumption: pd.Series, editabl
 
 
 def render_population_reference(case_id: str, assumption: pd.Series) -> None:
+    editable = not launch_case_is_locked(case_id)
     snapshot = {year: safe_float(assumption.get("Case Snapshot", {}).get(year, assumption.get(year, 0))) for year in LAUNCH_YEARS}
     current_reference = {year: safe_float(assumption.get("Reference Values", {}).get(year, snapshot[year])) for year in LAUNCH_YEARS}
     with st.container(border=True):
@@ -6582,9 +6738,10 @@ def render_population_reference(case_id: str, assumption: pd.Series) -> None:
             index=1 if bool(assumption.get("Override Enabled", False)) else 0,
             key=f"launch_population_basis_{case_id}",
             horizontal=True,
+            disabled=not editable,
         )
         if basis == "Use Reference Value":
-            if bool(assumption.get("Override Enabled", False)) or any(safe_float(assumption.get(year)) != snapshot[year] for year in LAUNCH_YEARS):
+            if editable and (bool(assumption.get("Override Enabled", False)) or any(safe_float(assumption.get(year)) != snapshot[year] for year in LAUNCH_YEARS)):
                 update_launch_assumption_record(
                     case_id,
                     str(assumption.get("Assumption ID", "")),
@@ -6601,14 +6758,16 @@ def render_population_reference(case_id: str, assumption: pd.Series) -> None:
                     value=int(round(safe_float(assumption.get(year, snapshot[year])))),
                     step=1,
                     key=f"launch_population_override_{case_id}_{year}",
+                    disabled=not editable,
                 )
             rationale = st.text_area(
                 "Override Rationale *",
                 value=str(assumption.get("Override Rationale", "")),
                 key=f"launch_population_override_rationale_{case_id}",
                 height=80,
+                disabled=not editable,
             )
-            if rationale.strip():
+            if editable and rationale.strip():
                 update_launch_assumption_record(
                     case_id,
                     str(assumption.get("Assumption ID", "")),
@@ -6620,7 +6779,7 @@ def render_population_reference(case_id: str, assumption: pd.Series) -> None:
                     },
                 )
                 st.caption("Case override saved. The central reference remains unchanged.")
-            else:
+            elif editable:
                 st.warning("A rationale is required before the case-specific override is applied.")
         render_launch_validation_history(assumption)
 
@@ -6996,7 +7155,7 @@ def render_launch_validation_queue(case_id: str, assumptions: pd.DataFrame, work
     if queue.empty:
         st.caption("No inputs currently need this function's alignment.")
         return
-    can_validate = launch_user_workstream() == workspace
+    can_validate = launch_user_workstream() == workspace and not launch_current_case_is_locked()
     workspace_key = re.sub(r"[^A-Za-z0-9]+", "_", workspace).lower()
     for _, assumption in queue.iterrows():
         assumption_id = str(assumption.get("Assumption ID", ""))
@@ -7084,7 +7243,7 @@ def render_business_alignment_package(
             st.info("Not yet shared for alignment.")
         elif status == "Aligned":
             st.success("Alignment confirmed.")
-        can_review = launch_user_workstream() == workspace and status in {"Shared for Alignment", "Alignment Required"}
+        can_review = launch_user_workstream() == workspace and not launch_current_case_is_locked() and status in {"Shared for Alignment", "Alignment Required"}
         comment = st.text_area(
             "Alignment comment",
             key=f"launch_package_comment_{case_id}_{key_name}",
@@ -7212,7 +7371,7 @@ def render_sales_plan_alignment(case_id: str, assumptions: pd.DataFrame) -> None
         comment = st.text_area("Alignment comment", key=f"launch_sales_plan_alignment_comment_{case_id}", height=70)
         actions = st.columns(3)
         actions[0].markdown("<span class='launch-confirm-marker'></span>", unsafe_allow_html=True)
-        can_align = launch_user_workstream() == "Marketing"
+        can_align = launch_user_workstream() == "Marketing" and not launch_current_case_is_locked()
         if actions[0].button("Confirm Alignment", type="primary", key=f"launch_sales_plan_confirm_{case_id}", disabled=not can_align):
             for _, assumption in sales_plan.iterrows():
                 update_launch_validation(case_id, str(assumption.get("Assumption ID", "")), "Confirmed Alignment", comment)
@@ -7295,7 +7454,7 @@ def render_marketing_workspace(case: pd.Series, data: dict[str, pd.DataFrame], a
         case_id,
         launch_assumptions(data, case, calculate_launch_model(data, case, "Base", include_scenarios=False)),
         "Marketing",
-        launch_user_workstream() == "Marketing",
+        launch_user_workstream() == "Marketing" and not launch_case_is_locked(case_id),
     )
 
 
@@ -7347,7 +7506,7 @@ def render_sales_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assum
     case_id = str(case.get("Launch Case ID", ""))
     st.markdown("### Sales Coverage & Execution Plan")
     coverage = assumptions[assumptions["Category"].eq("Sales Coverage & Execution Plan") & assumptions["Owner"].eq("Sales")]
-    can_edit = launch_user_workstream() == "Sales"
+    can_edit = launch_user_workstream() == "Sales" and not launch_case_is_locked(case_id)
     optional_names = ["Regions Covered", "Population-weighted Geographic Coverage %", "Target Account / Center Coverage %", "Target Accounts / Centers"]
     selector_columns = st.columns(4)
     enabled_by_name: dict[str, bool] = {"Sales FTE": True}
@@ -7709,7 +7868,7 @@ def render_medical_key_clinical_value(case_id: str, assumptions: pd.DataFrame, c
 
 def render_medical_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
     case_id = str(case.get("Launch Case ID", ""))
-    can_edit = launch_user_workstream() == "Medical"
+    can_edit = launch_user_workstream() == "Medical" and not launch_case_is_locked(case_id)
 
     st.markdown("### Target Patient & Treatment Positioning")
     st.caption("Owner: Medical · Defines who is intended for treatment and the clinical position used throughout the launch case.")
@@ -7940,7 +8099,7 @@ def render_access_path_inputs(
 
 def render_market_access_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
     case_id = str(case.get("Launch Case ID", ""))
-    can_edit = launch_user_workstream() == "Market Access"
+    can_edit = launch_user_workstream() == "Market Access" and not launch_case_is_locked(case_id)
     launch_year = launch_year_from_case(case)
     owned = assumptions[assumptions["Owner"].eq("Market Access")]
 
@@ -8146,7 +8305,7 @@ def regulatory_date_value(raw_value: object, fallback_year: int) -> date:
 
 def render_regulatory_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
     case_id = str(case.get("Launch Case ID", ""))
-    can_edit = launch_user_workstream() == "Regulatory"
+    can_edit = launch_user_workstream() == "Regulatory" and not launch_case_is_locked(case_id)
     launch_year = launch_year_from_case(case)
     owned = assumptions[assumptions["Workstream"].eq("Regulatory")]
 
@@ -8312,7 +8471,7 @@ def render_regulatory_workspace(case: pd.Series, data: dict[str, pd.DataFrame], 
 
 def render_supply_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
     case_id = str(case.get("Launch Case ID", ""))
-    can_edit = launch_user_workstream() == "Supply / Operations"
+    can_edit = launch_user_workstream() == "Supply / Operations" and not launch_case_is_locked(case_id)
     launch_year = launch_year_from_case(case)
     owned = assumptions[assumptions["Workstream"].eq("Supply / Operations")]
 
@@ -8515,12 +8674,16 @@ def render_finance_table(
     table: pd.DataFrame,
     right_align: set[str] | None = None,
     secondary_rows: set[str] | None = None,
+    exception_values: dict[str, str] | None = None,
+    nonzero_highlights: dict[str, str] | None = None,
 ) -> None:
     """Render a small Finance table without Streamlit's internal scroll container."""
     if not isinstance(table, pd.DataFrame) or table.empty:
         return
     right_align = right_align or set()
     secondary_rows = secondary_rows or set()
+    exception_values = exception_values or {}
+    nonzero_highlights = nonzero_highlights or {}
     headers = "".join(
         f"<th style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
         "border-bottom:1px solid #d8dee8;background:#eef2f7;font-weight:650;white-space:normal'>"
@@ -8532,12 +8695,17 @@ def render_finance_table(
         background = "#f8fafc" if row_index % 2 else "#ffffff"
         first_value = str(row.iloc[0]) if len(row) else ""
         row_style = "font-style:italic;color:#68768a;" if first_value in secondary_rows else ""
-        cells = "".join(
-            f"<td style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
-            f"border-bottom:1px solid #e5e9f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere;{row_style}'>"
-            f"{escape('' if pd.isna(row.get(column)) else str(row.get(column)))}</td>"
-            for column in table.columns
-        )
+        cells = ""
+        for column in table.columns:
+            value = "" if pd.isna(row.get(column)) else str(row.get(column))
+            exception_background = exception_values.get(value, "transparent")
+            if str(column) in nonzero_highlights and abs(safe_float(row.get(column))) > 1e-9:
+                exception_background = nonzero_highlights[str(column)]
+            cells += (
+                f"<td style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
+                f"border-bottom:1px solid #e5e9f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere;"
+                f"background:{exception_background};{row_style}'>{escape(value)}</td>"
+            )
         body_rows.append(f"<tr style='background:{background}'>{cells}</tr>")
     st.markdown(
         "<table style='width:100%;border-collapse:collapse;border:1px solid #d8dee8;"
@@ -8677,7 +8845,7 @@ def render_finance_project_alignment(case_id: str, projects: pd.DataFrame, can_e
 
 def render_finance_workspace(case: pd.Series, data: dict[str, pd.DataFrame], assumptions: pd.DataFrame) -> None:
     case_id = str(case.get("Launch Case ID", ""))
-    can_edit = launch_user_workstream() == "Finance"
+    can_edit = launch_user_workstream() == "Finance" and not launch_case_is_locked(case_id)
     owned = assumptions[assumptions["Owner"].eq("Finance")]
     discount_rate = medical_assumption(owned, "Discount Rate")
     cogs = medical_assumption(owned, "COGS per Unit")
@@ -9035,7 +9203,7 @@ def render_launch_workspace(case: pd.Series, data: dict[str, pd.DataFrame], work
         case_id,
         launch_assumptions(data, case, model),
         workspace,
-        launch_user_workstream() == workspace,
+        launch_user_workstream() == workspace and not launch_case_is_locked(case_id),
     )
 
 
@@ -9410,6 +9578,23 @@ def sensitivity_method_label(method: str) -> str:
     }.get(method, method)
 
 
+def sensitivity_driver_label(driver_name: str) -> str:
+    return "Patient Access Reach" if driver_name == "Access Reach" else driver_name
+
+
+def sensitivity_unit_label(driver_name: str, unit: str) -> str:
+    if driver_name == "Regulatory Timing":
+        return "Approval timing shift, days"
+    return unit
+
+
+def sensitivity_widget_value(key: str, initial_value: float) -> float:
+    """Seed a sensitivity widget once, then use its current state as the input."""
+    if key not in st.session_state:
+        st.session_state[key] = float(initial_value)
+    return safe_float(st.session_state[key])
+
+
 def sensitivity_methodology(driver, mode: str, coverage_name: str) -> str:
     applies = {
         "RAMP_PP": "Deviation ramps from the first commercially relevant year to Y5." if mode == "Terminal / Y5" else "Explicit Y1-Y5 percentage-point deviations.",
@@ -9418,12 +9603,9 @@ def sensitivity_methodology(driver, mode: str, coverage_name: str) -> str:
         "DAYS_SHIFT": "Approval and dependent commercial availability dates shift by the stated number of days.",
         "NPV_PP": "Percentage-point change applies only to the rate used for 5Y NPV.",
     }.get(driver.method, "Controlled master-model adjustment.")
-    note = f"Unit: {driver.unit}. {applies} Affects: {driver.affects}. Downstream: {driver.downstream}."
+    note = f"Unit: {sensitivity_unit_label(driver.name, driver.unit)}. {applies} Affects: {driver.affects}. Downstream: {driver.downstream}."
     if driver.name == "Sales Coverage":
-        note += (
-            f" Active Base metric: {coverage_name}. Demo methodology: Sales coverage is used as a first-order proxy for commercial execution. "
-            "Market Share changes proportionally to coverage versus Base. In production, this relationship can be replaced by company-specific response curves or elasticity."
-        )
+        note += f" Active Base metric: {coverage_name}. For the demo, market share moves proportionally with sales coverage versus Base. This relationship can later be replaced with a company-specific response curve."
     return note
 
 
@@ -9458,13 +9640,18 @@ def render_launch_sensitivity(case: pd.Series, data: dict[str, pd.DataFrame], ba
     st.caption("Base values come directly from Workstreams and the controlled master model. Downside and Upside are analytical overlays only.")
     st.caption("Calculation path: Workstream Base Inputs + Sensitivity Adjustment → Launch Master Model → Scenario Outputs.")
     updated = deepcopy(values)
-    mode = st.radio(
+    mode_widget_key = f"launch_sensitivity_mode_{case_id}"
+    persisted_mode = "By Year" if str(values.get("Mode")) == "By Year" else "Y5 Target"
+    if st.session_state.get(mode_widget_key) not in {"Y5 Target", "By Year"}:
+        st.session_state[mode_widget_key] = persisted_mode
+    display_mode = st.radio(
         "Sensitivity Mode",
-        ["Terminal / Y5", "By Year"],
-        index=["Terminal / Y5", "By Year"].index(str(values.get("Mode", "Terminal / Y5"))),
+        ["Y5 Target", "By Year"],
         horizontal=True,
-        key=f"launch_sensitivity_mode_{case_id}",
+        key=mode_widget_key,
     )
+    mode = "Terminal / Y5" if display_mode == "Y5 Target" else "By Year"
+    st.caption("Y5 Target sets the end-state sensitivity; intermediate years are ramped automatically.")
     updated["Mode"] = mode
     updated_drivers = updated["Drivers"]
     value_drivers = values["Drivers"]
@@ -9473,38 +9660,43 @@ def render_launch_sensitivity(case: pd.Series, data: dict[str, pd.DataFrame], ba
         owner_drivers = [driver for driver in drivers if driver.owner == owner]
         for driver in owner_drivers:
             driver_key = re.sub(r"[^A-Za-z0-9]+", "_", driver.name).strip("_").lower()
-            can_edit = launch_is_coordinator() or launch_user_workstream() == owner
+            driver_label = sensitivity_driver_label(driver.name)
+            can_edit = (launch_is_coordinator() or launch_user_workstream() == owner) and not launch_case_is_locked(case_id)
             if mode == "By Year" and driver.method not in {"DAYS_SHIFT", "NPV_PP"}:
-                st.markdown(f"**{driver.name}**")
+                st.markdown(f"**{driver_label}**")
                 st.caption("Base · " + " | ".join(f"{year} {sensitivity_base_display(driver.name, base_inputs, year)}" for year in LAUNCH_YEARS))
                 for scenario in ["Downside", "Upside"]:
                     columns = st.columns([1.05, 1, 1, 1, 1, 1])
                     columns[0].markdown(f"**{scenario}**")
                     for index, year in enumerate(LAUNCH_YEARS, start=1):
+                        widget_key = f"launch_sensitivity_{case_id}_{driver_key}_{scenario.lower()}_{year.lower()}"
+                        sensitivity_widget_value(
+                            widget_key,
+                            value_drivers[driver.name]["By Year"][scenario][year],
+                        )
                         updated_drivers[driver.name]["By Year"][scenario][year] = safe_float(columns[index].number_input(
-                            f"{driver.name} {scenario} {year}",
-                            value=float(value_drivers[driver.name]["By Year"][scenario][year]),
-                            key=f"launch_sensitivity_{case_id}_{driver_key}_{scenario.lower()}_{year.lower()}",
+                            year,
+                            key=widget_key,
                             disabled=not can_edit,
                         ))
             else:
                 columns = st.columns([1.45, 1, 1, 1])
-                columns[0].markdown(f"**{driver.name}**")
-                columns[0].caption(driver.unit)
+                columns[0].markdown(f"**{driver_label}**")
+                columns[0].caption(sensitivity_unit_label(driver.name, driver.unit))
                 columns[1].text_input(
-                    f"{driver.name} Base",
+                    f"{driver_label} Base",
                     value=sensitivity_base_display(driver.name, base_inputs),
-                    key=f"launch_sensitivity_base_{case_id}_{driver_key}",
                     disabled=True,
                 )
                 for index, scenario in enumerate(["Downside", "Upside"], start=2):
+                    widget_key = f"launch_sensitivity_{case_id}_{driver_key}_{scenario.lower()}_terminal"
+                    sensitivity_widget_value(widget_key, value_drivers[driver.name][scenario])
                     updated_drivers[driver.name][scenario] = safe_float(columns[index].number_input(
-                        f"{driver.name} {scenario}",
-                        value=float(value_drivers[driver.name][scenario]),
-                        key=f"launch_sensitivity_{case_id}_{driver_key}_{scenario.lower()}_terminal",
+                        f"{driver_label} {scenario}",
+                        key=widget_key,
                         disabled=not can_edit,
                     ))
-            with st.expander(f"{driver.name} methodology", expanded=False):
+            with st.expander(f"{driver_label} methodology", expanded=False):
                 st.caption(sensitivity_methodology(driver, mode, coverage_name))
     completed_drivers = set(str(name) for name in values.get("Completed Drivers", []))
     for driver in drivers:
@@ -9526,17 +9718,18 @@ def render_launch_sensitivity(case: pd.Series, data: dict[str, pd.DataFrame], ba
             upside = sensitivity_adjustment_display(driver_values["Upside"], driver.unit)
         summary_rows.append(
             {
-                "Driver": driver.name,
+                "Driver": sensitivity_driver_label(driver.name),
                 "Owner": driver.owner,
                 "Downside": downside,
                 "Base": sensitivity_base_display(driver.name, base_inputs),
                 "Upside": upside,
-                "Method": sensitivity_method_label(driver.method),
+                "Application": sensitivity_method_label(driver.method),
             }
         )
     render_finance_table(pd.DataFrame(summary_rows))
 
     st.markdown("### Scenario Results")
+    st.caption("Scenario outputs are recalculated from the Base Case using the sensitivity adjustments above. Base inputs remain unchanged.")
     scenario_results = evaluate_scenarios(
         base_inputs,
         updated,
@@ -9632,6 +9825,29 @@ def launch_readiness_data_topics(assumptions: pd.DataFrame, benchmark: dict[str,
     return pd.DataFrame(rows)
 
 
+def launch_readiness_structured_conflicts(assumptions: pd.DataFrame) -> list[dict[str, str]]:
+    conflicts: list[dict[str, str]] = []
+    supply_checks = {
+        "Manufacturing / Supply Constraint Status": "Resolve the manufacturing or supply constraint affecting launch readiness.",
+        "Supply / Warehouse Capacity Status": "Resolve the warehouse capacity or launch-allocation constraint.",
+    }
+    for assumption_name, action in supply_checks.items():
+        rows = assumptions[assumptions["Assumption Name"].eq(assumption_name)]
+        if rows.empty:
+            continue
+        status = str(rows.iloc[0].get("Value", "")).strip()
+        if status in {"At Risk", "Critical", "Constrained"}:
+            conflicts.append(
+                {
+                    "Function": "Supply / Operations",
+                    "Topic": assumption_name,
+                    "Action": action,
+                    "Type": "Conflict",
+                }
+            )
+    return conflicts
+
+
 def launch_readiness_alignment(
     assumptions: pd.DataFrame,
     current_workspace: str,
@@ -9672,10 +9888,10 @@ def launch_readiness_alignment(
         summary_rows.append(
             {
                 "Function": workspace,
-                "Items To Review": len(owned_topics),
+                "Assigned Reviews": len(owned_topics),
                 "Aligned": sum(row["Status"] == "Aligned" for row in owned_topics),
                 "Pending": sum(row["Status"] in {"Draft", "Not Started", "Shared for Alignment"} for row in owned_topics),
-                "Change Requested / Question": sum(row["Status"] == "Alignment Required" for row in owned_topics),
+                "Changes / Questions": sum(row["Status"] == "Alignment Required" for row in owned_topics),
                 "Needs My Attention": sum(bool(row["Needs My Attention"]) for row in owned_topics),
             }
         )
@@ -9699,8 +9915,8 @@ def launch_readiness_sensitivity(drivers: tuple, settings: dict[str, object]) ->
         rows.append(
             {
                 "Function": workspace,
-                "Required Sensitivity Topics": ", ".join(required) if required else "None",
-                "Completed": f"{len(completed_topics)} / {len(required)}" if required else "—",
+                "Sensitivity Drivers": ", ".join(sensitivity_driver_label(name) for name in required) if required else "None",
+                "Completed Drivers": f"{len(completed_topics)} / {len(required)}" if required else "—",
                 "Status": status,
             }
         )
@@ -9742,6 +9958,7 @@ def launch_readiness_snapshot(
     )
     change_requested = sum(row["Status"] == "Alignment Required" for row in alignment_topics)
     needs_attention = sum(bool(row["Needs My Attention"]) for row in alignment_topics)
+    structured_conflicts = launch_readiness_structured_conflicts(assumptions)
 
     if overall_readiness <= LAUNCH_READINESS_CONFIG["not_started_max_readiness"]:
         overall_status = "Not Started"
@@ -9773,29 +9990,32 @@ def launch_readiness_snapshot(
         last_updated = updated.max().strftime("%d %b %Y") if not updated.empty else "Not set"
         alignment_row = alignment[alignment["Function"].eq(workspace)].iloc[0]
         sensitivity_row = sensitivity[sensitivity["Function"].eq(workspace)].iloc[0]
-        if int(alignment_row["Change Requested / Question"]) > 0:
+        workspace_conflicts = sum(1 for conflict in structured_conflicts if conflict["Function"] == workspace)
+        alignment_conflicts = int(alignment_row["Changes / Questions"])
+        open_issues = incomplete + workspace_conflicts + alignment_conflicts
+        if alignment_conflicts > 0 or workspace_conflicts > 0:
             functional_status = "At Risk"
         elif incomplete == 0 and int(alignment_row["Pending"]) == 0 and str(sensitivity_row["Status"]) in {"Complete", "Not Required"}:
             functional_status = "Complete"
         else:
             functional_status = "In Progress"
-        open_actions = incomplete + int(alignment_row["Pending"]) + int(alignment_row["Change Requested / Question"])
+        open_actions = open_issues + int(alignment_row["Pending"])
         if str(sensitivity_row["Status"]) in {"Not Started", "Draft"}:
             open_actions += 1
         workstream_rows.append(
             {
                 "Function": workspace,
-                "Primary Input Status": package_status,
+                "Workstream Status": package_status,
                 "Last Updated": last_updated,
-                "Open Input Issues": incomplete,
+                "Open Issues / Conflicts": open_issues,
             }
         )
         functional_rows.append(
             {
                 "Function": workspace,
                 "Workstream": package_status,
-                "Alignment": "N/A" if int(alignment_row["Items To Review"]) == 0 else (
-                    "Alignment Required" if int(alignment_row["Change Requested / Question"]) else
+                "Alignment": "N/A" if int(alignment_row["Assigned Reviews"]) == 0 else (
+                    "Alignment Required" if alignment_conflicts else
                     "Pending" if int(alignment_row["Pending"]) else "Aligned"
                 ),
                 "Sensitivity": str(sensitivity_row["Status"]),
@@ -9804,29 +10024,102 @@ def launch_readiness_snapshot(
             }
         )
 
-    actions: list[tuple[int, str]] = []
+    actions: list[dict[str, object]] = []
     for row in alignment_topics:
         function = str(row["Function"])
         if row["Status"] == "Alignment Required":
-            actions.append((1, f"{function} to resolve the requested change in {row['Topic']}."))
+            actions.append({
+                "Priority": 1,
+                "Function": function,
+                "Action": f"Resolve the requested change in {row['Topic']}.",
+                "Owner": function,
+                "Type": "Conflict",
+                "Destination": "Workstreams",
+                "Navigation Function": function,
+            })
         elif bool(row["Needs My Attention"]):
-            actions.append((1, f"{launch_user_workstream()} to review {function} — {row['Topic']}."))
+            actions.append({
+                "Priority": 2,
+                "Function": function,
+                "Action": f"Review {function} — {row['Topic']}.",
+                "Owner": launch_user_workstream(),
+                "Type": "Alignment",
+                "Destination": "Workstreams",
+                "Navigation Function": launch_user_workstream(),
+            })
     for _, row in data_topics[~data_topics["Complete"]].iterrows():
-        actions.append((2, f"{row['Function']} to complete {row['Topic']}."))
+        actions.append({
+            "Priority": 3,
+            "Function": str(row["Function"]),
+            "Action": f"Complete the missing required topic: {row['Topic']}.",
+            "Owner": str(row["Function"]),
+            "Type": "Input",
+            "Destination": "Workstreams",
+            "Navigation Function": str(row["Function"]),
+        })
+    for conflict in structured_conflicts:
+        actions.append({
+            "Priority": 1,
+            "Function": conflict["Function"],
+            "Action": conflict["Action"],
+            "Owner": conflict["Function"],
+            "Type": "Conflict",
+            "Destination": "Workstreams",
+            "Navigation Function": conflict["Function"],
+        })
     for _, row in sensitivity.iterrows():
         if row["Status"] in {"Not Started", "Draft"}:
-            actions.append((3, f"{row['Function']} sensitivity input is incomplete: {row['Required Sensitivity Topics']}."))
+            actions.append({
+                "Priority": 4,
+                "Function": str(row["Function"]),
+                "Action": f"Complete sensitivity drivers: {row['Sensitivity Drivers']}.",
+                "Owner": str(row["Function"]),
+                "Type": "Sensitivity",
+                "Destination": "Sensitivity",
+                "Navigation Function": str(row["Function"]),
+            })
     for row in alignment_topics:
         if row["Status"] in {"Draft", "Not Started"}:
-            actions.append((4, f"{row['Function']} has not shared {row['Topic']} for alignment."))
+            actions.append({
+                "Priority": 5,
+                "Function": str(row["Function"]),
+                "Action": f"Share {row['Topic']} for alignment.",
+                "Owner": str(row["Function"]),
+                "Type": "Alignment",
+                "Destination": "Workstreams",
+                "Navigation Function": str(row["Function"]),
+            })
         elif row["Status"] == "Shared for Alignment":
-            actions.append((4, f"{row['Function']} — {row['Topic']} is pending partner alignment."))
+            actions.append({
+                "Priority": 5,
+                "Function": str(row["Function"]),
+                "Action": f"Complete pending partner alignment for {row['Topic']}.",
+                "Owner": str(row["Function"]),
+                "Type": "Alignment",
+                "Destination": "Workstreams",
+                "Navigation Function": str(row["Function"]),
+            })
     if overall_status == "At Risk":
-        actions.append((5, f"Decision / Deck Deadline is in {days_remaining} days with overall readiness at {overall_readiness:.0%}."))
-    unique_actions = []
-    for _, action in sorted(actions, key=lambda item: item[0]):
-        if action not in unique_actions:
+        actions.append({
+            "Priority": 6,
+            "Function": "Cross-functional",
+            "Action": f"Decision / Deck Deadline is in {days_remaining} days with overall readiness at {overall_readiness:.0%}.",
+            "Owner": "Launch Coordinator",
+            "Type": "Timeline",
+            "Destination": "Readiness",
+            "Navigation Function": "Marketing",
+        })
+    unique_actions: list[dict[str, object]] = []
+    seen_actions: set[tuple[str, str, str]] = set()
+    for action in sorted(actions, key=lambda item: int(item["Priority"])):
+        identity = (str(action["Function"]), str(action["Action"]), str(action["Type"]))
+        if identity not in seen_actions:
             unique_actions.append(action)
+            seen_actions.add(identity)
+    top_action_text = [
+        f"{action['Function']} · {action['Action']}"
+        for action in unique_actions[:5]
+    ]
 
     return {
         "Overall Status": overall_status,
@@ -9841,44 +10134,140 @@ def launch_readiness_snapshot(
         "Alignment Items": total_alignment,
         "Completed Sensitivity": len(completed_driver_names),
         "Required Sensitivity": len(required_driver_names),
+        "Needs Attention": needs_attention,
+        "Open Action Count": len(unique_actions),
         "Workstream Status": pd.DataFrame(workstream_rows),
         "Functional Readiness": pd.DataFrame(functional_rows),
         "Alignment Status": alignment,
         "Sensitivity Status": sensitivity,
-        "Top Open Actions": unique_actions[:5],
+        "Top Open Actions": top_action_text,
+        "Open Action Details": unique_actions,
     }
+
+
+def launch_readiness_go_to(case_id: str, action: dict[str, object]) -> bool:
+    destination = str(action.get("Destination", "Readiness"))
+    function = str(action.get("Navigation Function", action.get("Function", "")))
+    if destination == "Sensitivity":
+        st.session_state[f"launch_pending_case_section_{case_id}"] = "Sensitivity"
+        st.rerun()
+    if destination == "Workstreams":
+        current_function = launch_user_workstream()
+        if launch_is_coordinator():
+            st.session_state[f"launch_workstream_section_{case_id}"] = function
+        elif function != current_function:
+            st.info(
+                f"This item belongs to {function}. Your current role can review Readiness but cannot edit that Workstream."
+            )
+            return False
+        st.session_state[f"launch_pending_case_section_{case_id}"] = "Workstreams"
+        st.rerun()
+    return False
+
+
+def render_launch_readiness_actions(
+    case_id: str,
+    actions: list[dict[str, object]],
+    key_prefix: str,
+    limit: int | None = None,
+) -> None:
+    visible = actions[:limit] if limit is not None else actions
+    headers = st.columns([0.55, 1.25, 4.8, 1.25, 1.0, 0.75])
+    for column, label in zip(headers, ["Priority", "Function", "Action", "Owner", "Type", "Go to"]):
+        column.markdown(f"**{label}**")
+    for index, action in enumerate(visible):
+        columns = st.columns([0.55, 1.25, 4.8, 1.25, 1.0, 0.75])
+        columns[0].write(str(action.get("Priority", "")))
+        columns[1].write(str(action.get("Function", "")))
+        columns[2].write(str(action.get("Action", "")))
+        columns[3].write(str(action.get("Owner", "")))
+        columns[4].write(str(action.get("Type", "")))
+        if columns[5].button("Go to", key=f"{key_prefix}_{case_id}_{index}"):
+            launch_readiness_go_to(case_id, action)
 
 
 def render_launch_readiness(case: pd.Series, assumptions: pd.DataFrame, model: dict[str, object]) -> None:
     snapshot = launch_readiness_snapshot(case, assumptions, model)
+    case_id = str(case.get("Launch Case ID", ""))
+    exception_values = {
+        "Draft": "#fff7dc",
+        "Pending": "#fff7dc",
+        "Not Started": "#f3f4f6",
+        "Alignment Required": "#fdeaea",
+        "At Risk": "#fdeaea",
+    }
+    status_slug = re.sub(r"[^a-z]+", "-", str(snapshot["Overall Status"]).lower()).strip("-")
+    st.markdown(
+        "<style>"
+        ".readiness-status-marker{display:none}"
+        "div[data-testid='stColumn']:has(.readiness-status-on-track) [data-testid='stMetricValue']{color:#217346}"
+        "div[data-testid='stColumn']:has(.readiness-status-ready) [data-testid='stMetricValue']{color:#155b36}"
+        "div[data-testid='stColumn']:has(.readiness-status-completed) [data-testid='stMetricValue']{color:#155b36}"
+        "div[data-testid='stColumn']:has(.readiness-status-at-risk) [data-testid='stMetricValue']{color:#b42318}"
+        "div[data-testid='stColumn']:has(.readiness-status-not-started) [data-testid='stMetricValue']{color:#6b7280}"
+        "div[data-testid='stColumn']:has(.readiness-status-in-progress) [data-testid='stMetricValue']{color:#374151}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
     st.markdown("### Launch Readiness")
     cards = st.columns(4)
-    cards[0].metric("Overall Status", snapshot["Overall Status"], f"Overall readiness {snapshot['Overall Readiness']:.0%}")
-    cards[1].metric("Data Readiness %", f"{snapshot['Data Readiness']:.0%}", f"{snapshot['Completed Topics']} / {snapshot['Required Topics']} topics")
-    cards[2].metric("Process Readiness %", f"{snapshot['Process Readiness']:.0%}", "50% alignment · 50% sensitivity")
-    cards[3].metric("Days Remaining", str(snapshot["Days Remaining"]), snapshot["Deadline"].strftime("%d %b %Y"))
+    cards[0].markdown(f"<span class='readiness-status-marker readiness-status-{status_slug}'></span>", unsafe_allow_html=True)
+    cards[0].metric("Overall Status", snapshot["Overall Status"])
+    cards[0].caption(f"{snapshot['Open Action Count']} open actions · {snapshot['Needs Attention']} requires attention")
+    cards[1].metric("Data Readiness %", f"{snapshot['Data Readiness']:.0%}")
+    cards[1].caption(f"{snapshot['Completed Topics']} / {snapshot['Required Topics']} topics complete")
+    cards[2].metric("Process Readiness %", f"{snapshot['Process Readiness']:.0%}")
+    cards[2].caption("Alignment and sensitivity completion")
+    cards[3].metric("Days Remaining", str(snapshot["Days Remaining"]))
+    cards[3].caption(snapshot["Deadline"].strftime("%d %b %Y"))
 
     st.markdown("### Functional Readiness")
-    render_finance_table(snapshot["Functional Readiness"], {"Open Actions"})
+    render_finance_table(snapshot["Functional Readiness"], {"Open Actions"}, exception_values=exception_values)
     st.markdown("### Workstream Input Status")
-    st.caption("Primary input status is derived from topic completeness and the existing package-level alignment state.")
-    render_finance_table(snapshot["Workstream Status"], {"Open Input Issues"})
+    st.caption("Workstream status is derived from topic completeness and the existing package-level alignment state.")
+    render_finance_table(
+        snapshot["Workstream Status"],
+        {"Open Issues / Conflicts"},
+        exception_values=exception_values,
+        nonzero_highlights={"Open Issues / Conflicts": "#fff7dc"},
+    )
+    input_actions = [
+        action for action in snapshot["Open Action Details"]
+        if action["Type"] in {"Input", "Conflict"} and action["Destination"] == "Workstreams"
+    ]
+    if input_actions:
+        with st.expander(f"Open Workstream Issues / Conflicts ({len(input_actions)})", expanded=False):
+            render_launch_readiness_actions(case_id, input_actions, "readiness_input")
 
     st.markdown("### Alignment Status")
     st.caption(f"{snapshot['Aligned Items']} aligned · {snapshot['Alignment Items'] - snapshot['Aligned Items']} pending or requiring action")
     render_finance_table(
         snapshot["Alignment Status"],
-        {"Items To Review", "Aligned", "Pending", "Change Requested / Question", "Needs My Attention"},
+        {"Assigned Reviews", "Aligned", "Pending", "Changes / Questions", "Needs My Attention"},
+        exception_values=exception_values,
+        nonzero_highlights={"Changes / Questions": "#fdeaea", "Needs My Attention": "#fdeaea"},
     )
+    alignment_actions = [
+        action for action in snapshot["Open Action Details"]
+        if action["Type"] == "Alignment" or "requested change" in str(action["Action"]).lower()
+    ]
+    if alignment_actions:
+        with st.expander(f"Open Alignment Actions ({len(alignment_actions)})", expanded=False):
+            render_launch_readiness_actions(case_id, alignment_actions, "readiness_alignment")
 
     st.markdown("### Sensitivity Completion")
     st.caption("Completion is measured by driver topic. Y1–Y5 values do not count as separate readiness items.")
-    render_finance_table(snapshot["Sensitivity Status"])
+    render_finance_table(snapshot["Sensitivity Status"], exception_values=exception_values)
+    sensitivity_actions = [action for action in snapshot["Open Action Details"] if action["Type"] == "Sensitivity"]
+    if sensitivity_actions:
+        with st.expander(f"Incomplete Sensitivity Drivers ({len(sensitivity_actions)})", expanded=False):
+            render_launch_readiness_actions(case_id, sensitivity_actions, "readiness_sensitivity")
 
     st.markdown("### Top Open Actions")
-    if snapshot["Top Open Actions"]:
-        for action in snapshot["Top Open Actions"]:
-            st.warning(action)
+    if snapshot["Open Action Details"]:
+        render_launch_readiness_actions(case_id, snapshot["Open Action Details"], "readiness_top", limit=5)
+        with st.expander(f"View All Open Actions ({snapshot['Open Action Count']})", expanded=False):
+            render_launch_readiness_actions(case_id, snapshot["Open Action Details"], "readiness_all")
     else:
         st.success("No open readiness action identified.")
 
@@ -9993,18 +10382,32 @@ def launch_decision_sensitivity(
     driver_rows = []
     for driver in drivers:
         values = settings["Drivers"][driver.name]
-        if mode == "By Year" and driver.method not in {"DAYS_SHIFT", "NPV_PP"}:
-            downside = " / ".join(sensitivity_adjustment_display(values["By Year"]["Downside"][year], driver.unit) for year in LAUNCH_YEARS)
-            upside = " / ".join(sensitivity_adjustment_display(values["By Year"]["Upside"][year], driver.unit) for year in LAUNCH_YEARS)
-        else:
-            downside = sensitivity_adjustment_display(values["Downside"], driver.unit)
-            upside = sensitivity_adjustment_display(values["Upside"], driver.unit)
+        scenario_labels: dict[str, str] = {}
+        for scenario in ["Downside", "Upside"]:
+            trace = [
+                row for row in scenario_results[scenario].get("trace", [])
+                if str(row.get("Driver", "")) == driver.name
+            ]
+            by_year = {str(row.get("Year")): safe_float(row.get("Sensitivity Adjustment")) for row in trace}
+            y1_value = by_year.get("Y1", safe_float(values.get(scenario)))
+            y5_value = by_year.get("Y5", safe_float(values.get(scenario)))
+            if driver.method in {"RAMP_PP", "RAMP_RELATIVE"} or mode == "By Year":
+                scenario_labels[scenario] = (
+                    f"Y1 {sensitivity_adjustment_display(y1_value, driver.unit)} → "
+                    f"Y5 {sensitivity_adjustment_display(y5_value, driver.unit)}"
+                )
+            elif driver.method == "DAYS_SHIFT":
+                scenario_labels[scenario] = f"Approval {y5_value:+.0f} days"
+            elif driver.method == "NPV_PP":
+                scenario_labels[scenario] = f"Discount rate {y5_value:+.1f}pp"
+            else:
+                scenario_labels[scenario] = f"All years {sensitivity_adjustment_display(y5_value, driver.unit)}"
         driver_rows.append(
             {
-                "Driver": driver.name,
-                "Downside": downside,
+                "Driver": sensitivity_driver_label(driver.name),
+                "Downside": scenario_labels["Downside"],
                 "Base": sensitivity_base_display(driver.name, base_inputs),
-                "Upside": upside,
+                "Upside": scenario_labels["Upside"],
             }
         )
     return pd.DataFrame(results), pd.DataFrame(driver_rows)
@@ -10071,8 +10474,6 @@ def render_launch_decision_appendix(
 ) -> None:
     inputs = model.get("inputs", {})
     funnel = model.get("funnel", pd.DataFrame())
-    st.markdown("## Functional Appendix")
-
     with st.container(border=True):
         st.markdown("### Marketing Appendix")
         render_finance_table(launch_decision_appendix_assumptions(assumptions, ["Population", "Market Share", "Marketing FTE"]))
@@ -10157,6 +10558,111 @@ def render_launch_decision_appendix(
         render_launch_benchmark_snapshot(str(case.get("Launch Case ID", "")), model, "launch_decision_appendix")
 
 
+def render_launch_approval_history(case_id: str) -> None:
+    events = [
+        event for event in st.session_state.get("audit_events", [])
+        if isinstance(event, dict)
+        and str(event.get("Deal ID", "")) == case_id
+        and str(event.get("Entity", "")) == "Launch Approval"
+    ]
+    if not events:
+        return
+    with st.expander("Approval History", expanded=False):
+        rows = []
+        for event in sorted(events, key=lambda item: str(item.get("Timestamp", ""))):
+            rows.append(
+                {
+                    "Timestamp": event.get("Timestamp", ""),
+                    "Actor": event.get("Actor", ""),
+                    "Role": event.get("Role", ""),
+                    "Action": event.get("Action", ""),
+                    "Comment": event.get("Comment", ""),
+                    "Previous Status": event.get("Previous Status", ""),
+                    "New Status": event.get("New Status", ""),
+                }
+            )
+        render_finance_table(pd.DataFrame(rows))
+
+
+def render_launch_approval_controls(
+    case: pd.Series,
+    readiness: dict[str, object],
+) -> None:
+    case_id = str(case.get("Launch Case ID", ""))
+    record = launch_approval_record(case_id)
+    status = str(record.get("Status", case.get("Case Status", "Planning / Inputs in Progress")))
+    role = str(st.session_state.get("launch_current_role", ""))
+    st.markdown("### Approval")
+
+    if launch_is_coordinator():
+        if status == "Pending Approval":
+            st.info("Pending GM Approval")
+        elif status == "Approved":
+            approved_at = pd.to_datetime(record.get("Decision At"), errors="coerce")
+            approved_text = approved_at.strftime("%d %b %Y · %H:%M") if not pd.isna(approved_at) else "date not recorded"
+            st.success(f"Approved by {record.get('Decision By', 'General Manager')} · {approved_text}")
+            if str(record.get("Decision Comment", "")).strip():
+                st.write(str(record["Decision Comment"]))
+        elif status == "Rejected":
+            st.error("Rejected")
+            if str(record.get("Decision Comment", "")).strip():
+                st.write(f"General Manager comment: {record['Decision Comment']}")
+        else:
+            if status == "Returned for Changes":
+                st.warning("Returned for Changes")
+                if str(record.get("Decision Comment", "")).strip():
+                    st.write(f"General Manager comment: {record['Decision Comment']}")
+            if int(safe_float(readiness.get("Open Action Count"))) > 0:
+                st.warning(
+                    f"This case has {int(safe_float(readiness.get('Open Action Count')))} unresolved readiness "
+                    "action(s). Submission is allowed for this MVP, but management should review them."
+                )
+            label = "Resubmit for Approval" if status == "Returned for Changes" else "Send for Approval"
+            if st.button(label, key=f"launch_send_for_approval_{case_id}", type="primary"):
+                submit_launch_case_for_approval(case, readiness)
+                st.rerun()
+    elif role == "General Manager":
+        if status == "Pending Approval":
+            decision = st.radio(
+                "Decision",
+                ["Approve", "Return for Changes", "Reject"],
+                horizontal=True,
+                key=f"launch_gm_decision_{case_id}",
+            )
+            comment = st.text_area(
+                "Decision Comment",
+                key=f"launch_gm_decision_comment_{case_id}",
+                height=90,
+            )
+            if st.button("Capture Decision", key=f"launch_gm_capture_decision_{case_id}", type="primary"):
+                if decision in {"Return for Changes", "Reject"} and not comment.strip():
+                    st.warning(f"A comment is required to {decision.lower()}.")
+                else:
+                    decide_launch_case(case_id, decision, comment)
+                    st.rerun()
+        elif status == "Approved":
+            st.success(f"Approved by {record.get('Decision By', 'General Manager')}")
+        elif status == "Returned for Changes":
+            st.warning("Returned to the Launch Coordinator for changes.")
+        elif status == "Rejected":
+            st.error("Rejected")
+        else:
+            st.info("This case has not been submitted for General Manager approval.")
+    else:
+        if status == "Pending Approval":
+            st.info("Pending GM Approval")
+        elif status == "Approved":
+            st.success("Approved")
+        elif status == "Returned for Changes":
+            st.warning("Returned for Changes")
+        elif status == "Rejected":
+            st.error("Rejected")
+        else:
+            st.caption("The Launch Coordinator has not yet sent this Decision Case for approval.")
+
+    render_launch_approval_history(case_id)
+
+
 def render_launch_decision_case(
     case: pd.Series,
     data: dict[str, pd.DataFrame],
@@ -10164,12 +10670,8 @@ def render_launch_decision_case(
     assumptions: pd.DataFrame,
 ) -> None:
     case_id = str(case.get("Launch Case ID", ""))
-    refresh_key = f"launch_decision_case_last_refreshed_{case_id}"
     st.markdown("### Decision Case")
-    st.caption("Browser-based management decision deck assembled from the latest controlled Launch Sandbox inputs and outputs.")
-    if st.button("Generate / Refresh Decision Case", key=f"launch_decision_case_refresh_{case_id}", type="primary"):
-        st.session_state[refresh_key] = datetime.now().strftime("%d %b %Y · %H:%M:%S")
-    st.caption(f"Last refreshed: {st.session_state.get(refresh_key, 'Not yet refreshed')}")
+    st.caption("Live view · Automatically updated from the latest Launch Sandbox inputs.")
 
     forecast = model.get("forecast", pd.DataFrame())
     funnel = model.get("funnel", pd.DataFrame())
@@ -10192,11 +10694,11 @@ def render_launch_decision_case(
             f"Decision deadline: {readiness['Deadline'].strftime('%d %b %Y')} · Readiness: {readiness['Overall Status']}"
         )
         cards = st.columns(5)
-        cards[0].metric("Y5 Patients on Product", f"{safe_float(funnel_y5.get('Patients on Product')):,.0f}")
-        cards[1].metric("Y5 Net Revenue", money(y5.get("Net Revenue", 0)))
-        cards[2].metric("5Y NPV", money(npv))
-        cards[3].metric("Payback Period", payback)
-        cards[4].metric("Y5 Operating Margin %", pct(launch_pnl_value(model, "Operating Margin %")))
+        cards[0].metric("Y5 Net Revenue", money(y5.get("Net Revenue", 0)))
+        cards[1].metric("5Y NPV", money(npv))
+        cards[2].metric("Payback Period", payback)
+        cards[3].metric("Y5 Operating Margin %", pct(launch_pnl_value(model, "Operating Margin %")))
+        cards[4].metric("Overall Readiness %", f"{safe_float(readiness.get('Overall Readiness')):.0%}")
         st.markdown("#### Launch Thesis")
         st.write(
             f"{case.get('Product', 'The product')} is planned for commercial availability on "
@@ -10272,10 +10774,12 @@ def render_launch_decision_case(
         st.write(str(sales_resources.get("Sales Execution Strategy", "") or "Sales execution strategy is not yet documented."))
         st.caption("Coverage supports execution capacity; Base Market Share remains a Marketing-owned assumption.")
         st.markdown("#### C. Regulatory")
+        benchmark_value = safe_float(launch_decision_value(assumptions, "Regulatory Timing Benchmark"))
+        benchmark_text = f"{benchmark_value:.1f} months" if benchmark_value else "Not set"
         st.write(
             f"Dossier submission: **{regulatory.get('Regulatory Dossier Submission Date', 'Not set')}** · Expected approval: "
             f"**{regulatory.get('Expected Regulatory Approval Date', 'Not set')}** · Timing benchmark: "
-            f"**{launch_assumption_display_value(launch_decision_assumption(assumptions, 'Regulatory Timing Benchmark'))}**"
+            f"**{benchmark_text}**"
         )
         st.write(f"Material risk: **{regulatory.get('Risk Level', 'Not set')}** · {regulatory.get('Risk / Issue', 'No material risk recorded.')}")
         st.markdown("#### D. Supply")
@@ -10322,6 +10826,15 @@ def render_launch_decision_case(
 
     with st.container(border=True):
         st.markdown("## 6. Launch Readiness & Key Risks")
+        readiness_status = str(readiness.get("Overall Status", "In Progress"))
+        if readiness_status == "Ready":
+            st.success("Ready")
+        elif readiness_status == "At Risk":
+            st.error("At Risk")
+        elif readiness_status == "Not Started":
+            st.warning("Not Started")
+        else:
+            st.info(readiness_status)
         cards = st.columns(5)
         cards[0].metric("Overall Status", readiness["Overall Status"])
         cards[1].metric("Overall Readiness %", f"{readiness['Overall Readiness']:.0%}")
@@ -10384,7 +10897,9 @@ def render_launch_decision_case(
             [("Economics", "Integrated Master Model"), ("Open Conditions", "Calculated Readiness view")],
         )
 
-    render_launch_decision_appendix(case, model, assumptions)
+    with st.expander("Functional Appendix (7 workstreams)", expanded=False):
+        render_launch_decision_appendix(case, model, assumptions)
+    render_launch_approval_controls(case, readiness)
 
 
 def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
@@ -10398,13 +10913,23 @@ def page_launch_case(data: dict[str, pd.DataFrame]) -> None:
     case = selected.iloc[0]
     launch_case_overview_card(case)
     sections = ["Overview", "Workstreams", "Sensitivity", "Readiness", "Decision Case"]
+    section_key = f"launch_case_section_{selected_id}"
+    pending_section = st.session_state.pop(f"launch_pending_case_section_{selected_id}", None)
+    if pending_section in sections:
+        st.session_state[section_key] = pending_section
     model = calculate_launch_model(data, case, "Base", include_scenarios=False)
     assumptions = launch_assumptions(data, case, model)
+    if str(st.session_state.get("launch_current_role", "")) == "General Manager":
+        if not launch_approval_record(selected_id):
+            st.info("This Launch Decision Case has not been submitted for General Manager approval.")
+            return
+        render_launch_decision_case(case, data, model, assumptions)
+        return
     section = st.radio(
         "Launch case section",
         sections,
         horizontal=True,
-        key=f"launch_case_section_{selected_id}",
+        key=section_key,
         label_visibility="collapsed",
     )
 

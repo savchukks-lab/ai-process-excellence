@@ -98,8 +98,15 @@ for label in (
     "Discount Rate",
 ):
     assert label in page_text, f"Missing Sensitivity content: {label}"
-for driver in ("Market Share", "Treatment Eligibility", "Sales Coverage", "Access Reach", "Net Price", "Regulatory Timing", "COGS", "Discount Rate"):
-    assert f"{driver} methodology" in {expander.label for expander in app.expander}
+methodology_labels = {expander.label for expander in app.expander}
+for driver in ("Market Share", "Treatment Eligibility", "Sales Coverage", "Patient Access Reach", "Net Price", "Regulatory Timing", "COGS", "Discount Rate"):
+    assert f"{driver} methodology" in methodology_labels
+assert "Y5 Target sets the end-state sensitivity; intermediate years are ramped automatically." in {
+    str(item.value) for item in app.caption
+}
+assert any("Application" in str(item.value) for item in app.markdown if "<table" in str(item.value))
+treatment_base = next(widget for widget in app.text_input if widget.label == "Treatment Eligibility Base")
+assert treatment_base.value == "68.0%", treatment_base.value
 
 initial = scenario_rows(app)
 base_before = dict(initial["Base"])
@@ -189,5 +196,25 @@ assert_clean(app, "By Year Market Share change")
 by_year_after = scenario_rows(app)
 assert by_year_after["Base"] == by_year_before["Base"]
 assert number(by_year_after["Downside"]["Y5 Patients on Product"]) < number(by_year_before["Downside"]["Y5 Patients on Product"])
+
+# One edit in By Year mode must persist and feed recalculation for every year-based driver.
+for driver_key, new_value in (
+    ("treatment_eligibility", -25.0),
+    ("sales_coverage", -25.0),
+    ("access_reach", -25.0),
+    ("net_price", -25.0),
+    ("cogs", 25.0),
+):
+    app = open_sensitivity()
+    widget_by_key(app.radio, "launch_sensitivity_mode_LAUNCH-1002").set_value("By Year").run()
+    assert_clean(app, f"{driver_key} By Year mode")
+    before = scenario_rows(app)
+    key = f"launch_sensitivity_LAUNCH-1002_{driver_key}_downside_y5"
+    widget_by_key(app.number_input, key).set_value(new_value).run()
+    assert_clean(app, f"{driver_key} By Year first edit")
+    after = scenario_rows(app)
+    assert after["Base"] == before["Base"]
+    assert widget_by_key(app.number_input, key).value == new_value
+    assert after["Downside"] != before["Downside"], driver_key
 
 print("launch sensitivity smoke test complete")

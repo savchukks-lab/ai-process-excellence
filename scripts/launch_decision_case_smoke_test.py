@@ -17,6 +17,7 @@ ROLES = [
     "Regulatory",
     "Supply / Operations",
     "Finance",
+    "General Manager",
 ]
 
 CORE_SECTIONS = [
@@ -61,27 +62,70 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
     assert_clean(app, f"{case_id} Decision Case")
 
     page_text = "\n".join(str(item.value) for item in app.markdown)
-    for heading in [*CORE_SECTIONS, "Functional Appendix", *APPENDICES]:
+    for heading in [*CORE_SECTIONS, *APPENDICES]:
         assert heading in page_text, f"{case_id}: missing {heading}"
-    assert page_text.index("Functional Appendix") > page_text.index("Key Takeaways / Decision Required")
+    assert "Functional Appendix (7 workstreams)" in [item.label for item in app.expander]
     assert "Decision Required" in page_text
-    assert "Generate / Refresh Decision Case" in [button.label for button in app.button]
+    assert "Generate / Refresh Decision Case" not in [button.label for button in app.button]
+    assert "Live view" in "\n".join(str(item.value) for item in app.caption)
     assert not list(app.number_input), f"{case_id}: Decision Case exposed numerical inputs"
     assert not list(app.date_input), f"{case_id}: Decision Case exposed date inputs"
     assert not list(app.text_input), f"{case_id}: Decision Case exposed text inputs"
 
-    refresh_key = f"launch_decision_case_last_refreshed_{case_id}"
-    button_by_key(app, f"launch_decision_case_refresh_{case_id}").click().run()
-    assert_clean(app, f"{case_id} refresh")
-    assert app.session_state[refresh_key]
-
-    for role in ROLES[1:]:
+    for role in ROLES[1:-1]:
         app.session_state["launch_current_role"] = role
         app.run()
         assert_clean(app, f"{case_id} {role} Decision Case")
         role_text = "\n".join(str(item.value) for item in app.markdown)
         for heading in CORE_SECTIONS:
             assert heading in role_text, f"{case_id} {role}: missing {heading}"
-        assert app.session_state[refresh_key]
+
+    app.session_state["launch_current_role"] = ROLES[0]
+    app.run()
+    button_by_key(app, f"launch_send_for_approval_{case_id}").click().run()
+    assert_clean(app, f"{case_id} submit")
+    assert app.session_state["launch_approval_records"][case_id]["Status"] == "Pending Approval"
+
+    app.session_state["launch_current_role"] = "General Manager"
+    app.session_state["launch_page"] = "Launch Sandbox Home"
+    app.run()
+    assert_clean(app, f"{case_id} GM inbox")
+    button_by_key(app, f"launch_gm_open_{case_id}").click().run()
+    assert app.session_state["launch_page"] == "Launch Case"
+    app.run()
+    assert_clean(app, f"{case_id} GM review")
+    gm_text = "\n".join(str(item.value) for item in app.markdown)
+    for heading in CORE_SECTIONS:
+        assert heading in gm_text, f"{case_id} GM: missing {heading}"
+    assert button_by_key(app, f"launch_gm_capture_decision_{case_id}")
+
+    decision = next(item for item in app.radio if item.key == f"launch_gm_decision_{case_id}")
+    if case_id == "LAUNCH-1001":
+        decision.set_value("Return for Changes")
+        comment = next(item for item in app.text_area if item.key == f"launch_gm_decision_comment_{case_id}")
+        comment.set_value("Please resolve the open launch readiness actions.")
+        button_by_key(app, f"launch_gm_capture_decision_{case_id}").click().run()
+        assert app.session_state["launch_approval_records"][case_id]["Status"] == "Returned for Changes"
+        app.session_state["launch_current_role"] = ROLES[0]
+        app.run()
+        button_by_key(app, f"launch_send_for_approval_{case_id}").click().run()
+        assert app.session_state["launch_approval_records"][case_id]["Submitted Version"] == 2
+        app.session_state["launch_current_role"] = "General Manager"
+        app.run()
+        next(item for item in app.radio if item.key == f"launch_gm_decision_{case_id}").set_value("Approve")
+        button_by_key(app, f"launch_gm_capture_decision_{case_id}").click().run()
+        assert app.session_state["launch_approval_records"][case_id]["Status"] == "Approved"
+    else:
+        decision.set_value("Reject")
+        comment = next(item for item in app.text_area if item.key == f"launch_gm_decision_comment_{case_id}")
+        comment.set_value("The current launch case does not meet the decision threshold.")
+        button_by_key(app, f"launch_gm_capture_decision_{case_id}").click().run()
+        assert app.session_state["launch_approval_records"][case_id]["Status"] == "Rejected"
+
+    launch_events = [
+        event for event in app.session_state["audit_events"]
+        if event.get("Deal ID") == case_id and event.get("Entity") == "Launch Approval"
+    ]
+    assert launch_events, f"{case_id}: launch approval audit events missing"
 
 print("launch decision case smoke test complete")

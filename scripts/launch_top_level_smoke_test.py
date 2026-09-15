@@ -16,6 +16,7 @@ ROLES = (
     "Regulatory",
     "Supply / Operations",
     "Finance",
+    "General Manager",
 )
 SECTIONS = ("Overview", "Workstreams", "Sensitivity", "Readiness", "Decision Case")
 os.chdir(APP_PATH.parent)
