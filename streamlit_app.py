@@ -34,6 +34,13 @@ from launch_master_model import (
     load_sensitivity_drivers,
     normalize_sensitivity_settings,
 )
+from investment_model import (
+    INVESTMENT_YEARS,
+    PERCENT_ROWS as INVESTMENT_PERCENT_ROWS,
+    calculate_investment_model,
+    default_investment_inputs,
+    investment_demo_cases,
+)
 
 try:
     faulthandler.enable()
@@ -1355,6 +1362,10 @@ def init_state() -> None:
     st.session_state.setdefault("launch_current_role", "Marketing · Launch Coordinator")
     st.session_state.setdefault("launch_runtime_cases", [])
     st.session_state.setdefault("launch_approval_records", {})
+    st.session_state.setdefault("investment_page", "Investment Case Home")
+    st.session_state.setdefault("selected_investment_case_id", None)
+    st.session_state.setdefault("investment_runtime_cases", [])
+    st.session_state.setdefault("investment_case_inputs", {})
 
 
 def add_audit(
@@ -4165,13 +4176,13 @@ def page_platform_home() -> None:
         },
         {
             "title": "Investment Case",
-            "description": "CAPEX and strategic investment evaluation",
-            "process": "Model -> Stress-test -> Review -> Invest",
-            "status": "Coming soon",
-            "status_class": "module-status-soon",
-            "marker": "",
-            "button": "Coming soon",
-            "enabled": False,
+            "description": "Integrated investment modelling, financing and capital allocation",
+            "process": "Baseline -> Invest -> Finance -> Stress-test -> Decide",
+            "status": "Available",
+            "status_class": "module-status-available",
+            "marker": "module-card-available",
+            "button": "Open Investment Case",
+            "enabled": True,
             "module": "investment",
         },
     ]
@@ -4199,6 +4210,8 @@ def page_platform_home() -> None:
                 st.session_state.deal_list_selected_deal_id = None
                 st.session_state.launch_page = "Launch Sandbox Home"
                 st.session_state.selected_launch_case_id = None
+                st.session_state.investment_page = "Investment Case Home"
+                st.session_state.selected_investment_case_id = None
                 st.rerun()
 
 
@@ -11002,6 +11015,476 @@ def page_launch_sandbox(data: dict[str, pd.DataFrame]) -> None:
         page_launch_home(data)
 
 
+def investment_cases() -> pd.DataFrame:
+    rows = investment_demo_cases() + [dict(row) for row in st.session_state.get("investment_runtime_cases", [])]
+    return pd.DataFrame(rows)
+
+
+def clear_investment_case_selection() -> None:
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("investment_case_selected_"):
+            st.session_state[key] = False
+
+
+def set_investment_case_selection(case_id: str, case_ids: tuple[str, ...]) -> None:
+    selected = bool(st.session_state.get(f"investment_case_selected_{case_id}", False))
+    st.session_state.selected_investment_case_id = case_id if selected else None
+    for other_id in case_ids:
+        if other_id != case_id:
+            st.session_state[f"investment_case_selected_{other_id}"] = False
+
+
+def investment_top_navigation() -> None:
+    nav = st.columns([0.9, 1.25, 1.15, 4.8])
+    if nav[0].button("Platform Home", key="investment_platform_home"):
+        clear_investment_case_selection()
+        st.session_state.current_module = "platform_home"
+        st.session_state.investment_page = "Investment Case Home"
+        st.session_state.selected_investment_case_id = None
+        st.rerun()
+    if nav[1].button("Investment Case Home", key="investment_home"):
+        clear_investment_case_selection()
+        st.session_state.investment_page = "Investment Case Home"
+        st.session_state.selected_investment_case_id = None
+        st.rerun()
+    if nav[2].button("New Investment Case", key="investment_new_case"):
+        clear_investment_case_selection()
+        st.session_state.investment_page = "New Investment Case"
+        st.session_state.selected_investment_case_id = None
+        st.rerun()
+
+
+def render_investment_header(title: str, subtitle: str = "") -> None:
+    st.markdown(f"<h1>{escape(title)}</h1>", unsafe_allow_html=True)
+    if subtitle:
+        st.markdown(f"<div class='section-note'>{escape(subtitle)}</div>", unsafe_allow_html=True)
+
+
+def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
+    case_id = str(case.get("Case ID", ""))
+    all_inputs = dict(st.session_state.get("investment_case_inputs", {}))
+    if case_id not in all_inputs:
+        all_inputs[case_id] = default_investment_inputs(case)
+        st.session_state.investment_case_inputs = all_inputs
+    return deepcopy(all_inputs[case_id])
+
+
+def save_investment_case_inputs(case_id: str, inputs: dict[str, object]) -> None:
+    all_inputs = dict(st.session_state.get("investment_case_inputs", {}))
+    all_inputs[case_id] = deepcopy(inputs)
+    st.session_state.investment_case_inputs = all_inputs
+
+
+def investment_seed_widget(key: str, value: object) -> None:
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+def investment_payback_label(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "Beyond forecast"
+    numeric = float(value)
+    return "<1 year" if numeric < 1 else f"{numeric:.1f} years"
+
+
+def format_investment_table(table: pd.DataFrame, years: list[str], percent_rows: set[str] | None = None) -> pd.DataFrame:
+    formatted = table.astype(object).copy()
+    percent_rows = percent_rows or set()
+    for index, row in formatted.iterrows():
+        metric = str(row.iloc[0])
+        for year in years:
+            value = row.get(year)
+            formatted.at[index, year] = pct(value) if metric in percent_rows else money(value)
+    return formatted
+
+
+def format_investment_driver_table(table: pd.DataFrame, years: list[str]) -> pd.DataFrame:
+    formatted = table.astype(object).copy()
+    for index, row in formatted.iterrows():
+        metric = str(row.iloc[0])
+        for year in years:
+            value = safe_float(row.get(year, 0.0))
+            if metric in {"Incremental Volume"}:
+                display = f"{value:,.0f}"
+            elif "%" in metric:
+                display = pct(value)
+            else:
+                display = money(value)
+            formatted.at[index, year] = display
+    return formatted
+
+
+def render_investment_driver_editor(
+    case_id: str,
+    section_key: str,
+    title: str,
+    source: dict[str, dict[str, float]],
+    metrics: list[str],
+    years: list[str],
+) -> dict[str, dict[str, float]]:
+    st.markdown(f"**{title}**")
+    rows = []
+    for metric in metrics:
+        is_percent = "%" in metric
+        row = {"Input": metric}
+        for year in years:
+            value = safe_float(source.get(metric, {}).get(year, 0.0))
+            row[year] = value * 100 if is_percent else value
+        rows.append(row)
+    editor = st.data_editor(
+        pd.DataFrame(rows),
+        key=f"investment_driver_{case_id}_{section_key}_{len(years)}",
+        hide_index=True,
+        use_container_width=True,
+        disabled=["Input"],
+    )
+    updated = deepcopy(source)
+    for _, row in editor.iterrows():
+        metric = str(row.get("Input", ""))
+        updated.setdefault(metric, {})
+        for year in years:
+            value = safe_float(row.get(year, 0.0))
+            updated[metric][year] = value / 100 if "%" in metric else value
+    return updated
+
+
+def render_investment_pnl(title: str, pnl: pd.DataFrame, years: list[str]) -> None:
+    st.markdown(f"<div class='enterprise-section-title'>{title}</div>", unsafe_allow_html=True)
+    formatted = format_investment_table(pnl, years, INVESTMENT_PERCENT_ROWS)
+    render_finance_table(formatted, right_align=set(years), secondary_rows=INVESTMENT_PERCENT_ROWS)
+
+
+def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[str, object]:
+    settings = deepcopy(inputs["settings"])
+    fields = {
+        "case_name": settings.get("Case Name", ""),
+        "investment_type": settings.get("Investment Type", "Growth"),
+        "benefit_type": settings.get("Benefit Type", "Revenue Growth"),
+        "currency": settings.get("Currency", "USD"),
+        "base_year": int(settings.get("Base Year", 2026)),
+        "horizon": int(settings.get("Forecast Horizon", 10)),
+        "investment_start": settings.get("Investment Start Date", date.today()),
+        "operational_start": settings.get("Operational Start Date", date.today()),
+        "tax_rate": safe_float(settings.get("Tax Rate", 0.24)) * 100,
+        "inflation": safe_float(settings.get("Inflation Rate", 0.025)) * 100,
+    }
+    for name, value in fields.items():
+        investment_seed_widget(f"investment_{case_id}_{name}", value)
+    top = st.columns([2.2, 1.2, 1.2, 0.8])
+    top[0].text_input("Case Name", key=f"investment_{case_id}_case_name")
+    top[1].selectbox("Investment Type", ["Growth", "Cost Saving", "Capacity", "Efficiency", "Strategic", "Other"], key=f"investment_{case_id}_investment_type")
+    top[2].selectbox("Benefit Type", ["Revenue Growth", "Cost Saving", "Mixed"], key=f"investment_{case_id}_benefit_type")
+    top[3].text_input("Currency", key=f"investment_{case_id}_currency")
+    middle = st.columns(4)
+    middle[0].number_input("Base Year", min_value=2020, max_value=2050, step=1, key=f"investment_{case_id}_base_year")
+    middle[1].selectbox("Forecast Horizon", [5, 10], format_func=lambda value: f"{value} years", key=f"investment_{case_id}_horizon")
+    middle[2].date_input("Investment Start Date", key=f"investment_{case_id}_investment_start")
+    middle[3].date_input("Operational / Commercial Start Date", key=f"investment_{case_id}_operational_start")
+    bottom = st.columns(4)
+    bottom[0].number_input("Tax Rate %", min_value=0.0, max_value=100.0, step=0.5, key=f"investment_{case_id}_tax_rate")
+    bottom[1].number_input("Inflation Rate %", min_value=-20.0, max_value=100.0, step=0.5, key=f"investment_{case_id}_inflation")
+    bottom[2].text_input("Model Basis", value="Nominal", disabled=True, key=f"investment_{case_id}_basis_display")
+    bottom[3].text_input("Model Version", value=str(settings.get("Model Version", "1.0")), disabled=True, key=f"investment_{case_id}_version_display")
+    st.caption(f"As of {settings.get('As Of Date', date.today())}")
+    settings.update({
+        "Case Name": st.session_state[f"investment_{case_id}_case_name"],
+        "Investment Type": st.session_state[f"investment_{case_id}_investment_type"],
+        "Benefit Type": st.session_state[f"investment_{case_id}_benefit_type"],
+        "Currency": st.session_state[f"investment_{case_id}_currency"],
+        "Base Year": int(st.session_state[f"investment_{case_id}_base_year"]),
+        "Forecast Horizon": int(st.session_state[f"investment_{case_id}_horizon"]),
+        "Investment Start Date": st.session_state[f"investment_{case_id}_investment_start"],
+        "Operational Start Date": st.session_state[f"investment_{case_id}_operational_start"],
+        "Tax Rate": safe_float(st.session_state[f"investment_{case_id}_tax_rate"]) / 100,
+        "Inflation Rate": safe_float(st.session_state[f"investment_{case_id}_inflation"]) / 100,
+        "Model Basis": "Nominal",
+    })
+    inputs["settings"] = settings
+    return inputs
+
+
+def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[str, object]:
+    capital = deepcopy(inputs["capital"])
+    percent_fields = [
+        "Risk-Free Rate", "Equity Risk Premium", "Country Risk Premium", "Pre-tax Cost of Debt",
+        "Target Debt %", "Target Equity %", "Corporate Hurdle Rate", "Existing Business ROIC",
+        "Marginal Reinvestment Return", "Treasury / Cash Yield",
+    ]
+    for field in percent_fields:
+        investment_seed_widget(f"investment_{case_id}_capital_{field}", safe_float(capital.get(field, 0.0)) * 100)
+    investment_seed_widget(f"investment_{case_id}_capital_Beta", safe_float(capital.get("Beta", 0.0)))
+    st.markdown("**Cost of Equity**")
+    equity = st.columns(4)
+    for column, field in zip(equity[:3], ["Risk-Free Rate", "Equity Risk Premium", "Country Risk Premium"]):
+        column.number_input(f"{field} %", step=0.1, key=f"investment_{case_id}_capital_{field}")
+    equity[3].number_input("Beta", min_value=0.0, step=0.05, key=f"investment_{case_id}_capital_Beta")
+    st.markdown("**Cost of Debt & Capital Structure**")
+    debt = st.columns(4)
+    for column, field in zip(debt, ["Pre-tax Cost of Debt", "Target Debt %", "Target Equity %", "Corporate Hurdle Rate"]):
+        label = field if field.endswith("%") else f"{field} %"
+        column.number_input(label, step=0.1, key=f"investment_{case_id}_capital_{field}")
+    st.markdown("**Management Benchmarks**")
+    benchmark = st.columns(3)
+    for column, field in zip(benchmark, ["Existing Business ROIC", "Marginal Reinvestment Return", "Treasury / Cash Yield"]):
+        column.number_input(f"{field} %", step=0.1, key=f"investment_{case_id}_capital_{field}")
+    for field in percent_fields:
+        capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"]) / 100
+    capital["Beta"] = safe_float(st.session_state[f"investment_{case_id}_capital_Beta"])
+    inputs["capital"] = capital
+    preview = calculate_investment_model(inputs)
+    returns = preview["returns"]
+    strip = st.columns(4)
+    strip[0].metric("WACC", pct(returns["WACC"]))
+    strip[1].metric("Hurdle Rate", pct(capital["Corporate Hurdle Rate"]))
+    strip[2].metric("Existing ROIC", pct(capital["Existing Business ROIC"]))
+    strip[3].metric("Marginal Return", pct(capital["Marginal Reinvestment Return"]))
+    if not preview["capital_structure_valid"]:
+        st.warning("Target Debt % and Target Equity % must total 100%.")
+    with st.expander("Assumption source and rationale", expanded=False):
+        st.write(f"Source: {capital.get('Source', '')}")
+        st.write(f"Effective date: {capital.get('Effective Date', '')}")
+        st.write(f"Rationale: {capital.get('Rationale', '')}")
+        st.caption("Cost of Equity = Risk-Free Rate + Beta × Equity Risk Premium + Country Risk Premium. After-tax Cost of Debt = Pre-tax Cost of Debt × (1 - Tax Rate).")
+    return inputs
+
+
+def render_investment_model(case: dict[str, object]) -> None:
+    case_id = str(case.get("Case ID", ""))
+    inputs = investment_case_inputs(case)
+    st.markdown("<div class='enterprise-section-title'>1. Model Settings</div>", unsafe_allow_html=True)
+    inputs = render_investment_settings(case_id, inputs)
+    years = INVESTMENT_YEARS[: int(inputs["settings"]["Forecast Horizon"])]
+
+    st.markdown("<div class='enterprise-section-title'>2. Business Drivers</div>", unsafe_allow_html=True)
+    benefit_type = str(inputs["settings"].get("Benefit Type", "Mixed"))
+    investment = deepcopy(inputs["investment"])
+    investment_seed_widget(f"investment_{case_id}_initial_investment", safe_float(investment.get("Initial Investment", 0.0)))
+    investment_seed_widget(f"investment_{case_id}_useful_life", int(investment.get("Useful Life", 10)))
+    investment_profile = st.columns(2)
+    investment_profile[0].number_input("Initial Investment", min_value=0.0, step=100000.0, key=f"investment_{case_id}_initial_investment")
+    investment_profile[1].number_input("Useful Life (years)", min_value=1, max_value=40, step=1, key=f"investment_{case_id}_useful_life")
+    investment["Initial Investment"] = safe_float(st.session_state[f"investment_{case_id}_initial_investment"])
+    investment["Useful Life"] = int(st.session_state[f"investment_{case_id}_useful_life"])
+    investment["Sustaining CAPEX"] = render_investment_driver_editor(
+        case_id, "sustaining_capex", "Sustaining CAPEX", investment,
+        ["Sustaining CAPEX"], years,
+    )["Sustaining CAPEX"]
+    inputs["investment"] = investment
+    if benefit_type in {"Revenue Growth", "Mixed"}:
+        inputs["revenue"] = render_investment_driver_editor(
+            case_id, "revenue", "Revenue / Growth Inputs", inputs["revenue"],
+            ["Baseline Volume", "Incremental Capacity", "Capacity Utilization %", "Baseline Price", "Price Growth %"], years,
+        )
+    if benefit_type in {"Cost Saving", "Mixed"}:
+        inputs["savings"] = render_investment_driver_editor(
+            case_id, "savings", "Cost Saving Inputs", inputs["savings"],
+            ["Baseline Cost", "Cost Saving %", "Productivity Gain %", "Avoided / Reduced FTE", "Cost per FTE", "Other Savings", "Realization %"], years,
+        )
+    inputs["opex"] = render_investment_driver_editor(
+        case_id, "opex", "Operating Cost Inputs", inputs["opex"],
+        ["Variable Cost per Unit", "Fixed Operating Cost", "Personnel Cost", "Maintenance", "Utilities / Facilities", "IT / Licenses", "Other OPEX"], years,
+    )
+    driver_model = calculate_investment_model(inputs)
+    calculated_driver_names = ["Incremental Volume", "Scenario Price", "Baseline Revenue", "Incremental Revenue", "Total Scenario Revenue"]
+    if benefit_type in {"Cost Saving", "Mixed"}:
+        calculated_driver_names += ["Gross Savings", "Net Savings"]
+    calculated_drivers = pd.DataFrame([
+        {"Calculated Driver": metric, **{year: driver_model["drivers"][metric][year] for year in years}}
+        for metric in calculated_driver_names
+    ])
+    render_finance_table(format_investment_driver_table(calculated_drivers, years), right_align=set(years))
+
+    st.markdown("<div class='enterprise-section-title'>3. Cost of Capital & Investment Thresholds</div>", unsafe_allow_html=True)
+    inputs = render_investment_capital(case_id, inputs)
+    save_investment_case_inputs(case_id, inputs)
+    model = calculate_investment_model(inputs)
+
+    render_investment_pnl("4. Baseline Operating P&L", model["baseline_pnl"], years)
+    render_investment_pnl("5. Investment Scenario Operating P&L", model["scenario_pnl"], years)
+
+    st.markdown("<div class='enterprise-section-title'>6. Incremental Impact</div>", unsafe_allow_html=True)
+    y5 = "Y5" if "Y5" in years else years[-1]
+    incremental = model["incremental"].set_index("Metric")
+    baseline = model["baseline_pnl"].set_index("Metric")
+    scenario = model["scenario_pnl"].set_index("Metric")
+    impact_cards = st.columns(4)
+    impact_cards[0].metric("Y5 Incremental Revenue", money(incremental.at["Incremental Revenue", y5]))
+    impact_cards[1].metric("Y5 Incremental EBITDA", money(incremental.at["Incremental EBITDA", y5]))
+    impact_cards[2].metric("Cumulative EBITDA Impact", money(sum(incremental.loc["Incremental EBITDA", year] for year in years)))
+    margin_uplift = safe_float(scenario.at["EBITDA Margin %", y5]) - safe_float(baseline.at["EBITDA Margin %", y5])
+    impact_cards[3].metric("Y5 EBITDA Margin Uplift", f"{margin_uplift * 100:+.1f}pp")
+    render_finance_table(format_investment_table(model["incremental"], years), right_align=set(years))
+
+    st.markdown("<div class='enterprise-section-title'>7. Working Capital</div>", unsafe_allow_html=True)
+    investment = deepcopy(inputs["investment"])
+    wc = st.columns(3)
+    for column, field in zip(wc, ["DSO", "DIO", "DPO"]):
+        key = f"investment_{case_id}_{field.lower()}"
+        investment_seed_widget(key, safe_float(investment.get(field, 0.0)))
+        column.number_input(f"{field} (days)", min_value=0.0, step=1.0, key=key)
+        investment[field] = safe_float(st.session_state[key])
+    inputs["investment"] = investment
+    save_investment_case_inputs(case_id, inputs)
+    model = calculate_investment_model(inputs)
+    wc_table = model["working_capital"].astype(object).copy()
+    for column in wc_table.columns[1:]:
+        wc_table[column] = wc_table[column].map(money)
+    render_finance_table(wc_table, right_align=set(wc_table.columns[1:]))
+
+    st.markdown("<div class='enterprise-section-title'>8. Unlevered Free Cash Flow</div>", unsafe_allow_html=True)
+    cash_flow = model["cash_flow"].astype(object).copy()
+    for column in cash_flow.columns[1:]:
+        cash_flow[column] = cash_flow[column].map(lambda value: f"{safe_float(value):.3f}" if column == "Discount Factor" else money(value))
+    render_finance_table(cash_flow, right_align=set(cash_flow.columns[1:]))
+    st.caption("Unlevered Free Cash Flow = Incremental EBIT - Cash Taxes + D&A - CAPEX - Change in Net Working Capital. Financing effects are excluded.")
+
+    st.markdown("<div class='enterprise-section-title'>9. Investment Returns</div>", unsafe_allow_html=True)
+    returns = model["returns"]
+    capital = inputs["capital"]
+    cards = st.columns(3)
+    cards[0].metric("Project NPV", money(returns["Project NPV"]))
+    cards[1].metric("Project IRR", pct(returns["Project IRR"]))
+    cards[2].metric("Payback Period", investment_payback_label(returns["Payback Period"]))
+    cards = st.columns(3)
+    cards[0].metric("Discounted Payback", investment_payback_label(returns["Discounted Payback"]))
+    cards[1].metric("Profitability Index", f"{safe_float(returns['Profitability Index']):.2f}x")
+    cards[2].metric("Cumulative Unlevered FCF", money(returns["Cumulative Unlevered FCF"]))
+    comparison = pd.DataFrame([
+        {"Benchmark": "Project IRR", "Rate": pct(returns["Project IRR"]), "Spread vs Project IRR": "-"},
+        {"Benchmark": "WACC", "Rate": pct(returns["WACC"]), "Spread vs Project IRR": f"{(safe_float(returns['Project IRR']) - safe_float(returns['WACC'])) * 100:+.1f}pp"},
+        {"Benchmark": "Corporate Hurdle Rate", "Rate": pct(capital["Corporate Hurdle Rate"]), "Spread vs Project IRR": f"{(safe_float(returns['Project IRR']) - safe_float(capital['Corporate Hurdle Rate'])) * 100:+.1f}pp"},
+        {"Benchmark": "Existing Business ROIC", "Rate": pct(capital["Existing Business ROIC"]), "Spread vs Project IRR": f"{(safe_float(returns['Project IRR']) - safe_float(capital['Existing Business ROIC'])) * 100:+.1f}pp"},
+        {"Benchmark": "Marginal Reinvestment Return", "Rate": pct(capital["Marginal Reinvestment Return"]), "Spread vs Project IRR": f"{(safe_float(returns['Project IRR']) - safe_float(capital['Marginal Reinvestment Return'])) * 100:+.1f}pp"},
+    ])
+    render_finance_table(comparison, right_align={"Rate", "Spread vs Project IRR"})
+    st.caption("Returns are analytical comparisons only; the module does not make an investment recommendation.")
+
+
+def render_investment_overview(case: dict[str, object]) -> None:
+    model = calculate_investment_model(investment_case_inputs(case))
+    returns = model["returns"]
+    inputs = model["inputs"]
+    capital = inputs["capital"]
+    cards = st.columns(4)
+    cards[0].metric("Initial Investment", money(inputs["investment"]["Initial Investment"]))
+    cards[1].metric("Project NPV", money(returns["Project NPV"]))
+    cards[2].metric("Project IRR", pct(returns["Project IRR"]))
+    cards[3].metric("Payback", investment_payback_label(returns["Payback Period"]))
+    benchmark = st.columns(3)
+    benchmark[0].metric("WACC", pct(returns["WACC"]))
+    benchmark[1].metric("Hurdle Rate", pct(capital["Corporate Hurdle Rate"]))
+    benchmark[2].metric("Marginal Reinvestment Return", pct(capital["Marginal Reinvestment Return"]))
+    st.info("Overview values are sourced directly from the current controlled investment model.")
+
+
+def page_investment_home() -> None:
+    investment_top_navigation()
+    render_investment_header("Investment Case", "Integrated investment modelling, financing and capital allocation.")
+    cases = investment_cases()
+    case_ids = tuple(cases["Case ID"].astype(str).tolist())
+    selected_id = str(st.session_state.get("selected_investment_case_id") or "")
+    if selected_id not in case_ids:
+        selected_id = ""
+        st.session_state.selected_investment_case_id = None
+    st.markdown("<div class='enterprise-section-title'>Investment Cases</div>", unsafe_allow_html=True)
+    header = st.columns([0.35, 0.9, 2.2, 1.1, 1.55, 1.2, 1.05, 1.0])
+    for column, label in zip(header, ["", "Case ID", "Investment Case Name", "Type", "Business Unit / Market", "Owner", "Status", "Last Updated"]):
+        column.markdown(f"**{label}**")
+    for _, row in cases.iterrows():
+        case_id = str(row.get("Case ID", ""))
+        columns = st.columns([0.35, 0.9, 2.2, 1.1, 1.55, 1.2, 1.05, 1.0])
+        columns[0].checkbox("Select", key=f"investment_case_selected_{case_id}", label_visibility="collapsed", on_change=set_investment_case_selection, args=(case_id, case_ids))
+        for column, field in zip(columns[1:], ["Case ID", "Investment Case Name", "Investment Type", "Business Unit / Market", "Owner", "Status", "Last Updated"]):
+            column.write(str(row.get(field, "")))
+    selected = cases[cases["Case ID"].astype(str).eq(selected_id)] if selected_id else pd.DataFrame()
+    st.markdown("<div class='enterprise-section-title'>Selected Investment Case</div>", unsafe_allow_html=True)
+    if selected.empty:
+        st.info("Select an investment case to preview it.")
+        st.button("View Details", key="investment_view_details", disabled=True)
+        return
+    case = selected.iloc[0].to_dict()
+    preview = st.columns(4)
+    preview[0].metric("Case", case.get("Investment Case Name", ""))
+    preview[1].metric("Type", case.get("Investment Type", ""))
+    preview[2].metric("Owner", case.get("Owner", ""))
+    preview[3].metric("Status", case.get("Status", ""))
+    if st.button("View Details", key="investment_view_details"):
+        st.session_state.investment_page = "Investment Case"
+        st.rerun()
+
+
+def page_new_investment_case() -> None:
+    investment_top_navigation()
+    render_investment_header("New Investment Case", "Create a finance-led capital allocation model.")
+    name = st.text_input("Investment Case Name", key="new_investment_name")
+    fields = st.columns(3)
+    investment_type = fields[0].selectbox("Investment Type", ["Growth", "Cost Saving", "Capacity", "Efficiency", "Strategic", "Other"], key="new_investment_type")
+    business_unit = fields[1].text_input("Business Unit / Market", key="new_investment_market")
+    owner = fields[2].selectbox("Owner", ["Daniel Ortiz", "Admin User"], key="new_investment_owner")
+    if st.button("Create Investment Case", key="create_investment_case", disabled=not name.strip() or not business_unit.strip()):
+        cases = investment_cases()
+        ids = pd.to_numeric(cases["Case ID"].astype(str).str.extract(r"(\d+)")[0], errors="coerce").dropna()
+        case_id = f"INV-{int(ids.max()) + 1 if not ids.empty else 2001}"
+        new_case = {"Case ID": case_id, "Investment Case Name": name.strip(), "Investment Type": investment_type, "Business Unit / Market": business_unit.strip(), "Owner": owner, "Status": "Draft", "Last Updated": date.today().isoformat(), "Profile": "saving" if investment_type in {"Cost Saving", "Efficiency"} else "growth"}
+        st.session_state.investment_runtime_cases = [*st.session_state.get("investment_runtime_cases", []), new_case]
+        inputs = default_investment_inputs(new_case)
+        inputs["settings"]["Case Name"] = name.strip()
+        save_investment_case_inputs(case_id, inputs)
+        st.session_state.selected_investment_case_id = case_id
+        st.session_state.investment_page = "Investment Case"
+        st.rerun()
+
+
+def page_investment_case() -> None:
+    investment_top_navigation()
+    cases = investment_cases()
+    selected_id = str(st.session_state.get("selected_investment_case_id") or "")
+    selected = cases[cases["Case ID"].astype(str).eq(selected_id)]
+    if selected.empty:
+        st.warning("The selected investment case is unavailable. Return to Investment Case Home and select a case.")
+        return
+    case = selected.iloc[0].to_dict()
+    st.markdown(
+        f"<div class='home-hero'><div><div class='home-hero-eyebrow'>Investment Case</div>"
+        f"<div class='home-hero-title'>{escape(str(case.get('Investment Case Name', '')))}</div>"
+        f"<div class='home-hero-subtitle'>{escape(selected_id)} • {escape(str(case.get('Investment Type', '')))} • {escape(str(case.get('Business Unit / Market', '')))}</div>"
+        f"</div><div class='home-hero-meta'>{escape(str(case.get('Status', '')))}</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Owner: {case.get('Owner', '')} · Last updated: {case.get('Last Updated', '')}")
+    sections = ["Overview", "Model", "Financing", "Sensitivity", "Decision Case"]
+    section = st.radio("Investment case section", sections, horizontal=True, key=f"investment_case_section_{selected_id}", label_visibility="collapsed")
+    if section == "Overview":
+        render_investment_overview(case)
+    elif section == "Model":
+        render_investment_model(case)
+    elif section == "Financing":
+        st.markdown("<div class='enterprise-section-title'>Financing</div>", unsafe_allow_html=True)
+        st.info("Funding mix, sources and uses, debt schedule, covenants, and equity returns will be added in a future increment.")
+    elif section == "Sensitivity":
+        st.markdown("<div class='enterprise-section-title'>Sensitivity</div>", unsafe_allow_html=True)
+        st.info("Downside, Base, and Upside analysis across operating, timing, capital, and discount-rate drivers will be added in a future increment.")
+    else:
+        st.markdown("<div class='enterprise-section-title'>Decision Case</div>", unsafe_allow_html=True)
+        st.info("The management summary, financing comparison, sensitivity synthesis, and investment decision package will be added in a future increment.")
+
+
+def page_investment_case_module() -> None:
+    page = str(st.session_state.get("investment_page", "Investment Case Home"))
+    cases = investment_cases()
+    selected_id = str(st.session_state.get("selected_investment_case_id") or "")
+    if page == "Investment Case" and selected_id not in set(cases["Case ID"].astype(str)):
+        st.session_state.investment_page = "Investment Case Home"
+        st.session_state.selected_investment_case_id = None
+        page = "Investment Case Home"
+    if page == "Investment Case":
+        page_investment_case()
+    elif page == "New Investment Case":
+        page_new_investment_case()
+    else:
+        page_investment_home()
+
+
 def deal_cell(value: object, muted: bool = False, limit: int | None = None) -> str:
     text = str(value or "")
     if limit:
@@ -13371,8 +13854,7 @@ def main() -> None:
         page_launch_sandbox(data)
         return
     if current_module == "investment":
-        render_header("Investment Case", "Strategic investment evaluation is coming soon.")
-        st.info("Investment Case will be added in a future module release.")
+        page_investment_case_module()
         return
 
     page = top_navigation(data)
