@@ -86,11 +86,13 @@ for case_id in ("LAUNCH-1001", "LAUNCH-1002"):
     assert_clean(app, f"{case_id} submit")
     assert app.session_state["launch_approval_records"][case_id]["Status"] == "Pending Approval"
 
-    app.session_state["launch_current_role"] = "General Manager"
-    app.session_state["launch_page"] = "Launch Sandbox Home"
-    app.run()
+    role_selector = next(item for item in app.selectbox if item.key == "launch_current_role")
+    role_selector.set_value("General Manager").run()
     assert_clean(app, f"{case_id} GM inbox")
-    button_by_key(app, f"launch_gm_open_{case_id}").click().run()
+    assert app.session_state["launch_page"] == "Launch Sandbox Home"
+    assert app.session_state["selected_launch_case_id"] is None
+    next(item for item in app.checkbox if item.key == f"launch_case_selected_{case_id}").set_value(True).run()
+    button_by_key(app, "launch_gm_view_details").click().run()
     assert app.session_state["launch_page"] == "Launch Case"
     app.run()
     assert_clean(app, f"{case_id} GM review")

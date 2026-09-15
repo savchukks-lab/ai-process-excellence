@@ -6265,6 +6265,13 @@ def clear_launch_case_selection() -> None:
             del st.session_state[key]
 
 
+def handle_launch_role_change() -> None:
+    """Return role switches to the appropriate Launch landing view without an extra rerun."""
+    clear_launch_case_selection()
+    st.session_state.launch_page = "Launch Sandbox Home"
+    st.session_state.selected_launch_case_id = None
+
+
 def launch_top_navigation() -> None:
     nav_cols = st.columns([0.9, 1.2, 1.1, 2.2])
     if nav_cols[0].button("Platform Home", key="launch_platform_home"):
@@ -6287,6 +6294,7 @@ def launch_top_navigation() -> None:
         "CURRENT ROLE",
         LAUNCH_ROLES,
         key="launch_current_role",
+        on_change=handle_launch_role_change,
     )
 
 
@@ -6332,10 +6340,15 @@ def render_launch_gm_inbox(cases: pd.DataFrame) -> None:
     if pending.empty:
         st.info("No Launch Decision Cases are currently awaiting General Manager approval.")
         return
-    headers = st.columns([1.0, 2.2, 1.25, 1.3, 1.25, 1.25, 0.8])
+    case_ids = tuple(pending["Launch Case ID"].astype(str).tolist())
+    selected_id = str(st.session_state.get("selected_launch_case_id") or "")
+    if selected_id not in case_ids:
+        selected_id = ""
+        st.session_state.selected_launch_case_id = None
+    headers = st.columns([0.35, 1.0, 2.4, 1.35, 1.3, 1.2, 1.25])
     for column, label in zip(
         headers,
-        ["Case ID", "Launch / Product", "Market / Region", "Submitted By", "Submitted Date", "Status", "Open"],
+        ["", "Case ID", "Launch / Product", "Market / Region", "Submitted By", "Submitted Date", "Approval Status"],
     ):
         column.markdown(f"**{label}**")
     for _, row in pending.iterrows():
@@ -6343,17 +6356,35 @@ def render_launch_gm_inbox(cases: pd.DataFrame) -> None:
         record = launch_approval_record(case_id)
         submitted_at = pd.to_datetime(record.get("Submitted At"), errors="coerce")
         submitted_text = submitted_at.strftime("%d %b %Y") if not pd.isna(submitted_at) else "Not recorded"
-        columns = st.columns([1.0, 2.2, 1.25, 1.3, 1.25, 1.25, 0.8])
-        columns[0].write(case_id)
-        columns[1].write(f"{row.get('Launch Name', '')} · {row.get('Product', '')}")
-        columns[2].write(str(row.get("Market / Region", "")))
-        columns[3].write(str(record.get("Submitted By", "Launch Coordinator")))
-        columns[4].write(submitted_text)
-        columns[5].write("Pending Approval")
-        if columns[6].button("Open", key=f"launch_gm_open_{case_id}"):
-            st.session_state.selected_launch_case_id = case_id
-            st.session_state.launch_page = "Launch Case"
-            st.rerun()
+        columns = st.columns([0.35, 1.0, 2.4, 1.35, 1.3, 1.2, 1.25])
+        columns[0].checkbox(
+            "Select",
+            key=launch_case_checkbox_key(case_id),
+            label_visibility="collapsed",
+            on_change=set_launch_case_selection,
+            args=(case_id, case_ids),
+        )
+        columns[1].write(case_id)
+        columns[2].write(f"{row.get('Launch Name', '')} · {row.get('Product', '')}")
+        columns[3].write(str(row.get("Market / Region", "")))
+        columns[4].write(str(record.get("Submitted By", "Launch Coordinator")))
+        columns[5].write(submitted_text)
+        columns[6].write("✓ Pending Approval")
+
+    selected = pending[pending["Launch Case ID"].astype(str).eq(selected_id)] if selected_id else pd.DataFrame()
+    st.markdown("<div class='enterprise-section-title'>Selected Approval Case</div>", unsafe_allow_html=True)
+    if selected.empty:
+        st.caption("Select a submitted Launch Decision Case to review it.")
+        st.button("View Details", key="launch_gm_view_details", disabled=True)
+        return
+    selected_case = selected.iloc[0]
+    st.caption(
+        f"{selected_case.get('Launch Case ID', '')} · {selected_case.get('Launch Name', '')} · "
+        f"{selected_case.get('Market / Region', '')}"
+    )
+    if st.button("View Details", key="launch_gm_view_details"):
+        st.session_state.launch_page = "Launch Case"
+        st.rerun()
 
 
 def page_launch_home(data: dict[str, pd.DataFrame]) -> None:
@@ -10868,8 +10899,8 @@ def render_launch_decision_case(
         )
         st.markdown("#### B. Economics")
         st.write(
-            f"Y5 Net Revenue **{money(y5.get('Net Revenue', 0))}** · 5Y NPV **{money(npv)}** · "
-            f"Payback **{payback}** · Y5 Operating Margin **{pct(launch_pnl_value(model, 'Operating Margin %'))}**"
+            f"Y5 Net Revenue {money(y5.get('Net Revenue', 0))} · 5Y NPV {money(npv)} · "
+            f"Payback {payback} · Y5 Operating Margin {pct(launch_pnl_value(model, 'Operating Margin %'))}"
         )
         st.markdown("#### C. Critical Assumptions")
         critical = pd.DataFrame(
