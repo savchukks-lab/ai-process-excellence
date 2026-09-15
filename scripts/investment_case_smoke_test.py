@@ -13,7 +13,7 @@ APP_PATH = ROOT / "streamlit_app.py"
 os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 
-from investment_model import calculate_investment_model, default_investment_inputs, investment_demo_cases
+from investment_model import CASE_ARCHETYPES, VALUE_CREATION_DRIVERS, calculate_investment_model, default_investment_inputs, investment_demo_cases
 
 
 def assert_clean(app: AppTest, label: str) -> None:
@@ -38,12 +38,34 @@ for case in cases:
     assert len(five_year["years"]) == 5
     assert len(five_year["cash_flow"]) == 6
 
-    for benefit_type in ("Revenue Growth", "Cost Saving", "Mixed"):
+    for drivers in (["Revenue Growth"], ["Cost Reduction"], VALUE_CREATION_DRIVERS):
         variant = deepcopy(inputs)
-        variant["settings"]["Benefit Type"] = benefit_type
+        variant["settings"]["Value Creation Drivers"] = list(drivers)
         result = calculate_investment_model(variant)
         assert result["years"]
         assert "Project NPV" in result["returns"]
+
+for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
+    case = {"Case ID": f"INV-T{index}", "Investment Case Name": archetype, "Case Archetype": archetype, "Investment Type": archetype, "Business Unit / Market": "Test Scope", "Owner": "Daniel Ortiz", "Status": "Draft", "Last Updated": "2026-09-15"}
+    inputs = default_investment_inputs(case)
+    for method in ("CAPM – Own Beta", "CAPM – Peer / Proxy Beta", "Corporate Provided Cost of Equity", "Manual / Other"):
+        inputs["capital"]["Cost of Equity Method"] = method
+        result = calculate_investment_model(inputs)
+        assert result["returns"]["WACC"] > 0
+    if archetype == CASE_ARCHETYPES[0]:
+        for mode in ("Unit-based", "Revenue-based"):
+            inputs["settings"]["Revenue Modeling Mode"] = mode
+            assert calculate_investment_model(inputs)["years"]
+
+    app = AppTest.from_file(str(APP_PATH), default_timeout=90)
+    app.session_state["current_module"] = "investment"
+    app.session_state["investment_page"] = "Investment Case"
+    app.session_state["selected_investment_case_id"] = case["Case ID"]
+    app.session_state["investment_runtime_cases"] = [case]
+    app.session_state["investment_case_inputs"] = {case["Case ID"]: inputs}
+    app.session_state[f"investment_case_section_{case['Case ID']}"] = "Model"
+    app.run()
+    assert_clean(app, f"{archetype} Model")
 
 for case in cases:
     case_id = case["Case ID"]
