@@ -11170,13 +11170,13 @@ def investment_driver_display_kind(metric: str) -> str:
 
 
 def investment_driver_display_format(kind: str) -> str:
-    # Streamlit 1.35 supports simple printf formats. Avoid combinations such as
-    # `%,.1f`, which cause a browser-side formatting error in editable tables.
+    # Editable grids use only conservative formats supported by the deployed
+    # Streamlit runtime. Read-only outputs apply richer business formatting.
     return {
         "Percentage": "%.1f%%",
-        "Unit value": "$%.1f",
-        "Count": "%,d",
-        "Monetary value": "$%,d",
+        "Unit value": "%.1f",
+        "Count": "%.0f",
+        "Monetary value": "%.0f",
     }[kind]
 
 
@@ -11299,7 +11299,7 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
     column_config = {
         column: st.column_config.NumberColumn(
             column,
-            format=("$%,d" if column in whole_number_fields else "$%.1f" if column in one_decimal_fields else "%.1f%%"),
+            format=("%.0f" if column in whole_number_fields else "%.1f" if column in one_decimal_fields else "%.1f%%"),
             width=investment_editor_column_width(column),
         )
         for column in frame.columns
@@ -11653,7 +11653,8 @@ def render_investment_model(case: dict[str, object]) -> None:
     render_finance_table(comparison, right_align={"Rate", "Spread vs Project IRR"})
     st.caption("Returns are analytical comparisons only; the module does not make an investment recommendation.")
     st.markdown("<div class='enterprise-section-title'>AI Model Interpretation</div>", unsafe_allow_html=True)
-    st.write(investment_model_interpretation(inputs, model, years))
+    interpretation = investment_model_interpretation(inputs, model, years).replace("$", r"\$")
+    st.markdown(interpretation)
     st.caption("AI-generated interpretation is advisory and may contain inaccuracies. Review the controlled assumptions and model outputs before using it in management discussion.")
 
 
