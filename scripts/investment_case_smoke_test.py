@@ -13,7 +13,7 @@ APP_PATH = ROOT / "streamlit_app.py"
 os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 
-from investment_model import CASE_ARCHETYPES, VALUE_CREATION_DRIVERS, calculate_investment_model, default_investment_inputs, investment_demo_cases
+from investment_model import CASE_ARCHETYPES, VALUE_CREATION_DRIVERS, archetype_default_drivers, calculate_investment_model, default_investment_inputs, investment_demo_cases
 
 
 def assert_clean(app: AppTest, label: str) -> None:
@@ -66,6 +66,40 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
     app.session_state[f"investment_case_section_{case['Case ID']}"] = "Model"
     app.run()
     assert_clean(app, f"{archetype} Model")
+
+# Model editors must persist Streamlit's latest delta before recalculation.
+case = cases[0]
+case_id = case["Case ID"]
+inputs = default_investment_inputs(case)
+app = AppTest.from_file(str(APP_PATH), default_timeout=90)
+app.session_state["current_module"] = "investment"
+app.session_state["investment_page"] = "Investment Case"
+app.session_state["selected_investment_case_id"] = case_id
+app.session_state["investment_runtime_cases"] = [case]
+app.session_state["investment_case_inputs"] = {case_id: inputs}
+app.session_state[f"investment_case_section_{case_id}"] = "Model"
+app.run()
+assert_clean(app, "Model first-edit setup")
+
+uses_key = f"investment_records_{case_id}_uses"
+app.session_state[uses_key] = {"edited_rows": {0: {"Amount": 23_000_000}}, "added_rows": [], "deleted_rows": []}
+app.run()
+assert_clean(app, "Investment Uses first edit")
+assert app.session_state["investment_case_inputs"][case_id]["investment"]["uses"][0]["Amount"] == 23_000_000
+
+capacity_key = f"investment_driver_{case_id}_capacity_count_10"
+app.session_state[capacity_key] = {"edited_rows": {3: {"Y1": 810_000}}, "added_rows": [], "deleted_rows": []}
+app.run()
+assert_clean(app, "Capacity first edit")
+assert app.session_state["investment_case_inputs"][case_id]["capacity"]["Scenario Volume"]["Y1"] == 810_000
+
+custom_driver_key = f"investment_{case_id}_driver_cost_reduction"
+next(widget for widget in app.checkbox if widget.key == custom_driver_key).set_value(True).run()
+assert_clean(app, "Customized value drivers")
+assert "Cost Reduction" in app.session_state["investment_case_inputs"][case_id]["settings"]["Value Creation Drivers"]
+next(widget for widget in app.checkbox if widget.key == custom_driver_key).set_value(False).run()
+assert_clean(app, "Restored archetype defaults")
+assert set(app.session_state["investment_case_inputs"][case_id]["settings"]["Value Creation Drivers"]) == set(archetype_default_drivers(CASE_ARCHETYPES[0]))
 
 for case in cases:
     case_id = case["Case ID"]

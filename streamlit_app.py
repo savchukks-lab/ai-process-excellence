@@ -11097,6 +11097,40 @@ def investment_payback_label(value: object) -> str:
     return "<1 year" if numeric < 1 else f"{numeric:.1f} years"
 
 
+def investment_model_interpretation(inputs: dict[str, object], model: dict[str, object], years: list[str]) -> str:
+    """Interpret controlled model outputs without introducing new calculations."""
+    returns = model["returns"]
+    capital = inputs["capital"]
+    settings = inputs["settings"]
+    y5 = "Y5" if "Y5" in years else years[-1]
+    incremental = model["incremental"].set_index("Metric")
+    npv = safe_float(returns.get("Project NPV"))
+    irr = returns.get("Project IRR")
+    enabled = list(settings.get("Value Creation Drivers", []))
+    driver_text = ", ".join(enabled) if enabled else "the current operating assumptions"
+    economics = (
+        f"The standalone case produces a {money(npv)} Project NPV and a {pct(irr)} Project IRR, "
+        f"compared with an {pct(returns.get('WACC'))} WACC and {pct(capital.get('Corporate Hurdle Rate'))} corporate hurdle rate."
+    )
+    value = (
+        f"By {y5}, the controlled model shows {money(incremental.at['Incremental Revenue', y5])} of incremental revenue "
+        f"and {money(incremental.at['Incremental EBITDA', y5])} of incremental EBITDA; the modeled value-creation structure is driven by {driver_text}."
+    )
+    return_profile = (
+        f"Undiscounted payback is {investment_payback_label(returns.get('Payback Period'))}, while discounted payback is "
+        f"{investment_payback_label(returns.get('Discounted Payback'))}, highlighting the timing trade-off in realizing cash returns."
+    )
+    comparison = (
+        f"Management should read the project return alongside the {pct(capital.get('Marginal Reinvestment Return'))} marginal reinvestment return "
+        f"and {pct(capital.get('Existing Business ROIC'))} existing-business ROIC rather than treating any single threshold as a recommendation."
+    )
+    assumptions = (
+        f"The next review should focus on the durability of the {str(settings.get('Case Archetype', 'selected'))} operating assumptions, "
+        "the pace of benefit realization, and any working-capital or implementation demands embedded in the case."
+    )
+    return " ".join([economics, value, return_profile, comparison, assumptions])
+
+
 def format_investment_table(table: pd.DataFrame, years: list[str], percent_rows: set[str] | None = None) -> pd.DataFrame:
     formatted = table.astype(object).copy()
     percent_rows = percent_rows or set()
@@ -11141,8 +11175,8 @@ def investment_driver_display_format(kind: str) -> str:
     return {
         "Percentage": "%.1f%%",
         "Unit value": "$%.1f",
-        "Count": "%.0f",
-        "Monetary value": "$%.0f",
+        "Count": "%,d",
+        "Monetary value": "$%,d",
     }[kind]
 
 
@@ -11150,6 +11184,20 @@ def investment_driver_display_value(value: float, kind: str) -> float:
     if kind in {"Count", "Monetary value"}:
         return float(round(value))
     return round(value, 1)
+
+
+def investment_editor_column_width(column: str) -> str:
+    if column in {"Applicable", "Year"} or re.fullmatch(r"Y\d+", column):
+        return "small"
+    if column in {
+        "Amount", "Baseline Cost / Cost Pool", "Gross Saving", "Realized Saving",
+        "Baseline Unit Cost", "Scenario Unit Cost", "Baseline Y1", "Scenario Y1",
+        "Realization %", "Annual Growth %",
+    }:
+        return "small"
+    if column in {"Comment", "Comment / Rationale", "Saving Mechanism"}:
+        return "large"
+    return "medium"
 
 
 def render_investment_driver_editor(
@@ -11180,18 +11228,25 @@ def render_investment_driver_editor(
         if len(grouped_metrics) > 1:
             st.caption(kind)
         year_config = {
-            year: st.column_config.NumberColumn(year, format=investment_driver_display_format(kind))
+            year: st.column_config.NumberColumn(year, format=investment_driver_display_format(kind), width="small")
             for year in years
         }
+        source_frame = pd.DataFrame(rows)
+        editor_key = f"investment_driver_{case_id}_{section_key}_{kind.lower().replace(' ', '_')}_{len(years)}"
+        editor_source = apply_data_editor_state(source_frame, st.session_state.get(editor_key))
         editor = st.data_editor(
-            pd.DataFrame(rows),
-            key=f"investment_driver_{case_id}_{section_key}_{kind.lower().replace(' ', '_')}_{len(years)}",
+            editor_source,
+            key=editor_key,
             hide_index=True,
             use_container_width=True,
             disabled=["Input"],
-            column_config=year_config,
+            column_config={
+                "Input": st.column_config.TextColumn("Input", width="medium"),
+                **year_config,
+            },
         )
-        for _, row in editor.iterrows():
+        updated_editor = apply_data_editor_state(editor.copy(), st.session_state.get(editor_key))
+        for _, row in updated_editor.iterrows():
             metric = str(row.get("Input", ""))
             updated.setdefault(metric, {})
             for year in years:
@@ -11244,21 +11299,31 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
     column_config = {
         column: st.column_config.NumberColumn(
             column,
-            format=("$%.0f" if column in whole_number_fields else "$%.1f" if column in one_decimal_fields else "%.1f%%"),
+            format=("$%,d" if column in whole_number_fields else "$%.1f" if column in one_decimal_fields else "%.1f%%"),
+            width=investment_editor_column_width(column),
         )
         for column in frame.columns
         if column in whole_number_fields | one_decimal_fields | percent_fields
     }
+    for column in display_frame.columns:
+        if column in column_config:
+            continue
+        if column == "Applicable":
+            column_config[column] = st.column_config.CheckboxColumn(column, width="small")
+        else:
+            column_config[column] = st.column_config.TextColumn(column, width=investment_editor_column_width(column))
+    editor_key = f"investment_records_{case_id}_{key}"
+    editor_source = apply_data_editor_state(display_frame, st.session_state.get(editor_key))
     edited = st.data_editor(
-        display_frame,
-        key=f"investment_records_{case_id}_{key}",
+        editor_source,
+        key=editor_key,
         hide_index=True,
         use_container_width=True,
         num_rows="dynamic",
         disabled=disabled or [],
         column_config=column_config,
     )
-    edited_rows = edited.to_dict("records")
+    edited_rows = apply_data_editor_state(edited.copy(), st.session_state.get(editor_key)).to_dict("records")
     original_rows = frame.to_dict("records")
     displayed_rows = display_frame.to_dict("records")
     for index, edited_row in enumerate(edited_rows):
@@ -11287,9 +11352,9 @@ def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[
     top[0].text_input("Case Name", key=f"investment_{case_id}_case_name")
     top[1].text_input("Currency", key=f"investment_{case_id}_currency")
     archetype_labels = {
-        CASE_ARCHETYPES[0]: "Capacity Expansion",
-        CASE_ARCHETYPES[1]: "Digital / AI / Software",
-        CASE_ARCHETYPES[2]: "Business Acquisition",
+        CASE_ARCHETYPES[0]: "Capacity Expansion — Capacity, volume and unit economics",
+        CASE_ARCHETYPES[1]: "Digital / AI / Software — Implementation, recurring cost and productivity / savings",
+        CASE_ARCHETYPES[2]: "Business Acquisition — Target economics, synergies and integration",
     }
     st.markdown("**Case Archetype — model input template**")
     st.radio(
@@ -11302,11 +11367,7 @@ def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[
         args=(case_id,),
         label_visibility="collapsed",
     )
-    archetype_notes = st.columns(3)
-    archetype_notes[0].caption("Capacity, volume and unit economics")
-    archetype_notes[1].caption("Implementation cost, recurring cost and productivity / savings")
-    archetype_notes[2].caption("Target economics, synergies and integration")
-    st.caption("Selected template changes the business-driver inputs below. Financial outputs and valuation methodology remain consistent across archetypes.")
+    selected_archetype = str(st.session_state[f"investment_{case_id}_archetype"])
 
     st.markdown("**Value Creation Drivers**")
     selected_seed = set(settings.get("Value Creation Drivers", []))
@@ -11319,7 +11380,11 @@ def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[
         if column.checkbox(driver, key=widget_key):
             selected_drivers.append(driver)
     st.session_state[f"investment_{case_id}_drivers"] = selected_drivers
-    st.caption("Default drivers are suggested by the selected archetype. Adjust them if the specific case creates value through additional mechanisms.")
+    default_drivers = set(archetype_default_drivers(selected_archetype))
+    template_name = archetype_labels[selected_archetype].split(" — ", 1)[0]
+    template_status = f"{template_name} · User Customized" if set(selected_drivers) != default_drivers else template_name
+    st.caption(f"Template status: {template_status}")
+    st.caption("Archetype sets the default input structure. Additional value drivers can be enabled for case-specific economics.")
     st.text_input("Financial Scope", key=f"investment_{case_id}_scope", help="The relevant business scope affected by the investment. Baseline and working capital should reflect this scope, not necessarily the consolidated company.")
     middle = st.columns(4)
     middle[0].number_input("Base Year", min_value=2020, max_value=2050, step=1, key=f"investment_{case_id}_base_year")
@@ -11406,13 +11471,22 @@ def render_investment_model(case: dict[str, object]) -> None:
         column.caption(label)
     st.caption("Build the standalone economics of the investment before considering financing. The selected case archetype determines the relevant operating drivers; all cases then flow into the same financial model.")
     st.markdown("### INVESTMENT ASSUMPTIONS")
+    st.caption("Editable assumptions · Changes flow through the controlled investment model.")
     st.markdown("<div class='enterprise-section-title'>1. Model Settings</div>", unsafe_allow_html=True)
     inputs = render_investment_settings(case_id, inputs)
     years = INVESTMENT_YEARS[: int(inputs["settings"]["Forecast Horizon"])]
 
     st.markdown("<div class='enterprise-section-title'>2. Investment Uses</div>", unsafe_allow_html=True)
     st.caption("Capital and one-off implementation expenditure required to bring the project to operational readiness. Initial investment includes expenditure up to the operational start date.")
-    uses = render_investment_record_editor(case_id, "uses", inputs["investment"]["uses"])
+    original_uses = deepcopy(inputs["investment"]["uses"])
+    hide_uniform_timing = bool(original_uses) and all(
+        str(row.get("Timing", "")).strip() == "Before operational start" for row in original_uses
+    )
+    visible_uses = [{key: value for key, value in row.items() if key != "Timing"} for row in original_uses] if hide_uniform_timing else original_uses
+    uses = render_investment_record_editor(case_id, "uses", visible_uses)
+    if hide_uniform_timing:
+        for index, row in enumerate(uses):
+            row["Timing"] = original_uses[index].get("Timing", "Before operational start") if index < len(original_uses) else "Before operational start"
     for row in uses: row["Amount"] = safe_float(row.get("Amount"))
     inputs["investment"]["uses"] = uses
     total_initial = sum(safe_float(row.get("Amount")) for row in uses if bool(row.get("Applicable", True)))
@@ -11502,6 +11576,7 @@ def render_investment_model(case: dict[str, object]) -> None:
     model = calculate_investment_model(inputs)
     st.markdown("---")
     st.markdown("### FINANCIAL MODEL OUTPUTS")
+    st.caption("Calculated outputs · Read-only results from the controlled assumptions above.")
     driver_names=["Baseline Revenue","Incremental Revenue","Scenario Revenue"]
     if archetype==CASE_ARCHETYPES[0] and inputs["settings"].get("Revenue Modeling Mode")=="Unit-based": driver_names=["Total Available Capacity","Capacity Utilization %",*driver_names]
     if "Cost Reduction" in enabled: driver_names.append("Realized Savings")
@@ -11555,6 +11630,19 @@ def render_investment_model(case: dict[str, object]) -> None:
     cards[0].metric("Discounted Payback", investment_payback_label(returns["Discounted Payback"]))
     cards[1].metric("Profitability Index", f"{safe_float(returns['Profitability Index']):.2f}x")
     cards[2].metric("Cumulative Unlevered FCF", money(returns["Cumulative Unlevered FCF"]))
+    benchmark_values = [
+        ("WACC", safe_float(returns["WACC"])),
+        ("Corporate Hurdle Rate", safe_float(capital["Corporate Hurdle Rate"])),
+        ("Marginal Reinvestment Return", safe_float(capital["Marginal Reinvestment Return"])),
+        ("Project IRR", None if returns.get("Project IRR") is None else safe_float(returns["Project IRR"])),
+        ("Existing Business ROIC", safe_float(capital["Existing Business ROIC"])),
+    ]
+    ordered_benchmarks = sorted((item for item in benchmark_values if item[1] is not None), key=lambda item: item[1])
+    st.markdown("**Return and threshold comparison**")
+    st.caption("Current rates shown from lowest to highest; this comparison does not constitute an investment recommendation.")
+    benchmark_columns = st.columns(len(ordered_benchmarks))
+    for column, (label, value) in zip(benchmark_columns, ordered_benchmarks):
+        column.metric(label, pct(value))
     comparison = pd.DataFrame([
         {"Benchmark": "Project IRR", "Rate": pct(returns["Project IRR"]), "Spread vs Project IRR": "-"},
         {"Benchmark": "WACC", "Rate": pct(returns["WACC"]), "Spread vs Project IRR": f"{(safe_float(returns['Project IRR']) - safe_float(returns['WACC'])) * 100:+.1f}pp"},
@@ -11564,6 +11652,9 @@ def render_investment_model(case: dict[str, object]) -> None:
     ])
     render_finance_table(comparison, right_align={"Rate", "Spread vs Project IRR"})
     st.caption("Returns are analytical comparisons only; the module does not make an investment recommendation.")
+    st.markdown("<div class='enterprise-section-title'>AI Model Interpretation</div>", unsafe_allow_html=True)
+    st.write(investment_model_interpretation(inputs, model, years))
+    st.caption("AI-generated interpretation is advisory and may contain inaccuracies. Review the controlled assumptions and model outputs before using it in management discussion.")
 
 
 def render_investment_overview(case: dict[str, object]) -> None:
