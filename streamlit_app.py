@@ -45,6 +45,12 @@ from investment_model import (
     default_investment_inputs,
     investment_demo_cases,
 )
+from investment_financing import (
+    FINANCING_PERIODS,
+    calculate_all_financing_scenarios,
+    calculate_financing_scenario,
+    ensure_financing_inputs,
+)
 
 try:
     faulthandler.enable()
@@ -11447,6 +11453,391 @@ def render_investment_overview(case: dict[str, object]) -> None:
     st.info("Overview values are sourced directly from the current controlled investment model.")
 
 
+def _financing_ratio(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    return f"{safe_float(value):.2f}x"
+
+
+def _financing_percent(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    return pct(value)
+
+
+def _format_financing_money_table(table: pd.DataFrame, text_columns: set[str]) -> pd.DataFrame:
+    formatted = table.astype(object).copy()
+    for column in formatted.columns:
+        if str(column) not in text_columns:
+            formatted[column] = formatted[column].map(money)
+    return formatted
+
+
+def _investment_financing_widget(key: str, value: object) -> str:
+    investment_seed_widget(key, value)
+    return key
+
+
+def render_investment_financing(case: dict[str, object]) -> None:
+    case_id = str(case.get("Case ID", ""))
+    model_inputs = investment_case_inputs(case)
+    financing = ensure_financing_inputs(model_inputs.get("financing"))
+    scenarios = financing["scenarios"]
+    scenario_ids = list(scenarios)
+
+    st.markdown("<div class='enterprise-section-title'>Financing</div>", unsafe_allow_html=True)
+    st.caption("Project returns remain based on unlevered cash flow. This tab evaluates how an approved investment could be funded and the resulting equity return, liquidity, and credit risk.")
+    with st.expander("Financing definitions", expanded=False):
+        st.markdown(
+            "**Internal Cash / Equity:** company cash or shareholder capital with no contractual debt service.  \n"
+            "**Debt Facility:** maximum committed lender funding; **Debt Drawdown:** amount actually borrowed in a period; **Outstanding Debt:** principal remaining after repayments.  \n"
+            "**Reference Rate:** floating benchmark before the borrower-specific **Credit Spread**; **All-in Rate:** total contractual interest rate before tax.  \n"
+            "**Grace Period:** period before principal repayment starts; **Straight-line:** broadly equal principal payments; **Bullet:** principal substantially repaid at maturity.  \n"
+            "**Average Debt:** simplified average outstanding principal used for annual interest; **Debt Service:** scheduled principal plus cash interest.  \n"
+            "**Net Debt / EBITDA:** leverage relative to earnings; **Interest Coverage:** EBITDA divided by cash interest; **DSCR:** cash available for debt service divided by principal and interest.  \n"
+            "**Covenant Headroom:** distance between actual performance and the covenant limit; positive headroom indicates compliance.  \n"
+            "**Levered P&L:** investment-scenario profit after financing costs.  \n"
+            "**Equity Cash Flow:** cash remaining to or required from equity after financing inflows and debt service; **Equity IRR:** return implied by those cash flows; **Equity NPV:** their present value at Cost of Equity."
+        )
+
+    selected_key = f"investment_financing_selected_{case_id}"
+    _investment_financing_widget(selected_key, financing.get("selected_scenario_id", "mixed"))
+    if st.session_state[selected_key] not in scenario_ids:
+        st.session_state[selected_key] = scenario_ids[0]
+    selected_id = st.radio(
+        "Selected funding scenario",
+        scenario_ids,
+        format_func=lambda item: str(scenarios[item].get("Scenario Name", item)),
+        horizontal=True,
+        key=selected_key,
+    )
+    financing["selected_scenario_id"] = selected_id
+    kpi_slot = st.container()
+
+    st.markdown("<div class='enterprise-section-title'>1. Funding Scenarios</div>", unsafe_allow_html=True)
+    st.caption("Internal Cash / Equity has no contractual debt service, but should still be assessed against the corporate hurdle rate, marginal reinvestment return, and treasury yield.")
+    scenario_rows = []
+    for scenario_id in scenario_ids:
+        scenario = scenarios[scenario_id]
+        mix = scenario["Funding Mix"]
+        scenario_rows.append({
+            "Scenario ID": scenario_id,
+            "Scenario Name": scenario.get("Scenario Name", scenario_id),
+            "Internal Cash / Equity %": safe_float(mix.get("Internal Cash / Equity %")) * 100,
+            "Debt %": safe_float(mix.get("Debt %")) * 100,
+            "Alternative Funding %": safe_float(mix.get("Alternative Funding %")) * 100,
+        })
+    scenario_editor = st.data_editor(
+        pd.DataFrame(scenario_rows),
+        key=f"investment_financing_mix_{case_id}",
+        hide_index=True,
+        use_container_width=True,
+        disabled=["Scenario ID"],
+        column_config={
+            "Scenario ID": st.column_config.TextColumn("Scenario ID", width="small"),
+            "Scenario Name": st.column_config.TextColumn("Scenario Name", required=True),
+            "Internal Cash / Equity %": st.column_config.NumberColumn("Internal Cash / Equity %", min_value=0.0, max_value=100.0, step=5.0, format="%.1f%%", help="Funding provided from company cash or shareholder capital, with no contractual debt service obligation."),
+            "Debt %": st.column_config.NumberColumn("Debt %", min_value=0.0, max_value=100.0, step=5.0, format="%.1f%%"),
+            "Alternative Funding %": st.column_config.NumberColumn("Alternative Funding %", min_value=0.0, max_value=100.0, step=5.0, format="%.1f%%"),
+        },
+    )
+    for _, row in scenario_editor.iterrows():
+        scenario_id = str(row.get("Scenario ID", ""))
+        if scenario_id not in scenarios:
+            continue
+        scenarios[scenario_id]["Scenario Name"] = str(row.get("Scenario Name") or scenario_id)
+        scenarios[scenario_id]["Funding Mix"] = {
+            "Internal Cash / Equity %": safe_float(row.get("Internal Cash / Equity %")) / 100,
+            "Debt %": safe_float(row.get("Debt %")) / 100,
+            "Alternative Funding %": safe_float(row.get("Alternative Funding %")) / 100,
+        }
+    selected = scenarios[selected_id]
+    selected_mix = selected["Funding Mix"]
+    mix_total = sum(safe_float(value) for value in selected_mix.values())
+    if abs(mix_total - 1.0) > 0.0001:
+        st.warning(f"Selected funding mix totals {mix_total * 100:.1f}%. It must equal 100.0%.")
+    else:
+        st.caption("Selected funding mix totals 100.0%.")
+
+    st.markdown("<div class='enterprise-section-title'>2. Sources & Uses</div>", unsafe_allow_html=True)
+    st.caption("Sources & Uses reconciles the total funding requirement with the sources used to finance it. Model-derived investment amounts are not re-entered here.")
+    additional = selected["Additional Uses"]
+    use_columns = st.columns(3)
+    for column, field, help_text in zip(
+        use_columns,
+        ["Initial Working Capital", "Contingency", "Other Uses"],
+        ["Initial working capital specifically required at funding close, if separate from annual model cash flows.", "Additional funding reserve for defined execution uncertainty.", "Other funding uses not already captured by the controlled operating model."],
+    ):
+        key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_{field.lower().replace(' ', '_')}", safe_float(additional.get(field)))
+        column.number_input(field, min_value=0.0, step=100_000.0, format="%.0f", key=key, help=help_text)
+        additional[field] = safe_float(st.session_state[key])
+
+    st.markdown("**Alternative / Non-standard Funding**")
+    st.caption("Repayable alternative funding is modeled as principal due at the selected debt maturity with its stated annual cost. This intentionally avoids a separate instrument engine at this stage.")
+    alternative_rows = []
+    for row in selected["Alternative Funding"]:
+        item = dict(row)
+        item["Cost / Rate"] = safe_float(item.get("Cost / Rate")) * 100
+        alternative_rows.append(item)
+    alternative_editor = st.data_editor(
+        pd.DataFrame(alternative_rows, columns=["Applicable", "Type", "Amount", "Timing", "Cost / Rate", "Repayment Required", "Source / Basis", "Comment"]),
+        key=f"investment_financing_alternative_{case_id}_{selected_id}",
+        hide_index=True,
+        use_container_width=True,
+        num_rows="dynamic",
+        column_config={
+            "Type": st.column_config.SelectboxColumn("Type", options=["Grant / Subsidy", "Vendor Financing", "Lease", "Partner Contribution", "Other"], required=True),
+            "Amount": st.column_config.NumberColumn("Amount", min_value=0.0, format="%,.0f"),
+            "Timing": st.column_config.TextColumn("Timing"),
+            "Cost / Rate": st.column_config.NumberColumn("Cost / Rate", min_value=0.0, format="%.2f%%"),
+            "Repayment Required": st.column_config.SelectboxColumn("Repayment Required", options=["Yes", "No"], required=True),
+        },
+    )
+    alternative_funding = []
+    for _, row in alternative_editor.iterrows():
+        if pd.isna(row.get("Type")):
+            continue
+        item = row.to_dict()
+        item["Applicable"] = bool(item.get("Applicable", True))
+        item["Amount"] = safe_float(item.get("Amount"))
+        item["Cost / Rate"] = safe_float(item.get("Cost / Rate")) / 100
+        item["Repayment Required"] = str(item.get("Repayment Required") or "No")
+        alternative_funding.append(item)
+    selected["Alternative Funding"] = alternative_funding
+    sources_uses_slot = st.container()
+
+    debt_pct = safe_float(selected_mix.get("Debt %"))
+    st.markdown("<div class='enterprise-section-title'>3. Debt Terms</div>", unsafe_allow_html=True)
+    debt_terms = selected["Debt Terms"]
+    if debt_pct <= 0:
+        st.info("No debt is included in this funding scenario. Interest, debt service, and debt covenants are not applicable.")
+    else:
+        term_columns = st.columns(3)
+        rate_type_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_rate_type", debt_terms.get("Interest Rate Type", "Fixed"))
+        term_columns[0].selectbox("Interest Rate Type", ["Fixed", "Floating"], key=rate_type_key)
+        debt_terms["Interest Rate Type"] = st.session_state[rate_type_key]
+        if debt_terms["Interest Rate Type"] == "Fixed":
+            fixed_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_fixed_rate", safe_float(debt_terms.get("Fixed Interest Rate")) * 100)
+            term_columns[1].number_input("Fixed Interest Rate %", min_value=0.0, step=0.1, key=fixed_key, help="Contractual interest rate fixed for the modeled facility term.")
+            debt_terms["Fixed Interest Rate"] = safe_float(st.session_state[fixed_key]) / 100
+        else:
+            reference_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_reference_rate", safe_float(debt_terms.get("Reference / Base Rate")) * 100)
+            spread_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_credit_spread", safe_float(debt_terms.get("Credit Spread")) * 100)
+            term_columns[1].number_input("Reference / Base Rate %", min_value=0.0, step=0.1, key=reference_key, help="Benchmark floating interest rate before the borrower-specific credit spread.")
+            term_columns[2].number_input("Credit Spread %", min_value=0.0, step=0.1, key=spread_key, help="Additional interest margin for borrower or transaction credit risk.")
+            debt_terms["Reference / Base Rate"] = safe_float(st.session_state[reference_key]) / 100
+            debt_terms["Credit Spread"] = safe_float(st.session_state[spread_key]) / 100
+
+        terms = st.columns(4)
+        start_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_facility_start", debt_terms.get("Facility Start / Availability Date", date.today()))
+        maturity_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_maturity", int(safe_float(debt_terms.get("Maturity Year")) or 1))
+        grace_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_grace", int(safe_float(debt_terms.get("Grace Period Years"))))
+        repayment_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_repayment", debt_terms.get("Repayment Type", "Straight-line"))
+        terms[0].date_input("Facility Start / Availability Date", key=start_key)
+        terms[1].number_input("Maturity (year from drawdown)", min_value=1, max_value=10, step=1, key=maturity_key, help="Final modeled year in which outstanding principal must be repaid.")
+        terms[2].number_input("Grace Period (years)", min_value=0, max_value=9, step=1, key=grace_key, help="Period during which principal repayment is deferred.")
+        terms[3].selectbox("Repayment Type", ["Straight-line", "Bullet", "Custom"], key=repayment_key, help="Straight-line repays broadly equal principal amounts; Bullet repays principal substantially at maturity.")
+        debt_terms.update({
+            "Facility Start / Availability Date": st.session_state[start_key],
+            "Maturity Year": int(st.session_state[maturity_key]),
+            "Grace Period Years": int(st.session_state[grace_key]),
+            "Repayment Type": st.session_state[repayment_key],
+        })
+        fees = st.columns(4)
+        arrangement_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_arrangement", safe_float(debt_terms.get("Arrangement Fee")) * 100)
+        commitment_enabled_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_commitment_enabled", bool(debt_terms.get("Commitment Fee Applicable")))
+        commitment_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_commitment", safe_float(debt_terms.get("Commitment Fee")) * 100)
+        prepay_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_prepay", bool(debt_terms.get("Prepayment Allowed", True)))
+        fees[0].number_input("Arrangement Fee %", min_value=0.0, step=0.1, key=arrangement_key)
+        fees[1].checkbox("Commitment Fee Applicable", key=commitment_enabled_key)
+        fees[2].number_input("Commitment Fee %", min_value=0.0, step=0.05, key=commitment_key, disabled=not bool(st.session_state[commitment_enabled_key]))
+        fees[3].checkbox("Prepayment Allowed", key=prepay_key)
+        debt_terms.update({
+            "Arrangement Fee": safe_float(st.session_state[arrangement_key]) / 100,
+            "Commitment Fee Applicable": bool(st.session_state[commitment_enabled_key]),
+            "Commitment Fee": safe_float(st.session_state[commitment_key]) / 100,
+            "Prepayment Allowed": bool(st.session_state[prepay_key]),
+        })
+    selected["Debt Terms"] = debt_terms
+
+    st.markdown("<div class='enterprise-section-title'>4. Debt Schedule</div>", unsafe_allow_html=True)
+    if debt_pct > 0 and str(debt_terms.get("Repayment Type")) == "Custom":
+        custom_editor = st.data_editor(
+            pd.DataFrame(selected["Custom Debt Schedule"]),
+            key=f"investment_financing_custom_debt_{case_id}_{selected_id}",
+            hide_index=True,
+            use_container_width=True,
+            disabled=["Period"],
+            column_config={
+                "Drawdown": st.column_config.NumberColumn("Drawdown", min_value=0.0, format="%,.0f", help="Amount actually borrowed from the committed facility in the period."),
+                "Principal Repayment": st.column_config.NumberColumn("Principal Repayment", min_value=0.0, format="%,.0f"),
+            },
+        )
+        selected["Custom Debt Schedule"] = custom_editor.to_dict("records")
+    debt_schedule_slot = st.container()
+
+    st.markdown("<div class='enterprise-section-title'>5. Covenants & Credit Metrics</div>", unsafe_allow_html=True)
+    st.caption("Select the calculation basis explicitly. Borrower / Company metrics remain unavailable where company-level cash or earnings are not present in this project model.")
+    covenant_editor = st.data_editor(
+        pd.DataFrame(selected["Covenants"]),
+        key=f"investment_financing_covenants_{case_id}_{selected_id}",
+        hide_index=True,
+        use_container_width=True,
+        disabled=["Covenant", "Direction"],
+        column_config={
+            "Calculation Basis": st.column_config.SelectboxColumn("Calculation Basis", options=["Project", "Relevant Business Scope", "Borrower / Company"], required=True),
+            "Limit": st.column_config.NumberColumn("Covenant Limit", min_value=0.0, format="%.2f"),
+        },
+    )
+    selected["Covenants"] = covenant_editor.to_dict("records")
+    covenant_slot = st.container()
+
+    st.markdown("<div class='enterprise-section-title'>6. Levered P&L</div>", unsafe_allow_html=True)
+    st.caption("Levered P&L shows Investment Scenario profit after financing costs. Debt interest is not inserted into either operating P&L.")
+    levered_slot = st.container()
+
+    st.markdown("<div class='enterprise-section-title'>7. Equity Cash Flow & Returns</div>", unsafe_allow_html=True)
+    override = selected["Equity Discount Rate Override"]
+    override_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_equity_override", bool(override.get("Enabled")))
+    st.checkbox("Override Cost of Equity for this funding scenario", key=override_key, help="Equity cash flow is discounted at Cost of Equity from the Model unless a documented scenario-specific rate is enabled.")
+    override["Enabled"] = bool(st.session_state[override_key])
+    if override["Enabled"]:
+        override_columns = st.columns([1, 2])
+        rate_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_equity_rate", safe_float(override.get("Rate")) * 100)
+        rationale_key = _investment_financing_widget(f"investment_financing_{case_id}_{selected_id}_equity_rationale", str(override.get("Rationale", "")))
+        override_columns[0].number_input("Equity Discount Rate %", min_value=0.0, step=0.1, key=rate_key)
+        override_columns[1].text_input("Override Rationale", key=rationale_key)
+        override["Rate"] = safe_float(st.session_state[rate_key]) / 100
+        override["Rationale"] = str(st.session_state[rationale_key])
+        if not override["Rationale"].strip():
+            st.warning("A short rationale is required for an equity discount-rate override.")
+    selected["Equity Discount Rate Override"] = override
+    equity_slot = st.container()
+
+    st.markdown("<div class='enterprise-section-title'>8. Funding Option Comparison</div>", unsafe_allow_html=True)
+    comparison_slot = st.container()
+
+    scenarios[selected_id] = selected
+    financing["scenarios"] = scenarios
+    model_inputs["financing"] = financing
+    save_investment_case_inputs(case_id, model_inputs)
+    operating_model = calculate_investment_model(model_inputs)
+    selected_result = calculate_financing_scenario(operating_model, financing, selected_id)
+    all_results = calculate_all_financing_scenarios(operating_model, financing)
+    metrics = selected_result["metrics"]
+
+    with kpi_slot:
+        st.markdown("**Selected Scenario Management View**")
+        cards = st.columns(4)
+        cards[0].metric("Equity Required", money(metrics["Equity Required"]), help="Total cash contributions required from equity holders across the modeled period.")
+        cards[1].metric("Equity IRR", _financing_percent(metrics["Equity IRR"]), help="Discount rate that sets the NPV of levered equity cash flows to zero.")
+        cards[2].metric("Peak Debt", money(metrics["Peak Debt"]), help="Highest outstanding debt and repayable alternative-funding balance in the modeled schedule.")
+        cards[3].metric("Minimum DSCR", _financing_ratio(metrics["Minimum DSCR"]), help="Lowest cash available for debt service divided by scheduled principal and interest.")
+        references = st.columns(4)
+        references[0].metric("Project NPV · Reference", money(metrics["Project NPV"]))
+        references[1].metric("Project IRR · Reference", _financing_percent(metrics["Project IRR"]))
+        references[2].metric("Corporate Hurdle Rate", pct(model_inputs["capital"].get("Corporate Hurdle Rate")))
+        references[3].metric("Marginal Reinvestment Return", pct(model_inputs["capital"].get("Marginal Reinvestment Return")))
+
+    with sources_uses_slot:
+        columns = st.columns(2)
+        with columns[0]:
+            st.markdown("**Uses**")
+            uses = selected_result["uses"].copy()
+            uses.loc[len(uses)] = {"Use": "Total Uses", "Amount": metrics["Total Uses"], "Type": "Calculated"}
+            render_finance_table(_format_financing_money_table(uses, {"Use", "Type"}), right_align={"Amount"})
+        with columns[1]:
+            st.markdown("**Sources**")
+            sources = selected_result["sources"].copy()
+            sources.loc[len(sources)] = {"Source": "Total Sources", "Amount": metrics["Total Sources"], "Type": "Calculated"}
+            render_finance_table(_format_financing_money_table(sources, {"Source", "Type"}), right_align={"Amount"})
+        reconciliation = st.columns(3)
+        reconciliation[0].metric("Total Uses", money(metrics["Total Uses"]))
+        reconciliation[1].metric("Total Sources", money(metrics["Total Sources"]))
+        reconciliation[2].metric("Funding Gap / Excess", money(metrics["Funding Gap / Excess Funding"]))
+        if abs(metrics["Funding Gap / Excess Funding"]) > 1:
+            st.warning("Total Sources do not equal Total Uses. Reconcile the funding mix and alternative funding lines.")
+        else:
+            st.caption("Sources and Uses are fully reconciled.")
+
+    with debt_schedule_slot:
+        if debt_pct <= 0:
+            st.caption("Debt schedule: Not applicable for this scenario.")
+        else:
+            debt_summary = st.columns(4)
+            debt_summary[0].metric("Debt Facility", money(metrics["Debt Funding"]), help="Maximum committed debt available from the lender under this modeled scenario.")
+            debt_summary[1].metric("All-in Interest Rate", pct(metrics["All-in Interest Rate"]), help="Total contractual interest rate before tax effects.")
+            debt_summary[2].metric("Cumulative Interest", money(metrics["Interest Cost"]))
+            debt_summary[3].metric("Debt Fully Repaid", str(metrics["Debt Fully Repaid Year"]))
+            debt_table = _format_financing_money_table(selected_result["debt_schedule"], {"Period"})
+            render_finance_table(debt_table, right_align=set(debt_table.columns) - {"Period"})
+            st.caption("Opening Debt + Drawdown - Principal Repayment = Closing Debt. Cash interest uses Average Debt, calculated as the simplified average outstanding principal for the year.")
+
+    with covenant_slot:
+        covenant_metrics = st.columns(4)
+        covenant_metrics[0].metric("Minimum DSCR", _financing_ratio(metrics["Minimum DSCR"]))
+        covenant_metrics[1].metric("Peak Net Debt / EBITDA", _financing_ratio(metrics["Peak Net Debt / EBITDA"]))
+        covenant_metrics[2].metric("Minimum Interest Coverage", _financing_ratio(metrics["Minimum Interest Coverage"]))
+        covenant_metrics[3].metric("Covenant Breaches", int(metrics["Covenant Breaches"]))
+        covenant_table = selected_result["covenants"].astype(object).copy()
+        if not covenant_table.empty:
+            for index, row in covenant_table.iterrows():
+                covenant = str(row["Covenant"])
+                if covenant == "Minimum Cash":
+                    covenant_table.at[index, "Metric Value"] = money(row["Metric Value"]) if row["Metric Value"] is not None else "N/A"
+                    covenant_table.at[index, "Covenant Limit"] = money(row["Covenant Limit"])
+                    covenant_table.at[index, "Headroom"] = money(row["Headroom"]) if row["Headroom"] is not None else "N/A"
+                else:
+                    covenant_table.at[index, "Metric Value"] = _financing_ratio(row["Metric Value"])
+                    covenant_table.at[index, "Covenant Limit"] = _financing_ratio(row["Covenant Limit"])
+                    covenant_table.at[index, "Headroom"] = _financing_ratio(row["Headroom"])
+            render_finance_table(covenant_table, exception_values={"Breach": "#fdecec"})
+        else:
+            st.caption("Covenants: Not applicable for this scenario.")
+        st.caption("Headroom is Limit - Actual for maximum covenants and Actual - Limit for minimum covenants. Positive headroom indicates compliance.")
+
+    with levered_slot:
+        levered = selected_result["levered_pnl"]
+        if not levered.empty:
+            levered_table = levered.pivot(index="Metric", columns="Period", values="Amount").reindex(["EBIT", "Interest Expense", "EBT", "Cash / Income Tax", "Net Income"]).reset_index()
+            render_finance_table(_format_financing_money_table(levered_table, {"Metric"}), right_align=set(levered_table.columns) - {"Metric"})
+
+    with equity_slot:
+        equity_metrics = st.columns(4)
+        equity_metrics[0].metric("Total Equity Required", money(metrics["Equity Required"]))
+        equity_metrics[1].metric("Equity NPV", money(metrics["Equity NPV"]), help="Present value of levered equity cash flow discounted at Cost of Equity or the documented override.")
+        equity_metrics[2].metric("Equity IRR", _financing_percent(metrics["Equity IRR"]))
+        equity_cash_flow = selected_result["equity_cash_flow"].copy()
+        equity_metrics[3].metric("Equity Payback", investment_payback_label(metrics["Equity Payback"]))
+        formatted_equity = _format_financing_money_table(equity_cash_flow, {"Period"})
+        render_finance_table(formatted_equity, right_align=set(formatted_equity.columns) - {"Period"})
+        st.caption("Equity Cash Flow starts from unlevered project cash flow, then adds financing inflows and deducts principal, cash interest, financing fees, and other funding uses. The interest tax shield is shown once and is not included in unlevered project returns.")
+
+    with comparison_slot:
+        comparison_rows = []
+        for scenario_id in scenario_ids:
+            result_metrics = all_results[scenario_id]["metrics"]
+            comparison_rows.append({
+                "Funding Scenario": scenarios[scenario_id].get("Scenario Name", scenario_id),
+                "Project NPV": money(result_metrics["Project NPV"]),
+                "Project IRR": _financing_percent(result_metrics["Project IRR"]),
+                "Funding Requirement": money(result_metrics["Total Funding Requirement"]),
+                "Equity Required": money(result_metrics["Equity Required"]),
+                "Debt Funding": money(result_metrics["Debt Funding"]),
+                "Equity IRR": _financing_percent(result_metrics["Equity IRR"]),
+                "Equity NPV": money(result_metrics["Equity NPV"]),
+                "Interest Cost": money(result_metrics["Interest Cost"]),
+                "Peak Debt": money(result_metrics["Peak Debt"]),
+                "Minimum DSCR": _financing_ratio(result_metrics["Minimum DSCR"]),
+                "Peak Net Debt / EBITDA": _financing_ratio(result_metrics["Peak Net Debt / EBITDA"]),
+                "Covenant Breach": "Yes" if result_metrics["Covenant Breaches"] else "No",
+                "Debt Repaid": str(result_metrics["Debt Fully Repaid Year"]),
+            })
+        comparison = pd.DataFrame(comparison_rows)
+        render_finance_table(comparison, right_align=set(comparison.columns) - {"Funding Scenario", "Covenant Breach", "Debt Repaid"}, exception_values={"Yes": "#fdecec"})
+        st.caption("Standalone Project Economics are identical across funding scenarios. Funding and Equity Economics show the return, leverage, liquidity, and covenant trade-offs; scenarios are not automatically ranked.")
+
+
 def page_investment_home() -> None:
     investment_top_navigation()
     render_investment_header("Investment Case", "Integrated investment modelling, financing and capital allocation.")
@@ -11529,8 +11920,7 @@ def page_investment_case() -> None:
     elif section == "Model":
         render_investment_model(case)
     elif section == "Financing":
-        st.markdown("<div class='enterprise-section-title'>Financing</div>", unsafe_allow_html=True)
-        st.info("Funding mix, sources and uses, debt schedule, covenants, and equity returns will be added in a future increment.")
+        render_investment_financing(case)
     elif section == "Sensitivity":
         st.markdown("<div class='enterprise-section-title'>Sensitivity</div>", unsafe_allow_html=True)
         st.info("Downside, Base, and Upside analysis across operating, timing, capital, and discount-rate drivers will be added in a future increment.")
