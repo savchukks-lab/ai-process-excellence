@@ -11076,6 +11076,23 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
     if case_id not in all_inputs or int(all_inputs.get(case_id, {}).get("schema_version", 0)) != INVESTMENT_SCHEMA_VERSION:
         all_inputs[case_id] = default_investment_inputs(case)
         st.session_state.investment_case_inputs = all_inputs
+    else:
+        current = deepcopy(all_inputs[case_id])
+        defaults = default_investment_inputs(case)
+        investment = current.setdefault("investment", {})
+        investment.setdefault("Sustaining CAPEX Source / Basis", defaults["investment"]["Sustaining CAPEX Source / Basis"])
+        investment.setdefault("Sustaining CAPEX Comment / Rationale", defaults["investment"]["Sustaining CAPEX Comment / Rationale"])
+        acquisition = current.setdefault("acquisition", {})
+        if "Target Working Capital" in acquisition and "Opening / Transaction Working Capital Reference" not in acquisition:
+            acquisition["Opening / Transaction Working Capital Reference"] = acquisition.pop("Target Working Capital")
+        acquisition.setdefault("Target Gross Margin %", deepcopy(defaults["acquisition"]["Target Gross Margin %"]))
+        current.setdefault("operating_cost_input_methods", deepcopy(defaults["operating_cost_input_methods"]))
+        current.setdefault("operating_cost_schedules", deepcopy(defaults["operating_cost_schedules"]))
+        debt_weight = min(1.0, max(0.0, safe_float(current.setdefault("capital", {}).get("Target Debt %", .35))))
+        current["capital"]["Target Equity %"] = 1.0 - debt_weight
+        if current != all_inputs[case_id]:
+            all_inputs[case_id] = current
+            st.session_state.investment_case_inputs = all_inputs
     return deepcopy(all_inputs[case_id])
 
 
@@ -11352,11 +11369,35 @@ def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[
     top[0].text_input("Case Name", key=f"investment_{case_id}_case_name")
     top[1].text_input("Currency", key=f"investment_{case_id}_currency")
     archetype_labels = {
-        CASE_ARCHETYPES[0]: "Capacity Expansion — Capacity, volume and unit economics",
-        CASE_ARCHETYPES[1]: "Digital / AI / Software — Implementation, recurring cost and productivity / savings",
-        CASE_ARCHETYPES[2]: "Business Acquisition — Target economics, synergies and integration",
+        CASE_ARCHETYPES[0]: "Capacity Expansion\nCapacity, volume and unit economics",
+        CASE_ARCHETYPES[1]: "Digital / AI / Software\nImplementation, recurring cost and productivity / savings",
+        CASE_ARCHETYPES[2]: "Business Acquisition\nTarget economics, synergies and integration",
     }
     st.markdown("**Case Archetype — model input template**")
+    st.markdown(
+        """
+        <style>
+        div[role="radiogroup"][aria-label="Case Archetype"] {
+            align-items: stretch;
+            gap: .65rem;
+        }
+        div[role="radiogroup"][aria-label="Case Archetype"] > label {
+            border: 1px solid #dbe2ea;
+            border-radius: 8px;
+            padding: .7rem .8rem;
+            min-height: 72px;
+            align-items: flex-start;
+            background: #ffffff;
+        }
+        div[role="radiogroup"][aria-label="Case Archetype"] > label p {
+            white-space: pre-line;
+            line-height: 1.35;
+            margin: 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.radio(
         "Case Archetype",
         CASE_ARCHETYPES,
@@ -11371,9 +11412,9 @@ def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[
 
     st.markdown("**Value Creation Drivers**")
     selected_seed = set(settings.get("Value Creation Drivers", []))
-    driver_columns = st.columns(4)
     selected_drivers: list[str] = []
-    for column, driver in zip(driver_columns, VALUE_CREATION_DRIVERS):
+    driver_columns = [*st.columns([1, 1, 1.8]), *st.columns([1, 1, 1.8])]
+    for column, driver in zip([driver_columns[0], driver_columns[1], driver_columns[3], driver_columns[4]], VALUE_CREATION_DRIVERS):
         driver_key = re.sub(r"[^a-z0-9]+", "_", driver.lower()).strip("_")
         widget_key = f"investment_{case_id}_driver_{driver_key}"
         investment_seed_widget(widget_key, driver in selected_seed)
@@ -11381,17 +11422,17 @@ def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[
             selected_drivers.append(driver)
     st.session_state[f"investment_{case_id}_drivers"] = selected_drivers
     default_drivers = set(archetype_default_drivers(selected_archetype))
-    template_name = archetype_labels[selected_archetype].split(" — ", 1)[0]
+    template_name = archetype_labels[selected_archetype].split("\n", 1)[0]
     template_status = f"{template_name} · User Customized" if set(selected_drivers) != default_drivers else template_name
     st.caption(f"Template status: {template_status}")
-    st.caption("Archetype sets the default input structure. Additional value drivers can be enabled for case-specific economics.")
+    st.caption("Archetype sets the default input structure. Additional drivers can be enabled for case-specific economics.")
     st.text_input("Financial Scope", key=f"investment_{case_id}_scope", help="The relevant business scope affected by the investment. Baseline and working capital should reflect this scope, not necessarily the consolidated company.")
-    middle = st.columns(4)
+    middle = st.columns([.75, .85, 1.15, 1.25, 1.5])
     middle[0].number_input("Base Year", min_value=2020, max_value=2050, step=1, key=f"investment_{case_id}_base_year")
     middle[1].selectbox("Forecast Horizon", [5,10], format_func=lambda v:f"{v} years", key=f"investment_{case_id}_horizon")
     middle[2].date_input("Investment Start Date", key=f"investment_{case_id}_investment_start")
     middle[3].date_input("Operational / Commercial Start Date", key=f"investment_{case_id}_operational_start")
-    bottom = st.columns(3)
+    bottom = st.columns([1.05, .9, .8, 1.75])
     bottom[0].number_input("Applicable Marginal Corporate Tax Rate %", min_value=0.0, max_value=100.0, step=.5, key=f"investment_{case_id}_tax_rate", help="Tax rate applicable to incremental project taxable income in the legal entity or jurisdiction bearing the project economics. Do not use consolidated group ETR unless appropriate.")
     bottom[1].number_input("Annual Planning Inflation %", min_value=-20.0, max_value=100.0, step=.5, key=f"investment_{case_id}_inflation", help="Forward-looking annual inflation assumption used for nominal escalation where no line-specific growth assumption is provided.")
     bottom[2].text_input("Model Basis", value="Nominal", disabled=True, key=f"investment_{case_id}_basis_display", help="Cash flows include expected inflation/escalation and are discounted using nominal discount rates.")
@@ -11407,7 +11448,7 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     investment_seed_widget(f"investment_{case_id}_coe_method", capital.get("Cost of Equity Method", methods[0]))
     method = st.selectbox("Cost of Equity Method", methods, key=f"investment_{case_id}_coe_method")
     capital["Cost of Equity Method"] = method
-    percent_fields = ["Risk-Free Rate","Equity Risk Premium","Country Risk Premium","Corporate Cost of Equity","Manual Cost of Equity","Pre-tax Cost of Debt","Target Debt %","Target Equity %","Corporate Hurdle Rate","Existing Business ROIC","Marginal Reinvestment Return","Treasury / Cash Yield"]
+    percent_fields = ["Risk-Free Rate","Equity Risk Premium","Country Risk Premium","Corporate Cost of Equity","Manual Cost of Equity","Pre-tax Cost of Debt","Target Debt %","Corporate Hurdle Rate","Existing Business ROIC","Marginal Reinvestment Return","Treasury / Cash Yield"]
     for field in percent_fields: investment_seed_widget(f"investment_{case_id}_capital_{field}", safe_float(capital.get(field,0))*100)
     for field in ["Beta","Unlevered Beta","Relevered Beta"]: investment_seed_widget(f"investment_{case_id}_capital_{field}", safe_float(capital.get(field,0)))
     if method.startswith("CAPM"):
@@ -11428,16 +11469,25 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     else:
         st.number_input("Manual Cost of Equity %", step=.1, key=f"investment_{case_id}_capital_Manual Cost of Equity")
     st.markdown("**Cost of Debt & Capital Structure**")
-    st.caption(f"Applicable marginal corporate tax rate: {pct(inputs['settings'].get('Applicable Tax Rate', 0))}. Target debt/equity reflects long-term capital structure, not necessarily this project's funding mix.")
-    debt = st.columns(4)
-    for column, field in zip(debt, ["Pre-tax Cost of Debt", "Target Debt %", "Target Equity %", "Corporate Hurdle Rate"]):
-        label = field if field.endswith("%") else f"{field} %"
-        column.number_input(label, step=0.1, key=f"investment_{case_id}_capital_{field}")
+    st.caption(f"Applicable marginal corporate tax rate: {pct(inputs['settings'].get('Applicable Tax Rate', 0))}.")
+    debt = st.columns([1.1, .9, .9, 1.0, 1.4])
+    debt[0].number_input(
+        "Pre-tax Cost of Debt %",
+        step=0.1,
+        key=f"investment_{case_id}_capital_Pre-tax Cost of Debt",
+        help="Expected borrowing rate on debt with comparable currency, maturity and credit risk, before the corporate tax shield. Use current lender indications, comparable corporate borrowing rates, or Reference Rate + Credit Spread rather than a historical average unless still representative.",
+    )
+    debt[1].number_input("Target Debt %", min_value=0.0, max_value=100.0, step=0.1, key=f"investment_{case_id}_capital_Target Debt %")
+    target_equity = 100.0 - safe_float(st.session_state[f"investment_{case_id}_capital_Target Debt %"])
+    debt[2].metric("Target Equity %", f"{target_equity:.1f}%")
+    debt[3].number_input("Corporate Hurdle Rate %", step=0.1, key=f"investment_{case_id}_capital_Corporate Hurdle Rate")
+    st.caption("Target capital structure is used for WACC and represents the company’s long-term financing mix. It is not necessarily the funding mix of this specific project; project funding is modeled separately in Financing.")
     st.markdown("**Management Benchmarks**")
-    benchmark = st.columns(3)
+    benchmark = st.columns([1, 1.15, 1, 1.5])
     for column, field in zip(benchmark, ["Existing Business ROIC", "Marginal Reinvestment Return", "Treasury / Cash Yield"]):
         column.number_input(f"{field} %", step=0.1, key=f"investment_{case_id}_capital_{field}")
     for field in percent_fields: capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])/100
+    capital["Target Equity %"] = 1.0 - capital["Target Debt %"]
     for field in ["Beta","Unlevered Beta","Relevered Beta"]: capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])
     inputs["capital"] = capital
     preview = calculate_investment_model(inputs)
@@ -11447,8 +11497,6 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     strip[1].metric("Hurdle Rate", pct(capital["Corporate Hurdle Rate"]))
     strip[2].metric("Existing ROIC", pct(capital["Existing Business ROIC"]))
     strip[3].metric("Marginal Return", pct(capital["Marginal Reinvestment Return"]))
-    if not preview["capital_structure_valid"]:
-        st.warning("Target Debt % and Target Equity % must total 100%.")
     with st.expander("Assumption source, methodology and rationale", expanded=False):
         for field in ["Source / Methodology", "Effective Date", "Rationale"]:
             key=f"investment_{case_id}_capital_meta_{field}";investment_seed_widget(key,str(capital.get(field,"")));st.text_input(field,key=key);capital[field]=st.session_state[key]
@@ -11460,15 +11508,14 @@ def render_investment_model(case: dict[str, object]) -> None:
     case_id = str(case.get("Case ID", ""))
     inputs = investment_case_inputs(case)
     st.markdown("**How this model works**")
-    process_steps = st.columns(5)
-    for column, label in zip(process_steps, [
+    for label in [
         "1. Define Investment",
         "2. Model Business Impact",
         "3. Set Cost of Capital",
         "4. Compare Baseline vs Investment",
         "5. Calculate Cash Return",
-    ]):
-        column.caption(label)
+    ]:
+        st.markdown(f"<div style='padding:.12rem 0;font-size:.88rem;color:#344054'>{escape(label)}</div>", unsafe_allow_html=True)
     st.caption("Build the standalone economics of the investment before considering financing. The selected case archetype determines the relevant operating drivers; all cases then flow into the same financial model.")
     st.markdown("### INVESTMENT ASSUMPTIONS")
     st.caption("Editable assumptions · Changes flow through the controlled investment model.")
@@ -11494,14 +11541,27 @@ def render_investment_model(case: dict[str, object]) -> None:
     if total_initial <= 0:
         st.warning("At least one applicable Investment Use with a positive amount is required to calculate project returns.")
     investment_seed_widget(f"investment_{case_id}_useful_life", int(inputs["investment"].get("Useful Life",10)))
-    st.number_input("Useful Life (years)", min_value=1, max_value=40, step=1, key=f"investment_{case_id}_useful_life")
+    useful_life_columns = st.columns([.8, 3.2])
+    useful_life_columns[0].number_input("Useful Life (years)", min_value=1, max_value=40, step=1, key=f"investment_{case_id}_useful_life")
     inputs["investment"]["Useful Life"] = int(st.session_state[f"investment_{case_id}_useful_life"])
-    sustaining_rows = [{"Year":y,"Amount":safe_float(inputs["investment"]["Sustaining CAPEX"].get(y)),"Source / Basis":"Long-range plan","Comment":"Maintenance capital"} for y in years]
+    sustaining_rows = [{"Year":y,"Amount":safe_float(inputs["investment"]["Sustaining CAPEX"].get(y))} for y in years]
     st.markdown("**Sustaining CAPEX**")
     st.caption("Recurring capital expenditure required to maintain the operating capability created by the project after operational start, excluding future expansion projects.")
     sustaining = render_investment_record_editor(case_id, f"sustaining_{len(years)}", sustaining_rows, ["Year"])
     inputs["investment"]["Sustaining CAPEX"].update({str(r.get("Year")):safe_float(r.get("Amount")) for r in sustaining})
+    sustaining_meta = st.columns([1.15, 1.85])
+    source_key = f"investment_{case_id}_sustaining_source"
+    comment_key = f"investment_{case_id}_sustaining_comment"
+    investment_seed_widget(source_key, str(inputs["investment"].get("Sustaining CAPEX Source / Basis", "")))
+    investment_seed_widget(comment_key, str(inputs["investment"].get("Sustaining CAPEX Comment / Rationale", "")))
+    sustaining_meta[0].text_input("Source / Basis", key=source_key)
+    sustaining_meta[1].text_input("Comment / Rationale", key=comment_key)
+    inputs["investment"]["Sustaining CAPEX Source / Basis"] = st.session_state[source_key]
+    inputs["investment"]["Sustaining CAPEX Comment / Rationale"] = st.session_state[comment_key]
     if "Asset / CAPEX Avoidance" in set(inputs["settings"].get("Value Creation Drivers", [])):
+        st.caption("Capital expenditure that would otherwise be required in the Baseline Case but is avoided or deferred as a direct result of the proposed investment.")
+        st.caption("Example: A new automation platform implemented today avoids a planned $4m legacy-system replacement in Y4.")
+        st.caption("Avoided CAPEX is a benefit in the year the baseline CAPEX would otherwise occur. It does not reduce Initial Investment.")
         inputs["investment"] = render_investment_driver_editor(case_id,"capex_avoidance","Avoided Future CAPEX",inputs["investment"],["CAPEX Avoidance"],years)
 
     st.markdown("<div class='enterprise-section-title'>3. Archetype-Specific Business Drivers</div>", unsafe_allow_html=True)
@@ -11539,9 +11599,12 @@ def render_investment_model(case: dict[str, object]) -> None:
     else:
         st.caption("Investment Scenario = Acquirer Baseline + Target + Synergies - Integration Effects.")
         inputs["revenue_based"] = render_investment_driver_editor(case_id,"acquirer_base","Acquirer Baseline",inputs["revenue_based"],["Baseline Revenue","Revenue Growth %"],years)
-        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone and Synergy Inputs",inputs["acquisition"],["Target Revenue","Target EBITDA","Target D&A","Target EBIT","Target Working Capital","Revenue Synergies","Cost Synergies","Synergy Ramp %","One-off Integration Costs"],years)
+        st.caption("Revenue Synergies are the full run-rate incremental revenue opportunity. Cost Synergies are the full run-rate recurring cost savings opportunity.")
+        st.caption("Synergy Ramp % is the percentage of the full run-rate revenue and cost synergies expected to be realized in each year. For example, 25% / 55% / 80% / 100% represents partial realization until full run-rate is reached; the ramp is applied once.")
+        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone and Synergy Inputs",inputs["acquisition"],["Target Revenue","Target Gross Margin %","Target EBITDA","Target D&A","Target EBIT","Revenue Synergies","Cost Synergies","Synergy Ramp %","One-off Integration Costs"],years)
+        st.caption("Projected working capital is calculated consistently from DSO, DIO and DPO. Any opening or transaction working-capital reference is not used as a second forecast input.")
 
-    if "Cost Reduction" in enabled:
+    if "Cost Reduction" in enabled and archetype != CASE_ARCHETYPES[2]:
         st.markdown("**Savings / Benefits Register**")
         st.caption("Realized savings build from one-third in Y1 to two-thirds in Y2 and the full run-rate from Y3 onward.")
         rows=[]
@@ -11554,21 +11617,32 @@ def render_investment_model(case: dict[str, object]) -> None:
 
     st.markdown("<div class='enterprise-section-title'>4. Operating Cost Structure</div>", unsafe_allow_html=True)
     definitions={
-        "personnel": ("Personnel Costs", "Headcount-related costs, including salaries, benefits and directly attributable people costs."),
-        "variable": ("Non-Personnel Variable Costs", "Operating costs that change with the primary activity driver or volume."),
-        "fixed": ("Non-Personnel Fixed Costs", "Operating costs that remain stable within the relevant activity range."),
+        "personnel": ("Personnel Costs", "Shown separately because headcount is often step-fixed rather than purely variable or fixed."),
+        "variable": ("Non-Personnel Variable Costs", "Changes with the primary activity driver or volume."),
+        "fixed": ("Non-Personnel Fixed Costs", "Remains broadly unchanged within the relevant operating range."),
     }
     for group, (title, definition) in definitions.items():
         current_rows = inputs["operating_costs"].get(group, [])
         has_relevant_rows = any(bool(row.get("Applicable", True)) for row in current_rows)
         with st.expander(title, expanded=has_relevant_rows):
             st.caption(definition)
-            rows=[]
-            for row in current_rows: item=dict(row);item["Annual Growth %"]=safe_float(item.get("Annual Growth %"))*100;rows.append(item)
-            rows=render_investment_record_editor(case_id,f"cost_{group}",rows)
-            for row in rows: row["Annual Growth %"]=safe_float(row.get("Annual Growth %"))/100
-            inputs["operating_costs"][group]=rows
-            st.caption("Use the add-row control to add a cost line.")
+            method_key = f"investment_{case_id}_cost_method_{group}"
+            current_method = str(inputs.get("operating_cost_input_methods", {}).get(group, "Y1 + Growth"))
+            investment_seed_widget(method_key, current_method)
+            method = st.radio("Input Method", ["Y1 + Growth", "Annual Schedule"], horizontal=True, key=method_key)
+            inputs.setdefault("operating_cost_input_methods", {})[group] = method
+            if method == "Annual Schedule":
+                st.caption("Enter the complete Baseline and Scenario cost directly for each forecast year.")
+                schedules = inputs.setdefault("operating_cost_schedules", {}).setdefault(group, {"Baseline Cost": {year: 0.0 for year in INVESTMENT_YEARS}, "Scenario Cost": {year: 0.0 for year in INVESTMENT_YEARS}})
+                inputs["operating_cost_schedules"][group] = render_investment_driver_editor(case_id, f"cost_schedule_{group}", "Annual Cost Schedule", schedules, ["Baseline Cost", "Scenario Cost"], years)
+            else:
+                st.caption("Baseline Y1 / Scenario Y1 plus Annual Growth % determines future-year values.")
+                rows=[]
+                for row in current_rows: item=dict(row);item["Annual Growth %"]=safe_float(item.get("Annual Growth %"))*100;rows.append(item)
+                rows=render_investment_record_editor(case_id,f"cost_{group}",rows)
+                for row in rows: row["Annual Growth %"]=safe_float(row.get("Annual Growth %"))/100
+                inputs["operating_costs"][group]=rows
+                st.caption("Use the add-row control to add a cost line.")
 
     st.markdown("<div class='enterprise-section-title'>5. Cost of Capital & Investment Thresholds</div>", unsafe_allow_html=True)
     inputs = render_investment_capital(case_id, inputs)

@@ -56,6 +56,13 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
         for mode in ("Unit-based", "Revenue-based"):
             inputs["settings"]["Revenue Modeling Mode"] = mode
             assert calculate_investment_model(inputs)["years"]
+    if archetype == CASE_ARCHETYPES[2]:
+        acquisition_result = calculate_investment_model(inputs)
+        acquisition_pnl = acquisition_result["scenario_pnl"].set_index("Metric")
+        assert 0 < acquisition_pnl.at["COGS", "Y1"]
+        assert 0 < acquisition_pnl.at["Gross Margin %", "Y1"] < 1
+        assert "Target Working Capital" not in inputs["acquisition"]
+        assert "Opening / Transaction Working Capital Reference" in inputs["acquisition"]
 
     app = AppTest.from_file(str(APP_PATH), default_timeout=90)
     app.session_state["current_module"] = "investment"
@@ -122,6 +129,15 @@ for group, field, value in (
     assert_clean(app, f"{group} cost first edit")
     assert app.session_state["investment_case_inputs"][case_id]["operating_costs"][group][0][field] == value
 
+personnel_method_key = f"investment_{case_id}_cost_method_personnel"
+next(widget for widget in app.radio if widget.key == personnel_method_key).set_value("Annual Schedule").run()
+assert_clean(app, "Personnel annual schedule mode")
+personnel_schedule_key = f"investment_driver_{case_id}_cost_schedule_personnel_monetary_value_10"
+app.session_state[personnel_schedule_key] = {"edited_rows": {1: {"Y1": 5_250_000}}, "added_rows": [], "deleted_rows": []}
+app.run()
+assert_clean(app, "Personnel annual schedule first edit")
+assert app.session_state["investment_case_inputs"][case_id]["operating_cost_schedules"]["personnel"]["Scenario Cost"]["Y1"] == 5_250_000
+
 capex_driver_key = f"investment_{case_id}_driver_asset_capex_avoidance"
 next(widget for widget in app.checkbox if widget.key == capex_driver_key).set_value(True).run()
 assert_clean(app, "CAPEX avoidance enabled")
@@ -149,10 +165,11 @@ acquisition_app.session_state[f"investment_case_section_{acquisition_case['Case 
 acquisition_app.run()
 assert_clean(acquisition_app, "Acquisition first-edit setup")
 acquisition_editor_key = f"investment_driver_{acquisition_case['Case ID']}_acquisition_monetary_value_10"
-acquisition_app.session_state[acquisition_editor_key] = {"edited_rows": {5: {"Y1": 3_750_000}}, "added_rows": [], "deleted_rows": []}
+acquisition_app.session_state[acquisition_editor_key] = {"edited_rows": {4: {"Y1": 3_750_000}}, "added_rows": [], "deleted_rows": []}
 acquisition_app.run()
 assert_clean(acquisition_app, "Acquisition synergy first edit")
 assert acquisition_app.session_state["investment_case_inputs"][acquisition_case["Case ID"]]["acquisition"]["Revenue Synergies"]["Y1"] == 3_750_000
+assert not any(widget.key == f"investment_records_{acquisition_case['Case ID']}_savings" for widget in acquisition_app.dataframe)
 
 for case in cases:
     case_id = case["Case ID"]
