@@ -56,6 +56,67 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
         for mode in ("Unit-based", "Revenue-based"):
             inputs["settings"]["Revenue Modeling Mode"] = mode
             assert calculate_investment_model(inputs)["years"]
+
+        inputs = default_investment_inputs(case)
+        inputs["capacity_input_methods"]["Baseline Volume"] = "Y1 + Growth"
+        inputs["capacity"]["Baseline Volume"]["Y1"] = 720_000
+        inputs["capacity_growth_rates"]["Baseline Volume"] = 0.10
+        growth_result = calculate_investment_model(inputs)
+        growth_bridge = growth_result["capacity_bridge"].set_index("Metric")
+        assert round(growth_bridge.at["Baseline Volume", "Y2"]) == 792_000
+
+        annual_inputs = deepcopy(inputs)
+        annual_inputs["capacity_input_methods"]["Baseline Volume"] = "Annual Schedule"
+        annual_inputs["capacity"]["Baseline Volume"]["Y2"] = 765_432
+        annual_result = calculate_investment_model(annual_inputs)
+        annual_bridge = annual_result["capacity_bridge"].set_index("Metric")
+        assert annual_bridge.at["Baseline Volume", "Y2"] == 765_432
+        assert annual_bridge.at["Baseline Idle Capacity", "Y2"] == annual_bridge.at["Baseline Capacity", "Y2"] - 765_432
+        assert annual_bridge.at["Scenario Idle Capacity", "Y2"] == annual_bridge.at["Total Scenario Capacity", "Y2"] - annual_bridge.at["Scenario Volume", "Y2"]
+        assert abs(annual_bridge.at["Baseline Utilization %", "Y2"] - annual_bridge.at["Baseline Volume", "Y2"] / annual_bridge.at["Baseline Capacity", "Y2"]) < 1e-9
+        assert abs(annual_bridge.at["Scenario Utilization %", "Y2"] - annual_bridge.at["Scenario Volume", "Y2"] / annual_bridge.at["Total Scenario Capacity", "Y2"]) < 1e-9
+
+        scenario_pnl = annual_result["scenario_pnl"].set_index("Metric")
+        assert scenario_pnl.at["COGS", "Y1"] > 0
+        assert 0 < scenario_pnl.at["Gross Margin %", "Y1"] < 1
+        assert (annual_result["working_capital"]["Inventory"] > 0).all()
+        assert (annual_result["working_capital"]["Accounts Payable"] > 0).all()
+
+        revenue_inputs = deepcopy(inputs)
+        revenue_inputs["settings"]["Revenue Modeling Mode"] = "Revenue-based"
+        revenue_inputs["revenue_input_method"] = "Y1 + Growth"
+        revenue_inputs["revenue_based"]["Baseline Revenue"]["Y1"] = 20_000_000
+        revenue_inputs["revenue_growth_rate"] = 0.05
+        revenue_growth_result = calculate_investment_model(revenue_inputs)
+        assert round(revenue_growth_result["baseline_pnl"].set_index("Metric").at["Revenue", "Y2"]) == 21_000_000
+        revenue_inputs["revenue_input_method"] = "Annual Schedule"
+        revenue_inputs["revenue_based"]["Baseline Revenue"]["Y2"] = 22_222_222
+        revenue_annual_result = calculate_investment_model(revenue_inputs)
+        assert revenue_annual_result["baseline_pnl"].set_index("Metric").at["Revenue", "Y2"] == 22_222_222
+
+        ramp_expectations = {
+            "Immediate": (720_000, 720_000, 720_000),
+            "1-year ramp": (360_000, 720_000, 720_000),
+            "2-year ramp": (240_000, 480_000, 720_000),
+            "Custom": (144_000, 432_000, 648_000),
+        }
+        for ramp_profile, expected in ramp_expectations.items():
+            savings_inputs = default_investment_inputs(case)
+            savings_inputs["settings"]["Value Creation Drivers"] = ["Cost Reduction"]
+            savings_inputs["savings_register"] = [{
+                "Initiative": "Ramp test",
+                "Gross Run-rate Saving": 900_000,
+                "Realization %": 0.80,
+                "Ramp Profile": ramp_profile,
+                "Custom Y1 Ramp %": 0.20,
+                "Custom Y2 Ramp %": 0.60,
+                "Custom Y3+ Ramp %": 0.90,
+                "Source / Basis": "Test",
+                "Comment": "",
+            }]
+            savings_result = calculate_investment_model(savings_inputs)
+            realized = savings_result["drivers"]["Realized Savings"]
+            assert tuple(round(realized[year]) for year in ("Y1", "Y2", "Y3")) == expected
     if archetype == CASE_ARCHETYPES[2]:
         acquisition_result = calculate_investment_model(inputs)
         acquisition_pnl = acquisition_result["scenario_pnl"].set_index("Metric")
@@ -102,8 +163,8 @@ app.run()
 assert_clean(app, "Sustaining CAPEX first edit")
 assert app.session_state["investment_case_inputs"][case_id]["investment"]["Sustaining CAPEX"]["Y1"] == 360_000
 
-capacity_key = f"investment_driver_{case_id}_capacity_count_10"
-app.session_state[capacity_key] = {"edited_rows": {3: {"Y1": 810_000}}, "added_rows": [], "deleted_rows": []}
+capacity_key = f"investment_driver_{case_id}_capacity_schedule_count_10"
+app.session_state[capacity_key] = {"edited_rows": {1: {"Y1": 810_000}}, "added_rows": [], "deleted_rows": []}
 app.run()
 assert_clean(app, "Capacity first edit")
 assert app.session_state["investment_case_inputs"][case_id]["capacity"]["Scenario Volume"]["Y1"] == 810_000
@@ -113,10 +174,10 @@ next(widget for widget in app.checkbox if widget.key == custom_driver_key).set_v
 assert_clean(app, "Customized value drivers")
 assert "Cost Reduction" in app.session_state["investment_case_inputs"][case_id]["settings"]["Value Creation Drivers"]
 savings_key = f"investment_records_{case_id}_savings"
-app.session_state[savings_key] = {"edited_rows": {0: {"Gross Saving": 700_000}}, "added_rows": [], "deleted_rows": []}
+app.session_state[savings_key] = {"edited_rows": {0: {"Gross Run-rate Saving": 700_000}}, "added_rows": [], "deleted_rows": []}
 app.run()
 assert_clean(app, "Savings register first edit")
-assert app.session_state["investment_case_inputs"][case_id]["savings_register"][0]["Gross Saving"] == 700_000
+assert app.session_state["investment_case_inputs"][case_id]["savings_register"][0]["Gross Run-rate Saving"] == 700_000
 
 for group, field, value in (
     ("personnel", "Scenario Y1", 5_000_000),

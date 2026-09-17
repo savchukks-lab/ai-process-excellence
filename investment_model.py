@@ -67,7 +67,7 @@ def _savings(archetype: str) -> list[dict[str, Any]]:
     if archetype == CASE_ARCHETYPES[1]: rows = [("Personnel", 8_500_000, "Process automation", 3_100_000, .75), ("Logistics", 6_200_000, "Routing optimization", 900_000, .8), ("IT", 4_000_000, "Application consolidation", 650_000, .7)]
     elif archetype == CASE_ARCHETYPES[2]: rows = [("Procurement", 18_000_000, "Combined purchasing scale", 2_000_000, .6), ("Personnel", 14_000_000, "Shared-service consolidation", 2_600_000, .55), ("Logistics", 9_000_000, "Network consolidation", 1_100_000, .5)]
     else: rows = [("Manufacturing", 15_000_000, "Yield and line efficiency", 650_000, .65)]
-    return [{"Applicable": True, "Category": c, "Baseline Cost / Cost Pool": p, "Saving Mechanism": m, "Gross Saving": g, "Realization %": r, "Realized Saving": g*r, "Source / Basis": "Functional estimate", "Comment": "Annual run-rate at maturity"} for c,p,m,g,r in rows]
+    return [{"Applicable": True, "Category": c, "Baseline Cost / Cost Pool": p, "Saving Mechanism": m, "Gross Run-rate Saving": g, "Realization %": r, "Ramp Profile": "2-year ramp", "Custom Y1 Ramp %": 1/3, "Custom Y2 Ramp %": 2/3, "Custom Y3+ Ramp %": 1.0, "Realized Saving": g*r, "Source / Basis": "Functional estimate", "Comment": "Annual run-rate at maturity"} for c,p,m,g,r in rows]
 
 
 def _costs(archetype: str) -> dict[str, list[dict[str, Any]]]:
@@ -76,7 +76,7 @@ def _costs(archetype: str) -> dict[str, list[dict[str, Any]]]:
         "personnel": [
             {"Applicable": True, "Cost Line": "Operations", "Baseline Y1": 6_200_000 if digital else 4_400_000, "Scenario Y1": 6_000_000 if digital else 4_900_000, "Annual Growth %": .025, "Source / Basis": "Operating plan", "Comment": "Relevant-scope personnel"},
             {"Applicable": acquisition, "Cost Line": "Other Personnel", "Baseline Y1": 1_500_000, "Scenario Y1": 5_200_000, "Annual Growth %": .025, "Source / Basis": "Target diligence", "Comment": "Target organization"}],
-        "variable": [{"Applicable": True, "Cost Line": "Usage-based Cloud / Processing" if digital else "Raw Materials", "Baseline Unit Cost": 0.0 if digital or acquisition else 29.0, "Scenario Unit Cost": 0.0 if digital or acquisition else 29.0, "Baseline Y1": 1_100_000 if digital else 18_432_000 if acquisition else 0.0, "Scenario Y1": 1_650_000 if digital else 18_432_000 if acquisition else 0.0, "Annual Growth %": .02, "Source / Basis": "Target diligence" if acquisition else "Operations estimate", "Comment": "Activity-linked cost"}],
+        "variable": [{"Applicable": True, "Cost Line": "Usage-based Cloud / Processing" if digital else "Raw Materials", "Baseline Unit Cost": 0.0 if digital or acquisition else 29.0, "Scenario Unit Cost": 0.0 if digital or acquisition else 27.5, "Baseline Y1": 1_100_000 if digital else 18_432_000 if acquisition else 0.0, "Scenario Y1": 1_650_000 if digital else 18_432_000 if acquisition else 0.0, "Annual Growth %": .02, "Source / Basis": "Target diligence" if acquisition else "Operations estimate", "Comment": "Activity-linked cost"}],
         "fixed": [
             {"Applicable": True, "Cost Line": "Maintenance Contracts", "Baseline Y1": 1_200_000, "Scenario Y1": 1_450_000 if digital else 1_650_000, "Annual Growth %": .025, "Source / Basis": "Supplier estimate", "Comment": "Annual service envelope"},
             {"Applicable": True, "Cost Line": "Software Licenses", "Baseline Y1": 500_000, "Scenario Y1": 800_000 if digital else 550_000, "Annual Growth %": .025, "Source / Basis": "Commercial proposal", "Comment": "Fixed recurring licenses"},
@@ -116,8 +116,12 @@ def default_investment_inputs(case: dict[str, Any]) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "settings": {"Case Name": str(case.get("Investment Case Name", "New Investment Case")), "Case Archetype": archetype, "Value Creation Drivers": archetype_default_drivers(archetype), "Financial Scope": str(case.get("Business Unit / Market", "Region A Operations")), "Currency": "USD", "Base Year": 2026, "Forecast Horizon": 10, "Investment Start Date": date(2026,10,1), "Operational Start Date": date(2027,7,1), "Applicable Tax Rate": .24, "Planning Inflation": .025, "Model Basis": "Nominal", "Model Version": "1.0", "As Of Date": date(2026,9,15), "Revenue Modeling Mode": "Unit-based"},
         "investment": {"uses": _uses(archetype), "Sustaining CAPEX": _series(220_000 if digital else 350_000, .02), "Sustaining CAPEX Source / Basis": "Long-range plan", "Sustaining CAPEX Comment / Rationale": "Maintenance capital", "CAPEX Avoidance": _series(0), "Useful Life": 10},
-        "capacity": {"Baseline Capacity": _series(900_000,.01), "Added Capacity from Investment": _series(360_000), "Baseline Volume": _series(720_000,.025), "Scenario Volume": _annual([792000,890000,970000,1045000,1085000,1105000,1120000,1130000,1140000,1150000]), "Baseline Net Revenue per Unit": _series(64,.02), "Net Price Escalation %": {y:.02 for y in INVESTMENT_YEARS}},
-        "revenue_based": {"Baseline Revenue": _series(60_000_000 if digital else 46_080_000,.035), "Revenue Growth %": {y:.035 for y in INVESTMENT_YEARS}, "Incremental Revenue / Revenue Uplift": _annual([0,1e6,2.5e6,4e6,5.5e6,6e6,6.5e6,7e6,7.5e6,8e6])},
+        "capacity": {"Baseline Capacity": _series(900_000,.01), "Added Capacity from Investment": _series(360_000), "Baseline Volume": _series(720_000,.025), "Scenario Volume": _annual([792000,890000,970000,1045000,1085000,1105000,1120000,1130000,1140000,1150000]), "Baseline Net Revenue per Unit": _series(64,.02)},
+        "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Baseline Volume": "Y1 + Growth", "Baseline Net Revenue per Unit": "Y1 + Growth"},
+        "capacity_growth_rates": {"Baseline Capacity": .01, "Baseline Volume": .025, "Baseline Net Revenue per Unit": .02},
+        "revenue_based": {"Baseline Revenue": _series(60_000_000 if digital else 46_080_000,.035), "Incremental Revenue / Revenue Uplift": _annual([0,1e6,2.5e6,4e6,5.5e6,6e6,6.5e6,7e6,7.5e6,8e6])},
+        "revenue_input_method": "Y1 + Growth",
+        "revenue_growth_rate": .035,
         "acquisition": {"Target Revenue": _series(34e6,.04), "Target Gross Margin %": _annual([.62] * 10), "Target EBITDA": _series(5.8e6,.05), "Target D&A": _series(1.1e6,.02), "Target EBIT": _series(4.7e6,.05), "Opening / Transaction Working Capital Reference": _series(4.8e6,.03), "Revenue Synergies": _series(3.5e6,.03), "Cost Synergies": _series(4e6,.025), "Synergy Ramp %": _annual([.25,.55,.8,1,1,1,1,1,1,1]), "One-off Integration Costs": _annual([4e6,2e6,.5e6,0,0,0,0,0,0,0])},
         "savings_register": _savings(archetype), "operating_costs": operating_costs,
         "operating_cost_input_methods": {group: "Y1 + Growth" for group in operating_costs},
@@ -142,6 +146,23 @@ def _cost_value(x:dict[str,Any], group:str, field:str, year:str, index:int)->flo
         schedule_name="Baseline Cost" if field=="Baseline Y1" else "Scenario Cost"
         return _v(x.get("operating_cost_schedules",{}).get(group,{}).get(schedule_name,{}),year)
     return _escalated(x["operating_costs"].get(group,[]),field,index)
+def _modeled_input_value(x:dict[str,Any], section:str, metric:str, year:str, index:int)->float:
+    if section=="capacity":
+        method=str(x.get("capacity_input_methods",{}).get(metric,"Annual Schedule"))
+        growth=_n(x.get("capacity_growth_rates",{}).get(metric,0))
+    else:
+        method=str(x.get("revenue_input_method","Annual Schedule"))
+        growth=_n(x.get("revenue_growth_rate",0))
+    values=x.get(section,{}).get(metric,{})
+    return _v(values,"Y1")*(1+growth)**index if method=="Y1 + Growth" else _v(values,year)
+def _savings_ramp(row:dict[str,Any], index:int)->float:
+    profile=str(row.get("Ramp Profile","2-year ramp"))
+    if profile=="Immediate": return 1.0
+    if profile=="1-year ramp": return .5 if index==0 else 1.0
+    if profile=="Custom":
+        field="Custom Y1 Ramp %" if index==0 else "Custom Y2 Ramp %" if index==1 else "Custom Y3+ Ramp %"
+        return min(1,max(0,_n(row.get(field))))
+    return (1/3,2/3,1.0)[min(index,2)]
 def _npv(rate:float,cf:list[float])->float: return sum(v/(1+rate)**i for i,v in enumerate(cf))
 
 
@@ -177,15 +198,18 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     ke=(_n(c.get("Risk-Free Rate"))+beta*_n(c.get("Equity Risk Premium"))+_n(c.get("Country Risk Premium"))) if method.startswith("CAPM") else _n(c.get("Corporate Cost of Equity" if method=="Corporate Provided Cost of Equity" else "Manual Cost of Equity"))
     kd=_n(c.get("Pre-tax Cost of Debt"))*(1-tax); debt=min(1,max(0,_n(c.get("Target Debt %")))); equity=1-debt; c["Target Equity %"]=equity; wacc=ke*equity+kd*debt
     initial=_line_total(x["investment"]["uses"],"Amount"); life=max(1,int(x["investment"].get("Useful Life",10))); costs=x["operating_costs"]
-    annual_saving=sum(_n(z.get("Gross Saving"))*min(1,max(0,_n(z.get("Realization %")))) for z in x["savings_register"] if z.get("Applicable",True)) if saving and archetype!=CASE_ARCHETYPES[2] else 0
     metrics=["Revenue","COGS","Gross Profit","Gross Margin %","Personnel","Other Operating Expenses","EBITDA","EBITDA Margin %","Depreciation & Amortization","EBIT","EBIT Margin %"]
     base={m:{} for m in metrics}; scenario=deepcopy(base); drivers={m:{} for m in ["Total Available Capacity","Capacity Utilization %","Baseline Revenue","Incremental Revenue","Scenario Revenue","Realized Savings"]}; bnwc={}; snwc={}
+    capacity_bridge={m:{} for m in ["Baseline Capacity","Baseline Volume","Baseline Idle Capacity","Baseline Utilization %","Added Capacity","Total Scenario Capacity","Scenario Volume","Scenario Idle Capacity","Scenario Utilization %","Baseline Revenue","Scenario Revenue","Incremental Revenue"]}
     for i,y in enumerate(years):
-        bv,sv,bp=_v(x["capacity"]["Baseline Volume"],y),_v(x["capacity"]["Scenario Volume"],y),_v(x["capacity"]["Baseline Net Revenue per Unit"],y); mode=str(s.get("Revenue Modeling Mode","Unit-based"))
+        bv=_modeled_input_value(x,"capacity","Baseline Volume",y,i); sv=_v(x["capacity"]["Scenario Volume"],y); bp=_modeled_input_value(x,"capacity","Baseline Net Revenue per Unit",y,i); mode=str(s.get("Revenue Modeling Mode","Unit-based"))
         if archetype==CASE_ARCHETYPES[0] and mode=="Unit-based":
-            br=bv*bp; scenario_price=bp*(1+_v(x["capacity"]["Net Price Escalation %"],y)); sr=sv*scenario_price if rev else br; cap=_v(x["capacity"]["Baseline Capacity"],y)+_v(x["capacity"]["Added Capacity from Investment"],y); util=_r(sv,cap)
+            baseline_capacity=_modeled_input_value(x,"capacity","Baseline Capacity",y,i); added_capacity=_v(x["capacity"]["Added Capacity from Investment"],y); cap=baseline_capacity+added_capacity
+            br=bv*bp; sr=sv*bp if rev else br; util=_r(sv,cap)
+            bridge_values={"Baseline Capacity":baseline_capacity,"Baseline Volume":bv,"Baseline Idle Capacity":baseline_capacity-bv,"Baseline Utilization %":_r(bv,baseline_capacity),"Added Capacity":added_capacity,"Total Scenario Capacity":cap,"Scenario Volume":sv,"Scenario Idle Capacity":cap-sv,"Scenario Utilization %":util,"Baseline Revenue":br,"Scenario Revenue":sr,"Incremental Revenue":sr-br}
+            for metric,value in bridge_values.items(): capacity_bridge[metric][y]=value
         else:
-            br=_v(x["revenue_based"]["Baseline Revenue"],y); sr=br+(_v(x["revenue_based"]["Incremental Revenue / Revenue Uplift"],y) if rev else 0); cap=util=0
+            br=_modeled_input_value(x,"revenue_based","Baseline Revenue",y,i); sr=br+(_v(x["revenue_based"]["Incremental Revenue / Revenue Uplift"],y) if rev else 0); cap=util=0
         ramp=1.0
         if archetype==CASE_ARCHETYPES[2]:
             ramp=min(1,max(0,_v(x["acquisition"]["Synergy Ramp %"],y))); sr=br+_v(x["acquisition"]["Target Revenue"],y)+(_v(x["acquisition"]["Revenue Synergies"],y)*ramp if rev else 0)
@@ -194,7 +218,7 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
             bc+=sum(_n(z.get("Baseline Unit Cost"))*(1+_n(z.get("Annual Growth %")))**i*bv for z in costs["variable"] if z.get("Applicable",True)); sc+=sum(_n(z.get("Scenario Unit Cost"))*(1+_n(z.get("Annual Growth %")))**i*sv for z in costs["variable"] if z.get("Applicable",True))
         bpers,spers=_cost_value(x,"personnel","Baseline Y1",y,i),_cost_value(x,"personnel","Scenario Y1",y,i); bf,sf=_cost_value(x,"fixed","Baseline Y1",y,i),_cost_value(x,"fixed","Scenario Y1",y,i)
         cost_synergy=_v(x["acquisition"]["Cost Synergies"],y)*ramp if archetype==CASE_ARCHETYPES[2] and saving else 0
-        realized=cost_synergy if archetype==CASE_ARCHETYPES[2] else annual_saving*min(1,(i+1)/3)
+        realized=cost_synergy if archetype==CASE_ARCHETYPES[2] else sum(_n(z.get("Gross Run-rate Saving",z.get("Gross Saving")))*min(1,max(0,_n(z.get("Realization %"))))*_savings_ramp(z,i) for z in x["savings_register"] if z.get("Applicable",True)) if saving else 0
         integration=_v(x["acquisition"]["One-off Integration Costs"],y) if archetype==CASE_ARCHETYPES[2] else 0
         if archetype==CASE_ARCHETYPES[2]:
             target_revenue=_v(x["acquisition"]["Target Revenue"],y)
@@ -229,4 +253,5 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     for i,y in enumerate(years,1):
         ie=scenario["EBIT"][y]-base["EBIT"][y]; taxes=max(0,ie*tax); da=scenario["Depreciation & Amortization"][y]-base["Depreciation & Amortization"][y]; capex=max(0,_v(x["investment"]["Sustaining CAPEX"],y)-(_v(x["investment"]["CAPEX Avoidance"],y) if "Asset / CAPEX Avoidance" in enabled else 0)); f=ie-taxes+da-capex-changes[y]; factor=1/(1+wacc)**i; pv=f*factor; cf.append(f);disc.append(pv);cum+=f;dcum+=pv;rows.append({"Year":y,"Incremental EBIT":ie,"Cash Taxes":taxes,"D&A":da,"CAPEX":capex,"Change in NWC":changes[y],"Unlevered Free Cash Flow":f,"Discount Factor":factor,"Present Value of FCF":pv,"Cumulative FCF":cum,"Cumulative Discounted FCF":dcum})
     npv=sum(disc); irr=_irr(cf); returns={"Project NPV":npv,"Project IRR":irr,"Payback Period":_payback(cf),"Discounted Payback":_payback(disc),"Profitability Index":(npv+initial)/initial if initial else 0,"Cumulative Unlevered FCF":cum,"WACC":wacc,"Cost of Equity":ke,"After-tax Cost of Debt":kd}
-    return {"inputs":x,"years":years,"drivers":drivers,"baseline_pnl":baseline,"scenario_pnl":scenario_pnl,"incremental":incremental,"working_capital":pd.DataFrame(wc_rows),"cash_flow":pd.DataFrame(rows),"returns":returns,"total_initial_investment":initial,"working_capital_enabled":wc_on,"capital_structure_valid":True}
+    bridge_frame=pd.DataFrame([{"Metric":metric,**values} for metric,values in capacity_bridge.items()]) if archetype==CASE_ARCHETYPES[0] and str(s.get("Revenue Modeling Mode","Unit-based"))=="Unit-based" else pd.DataFrame()
+    return {"inputs":x,"years":years,"drivers":drivers,"capacity_bridge":bridge_frame,"baseline_pnl":baseline,"scenario_pnl":scenario_pnl,"incremental":incremental,"working_capital":pd.DataFrame(wc_rows),"cash_flow":pd.DataFrame(rows),"returns":returns,"total_initial_investment":initial,"working_capital_enabled":wc_on,"capital_structure_valid":True}
