@@ -37,6 +37,14 @@ assert results["internal"]["metrics"]["Minimum DSCR"] is None
 assert results["mixed"]["metrics"]["Equity IRR"] > results["internal"]["metrics"]["Equity IRR"]
 assert results["high_debt"]["metrics"]["Equity IRR"] > results["mixed"]["metrics"]["Equity IRR"]
 assert results["high_debt"]["metrics"]["Covenant Breaches"] >= 1
+for result in results.values():
+    assert abs(result["metrics"]["Total Sources"] - result["metrics"]["Total Uses"]) < 1
+    assert result["metrics"]["Total Equity Contributions"] == result["metrics"]["Initial Equity Contribution"] + result["metrics"]["Additional Equity Support"]
+assert round(results["mixed"]["metrics"]["Initial Equity Contribution"], -4) == 14_110_000
+assert results["mixed"]["metrics"]["Additional Equity Support"] > 0
+assert results["high_debt"]["metrics"]["Initial Equity Contribution"] < results["mixed"]["metrics"]["Initial Equity Contribution"]
+assert results["high_debt"]["metrics"]["Total Equity Contributions"] > results["mixed"]["metrics"]["Total Equity Contributions"]
+assert results["mixed"]["debt_schedule"].loc[results["mixed"]["debt_schedule"]["Period"] != "Y0", "Financing Fees"].sum() == 0
 
 for scenario_id in ("mixed", "high_debt"):
     schedule = results[scenario_id]["debt_schedule"]
@@ -69,14 +77,25 @@ for row in custom_scenario["Custom Debt Schedule"]:
 custom_result = calculate_financing_scenario(operating_model, custom, "mixed")
 assert abs(custom_result["debt_schedule"].iloc[-1]["Closing Debt"]) < 0.01
 
+invalid_custom = deepcopy(financing)
+invalid_scenario = invalid_custom["scenarios"]["mixed"]
+invalid_scenario["Debt Terms"]["Repayment Type"] = "Custom"
+invalid_scenario["Debt Terms"]["Maturity Year"] = 4
+for row in invalid_scenario["Custom Debt Schedule"]:
+    row["Drawdown"] = facility * 2 if row["Period"] == "Y0" else 100_000 if row["Period"] == "Y5" else 0.0
+    row["Principal Repayment"] = facility * 2 if row["Period"] == "Y2" else 0.0
+invalid_result = calculate_financing_scenario(operating_model, invalid_custom, "mixed")
+validation_text = " ".join(invalid_result["debt_schedule"]["Validation"].tolist())
+assert "capped at remaining facility" in validation_text
+assert "capped at outstanding debt" in validation_text
+assert "after maturity ignored" in validation_text
+
 alternative = deepcopy(financing)
 alternative_scenario = alternative["scenarios"]["mixed"]
-alternative_scenario["Funding Mix"] = {"Internal Cash / Equity %": 0.3, "Debt %": 0.6, "Alternative Funding %": 0.1}
-target_result = calculate_financing_scenario(operating_model, alternative, "mixed")
 alternative_scenario["Alternative Funding"] = [{
     "Applicable": True,
     "Type": "Grant / Subsidy",
-    "Amount": target_result["metrics"]["Alternative Funding Target"],
+    "Amount": 3_000_000,
     "Timing": "Y0",
     "Cost / Rate": 0.0,
     "Repayment Required": "No",
@@ -85,6 +104,15 @@ alternative_scenario["Alternative Funding"] = [{
 }]
 alternative_result = calculate_financing_scenario(operating_model, alternative, "mixed")
 assert abs(alternative_result["metrics"]["Funding Gap / Excess Funding"]) < 1
+assert alternative_result["metrics"]["Initial Equity Contribution"] < results["mixed"]["metrics"]["Initial Equity Contribution"]
+
+immediate_shield = deepcopy(financing)
+immediate_shield["scenarios"]["mixed"]["Debt Terms"]["Interest Tax Shield Availability"] = "Immediate / Group taxable income available"
+immediate_result = calculate_financing_scenario(operating_model, immediate_shield, "mixed")
+project_shield_total = results["mixed"]["equity_cash_flow"]["Interest Tax Shield"].sum()
+immediate_shield_total = immediate_result["equity_cash_flow"]["Interest Tax Shield"].sum()
+assert immediate_shield_total >= project_shield_total
+assert immediate_result["metrics"]["Project NPV"] == results["mixed"]["metrics"]["Project NPV"]
 
 covenants = results["mixed"]["covenants"]
 for _, row in covenants[covenants["Metric Value"].notna()].iterrows():
@@ -101,6 +129,11 @@ app.session_state["investment_case_inputs"] = {case_id: model_inputs}
 app.session_state[f"investment_case_section_{case_id}"] = "Financing"
 app.run()
 assert not list(app.exception)
+
+debt_mix_key = f"investment_financing_{case_id}_mixed_debt_pct"
+widget_by_key(app.number_input, debt_mix_key).set_value(55.0).run()
+assert not list(app.exception)
+assert abs(app.session_state["investment_case_inputs"][case_id]["financing"]["scenarios"]["mixed"]["Funding Mix"]["Debt %"] - 0.55) < 1e-12
 
 fixed_rate_key = f"investment_financing_{case_id}_mixed_fixed_rate"
 before_interest = calculate_financing_scenario(
@@ -127,5 +160,19 @@ assert any(widget.key == f"investment_financing_{case_id}_mixed_reference_rate" 
 
 widget_by_key(app.selectbox, repayment_key).set_value("Custom").run()
 assert not list(app.exception)
+
+custom_editor_key = f"investment_financing_custom_debt_{case_id}_mixed"
+app.session_state[custom_editor_key] = {"edited_rows": {0: {"Drawdown": 10_000_000}}, "added_rows": [], "deleted_rows": []}
+app.run()
+assert not list(app.exception)
+assert app.session_state["investment_case_inputs"][case_id]["financing"]["scenarios"]["mixed"]["Custom Debt Schedule"][0]["Drawdown"] == 10_000_000
+
+alternative_editor_key = f"investment_financing_alternative_{case_id}_mixed"
+app.session_state[alternative_editor_key] = {"edited_rows": {0: {"Applicable": True, "Amount": 2_000_000, "Type": "Grant / Subsidy"}}, "added_rows": [], "deleted_rows": []}
+app.run()
+assert not list(app.exception)
+saved_alternative = app.session_state["investment_case_inputs"][case_id]["financing"]["scenarios"]["mixed"]["Alternative Funding"][0]
+assert saved_alternative["Amount"] == 2_000_000
+assert saved_alternative["Repayment Required"] == "No"
 
 print("investment financing calculation and interaction smoke test complete")

@@ -13,7 +13,7 @@ FINANCING_PERIODS = [f"Y{i}" for i in range(11)]
 FUNDING_SCENARIOS = [
     ("internal", "Internal Cash / Equity", 1.0, 0.0, "Straight-line", 0.0, 8),
     ("mixed", "Mixed Funding", 0.4, 0.6, "Straight-line", 0.072, 8),
-    ("high_debt", "High Debt", 0.2, 0.8, "Bullet", 0.085, 4),
+    ("high_debt", "Debt-Heavy Funding", 0.2, 0.8, "Bullet", 0.085, 4),
 ]
 
 
@@ -110,6 +110,7 @@ def _default_scenario(
             "Commitment Fee": 0.003 if debt else 0.0,
             "Commitment Fee Applicable": bool(debt),
             "Prepayment Allowed": True,
+            "Interest Tax Shield Availability": "Project taxable income only",
         },
         "Custom Debt Schedule": [{"Period": period, "Drawdown": 0.0, "Principal Repayment": 0.0} for period in FINANCING_PERIODS],
         "Covenants": _default_covenants(),
@@ -142,6 +143,11 @@ def ensure_financing_inputs(value: Any) -> dict[str, Any]:
             continue
         for key, default_value in default_scenario.items():
             existing.setdefault(key, deepcopy(default_value))
+        if scenario_id == "high_debt" and existing.get("Scenario Name") == "High Debt":
+            existing["Scenario Name"] = "Debt-Heavy Funding"
+        existing.setdefault("Debt Terms", {})
+        for key, default_value in default_scenario["Debt Terms"].items():
+            existing["Debt Terms"].setdefault(key, deepcopy(default_value))
     if result["selected_scenario_id"] not in result["scenarios"]:
         result["selected_scenario_id"] = "mixed"
     return result
@@ -149,15 +155,27 @@ def ensure_financing_inputs(value: Any) -> dict[str, Any]:
 
 def _investment_uses(model_inputs: dict[str, Any]) -> dict[str, float]:
     implementation_tokens = ("implementation", "integration", "consulting", "data migration", "training")
-    transaction_tokens = ("transaction fee",)
-    result = {"Initial Investment / CAPEX": 0.0, "Implementation Costs": 0.0, "Transaction Fees": 0.0}
+    transaction_tokens = ("transaction fee", "transaction cost")
+    working_capital_tokens = ("working capital",)
+    other_tokens = ("contingency", "other use")
+    result = {
+        "Initial Investment / CAPEX": 0.0,
+        "Implementation Costs": 0.0,
+        "Transaction Costs": 0.0,
+        "Initial Working Capital": 0.0,
+        "Contingency / Other Uses": 0.0,
+    }
     for line in model_inputs.get("investment", {}).get("uses", []):
         if not bool(line.get("Applicable", True)):
             continue
         name = str(line.get("Investment Component", "")).lower()
         amount = _number(line.get("Amount"))
         if any(token in name for token in transaction_tokens):
-            result["Transaction Fees"] += amount
+            result["Transaction Costs"] += amount
+        elif any(token in name for token in working_capital_tokens):
+            result["Initial Working Capital"] += amount
+        elif any(token in name for token in other_tokens):
+            result["Contingency / Other Uses"] += amount
         elif any(token in name for token in implementation_tokens):
             result["Implementation Costs"] += amount
         else:
@@ -166,17 +184,12 @@ def _investment_uses(model_inputs: dict[str, Any]) -> dict[str, float]:
 
 
 def _alternative_totals(lines: list[dict[str, Any]]) -> tuple[float, float, float]:
-    non_repayable = repayable = annual_cost = 0.0
+    non_repayable = 0.0
     for line in lines:
         if not bool(line.get("Applicable", True)):
             continue
-        amount = _number(line.get("Amount"))
-        if str(line.get("Repayment Required", "No")) == "Yes":
-            repayable += amount
-            annual_cost += amount * _number(line.get("Cost / Rate"))
-        else:
-            non_repayable += amount
-    return non_repayable, repayable, annual_cost
+        non_repayable += _number(line.get("Amount"))
+    return non_repayable, 0.0, 0.0
 
 
 def _build_debt_schedule(facility: float, terms: dict[str, Any], custom: list[dict[str, Any]]) -> pd.DataFrame:
@@ -189,25 +202,41 @@ def _build_debt_schedule(facility: float, terms: dict[str, Any], custom: list[di
     repayment_years = list(range(grace + 1, maturity + 1))
     straight_line_payment = facility / len(repayment_years) if repayment_years else facility
     opening = 0.0
+    cumulative_drawdown = 0.0
     rows: list[dict[str, Any]] = []
     for index, period in enumerate(FINANCING_PERIODS):
         if repayment_type == "Custom":
             custom_row = custom_by_period.get(period, {})
-            drawdown = max(0.0, _number(custom_row.get("Drawdown")))
+            requested_drawdown = max(0.0, _number(custom_row.get("Drawdown")))
             requested_repayment = max(0.0, _number(custom_row.get("Principal Repayment")))
         else:
-            drawdown = facility if index == 0 else 0.0
+            requested_drawdown = facility if index == 0 else 0.0
             if repayment_type == "Bullet":
                 requested_repayment = facility if index == maturity else 0.0
             else:
                 requested_repayment = straight_line_payment if index in repayment_years else 0.0
-        drawdown = min(drawdown, max(0.0, facility - opening))
+        validation: list[str] = []
+        if index > maturity and requested_drawdown > 0:
+            validation.append("Drawdown after maturity ignored")
+            requested_drawdown = 0.0
+        if index > maturity and requested_repayment > 0:
+            validation.append("Repayment after maturity ignored")
+            requested_repayment = 0.0
+        available_commitment = max(0.0, facility - cumulative_drawdown)
+        drawdown = min(requested_drawdown, available_commitment)
+        if requested_drawdown > available_commitment + 0.01:
+            validation.append("Drawdown capped at remaining facility")
+        cumulative_drawdown += drawdown
         principal_repayment = min(requested_repayment, opening + drawdown)
+        if requested_repayment > opening + drawdown + 0.01:
+            validation.append("Repayment capped at outstanding debt")
         closing = max(0.0, opening + drawdown - principal_repayment)
+        if repayment_type == "Custom" and index == maturity and closing > 0.01:
+            validation.append("Outstanding debt remains at maturity")
         average = 0.0 if index == 0 else (opening + closing) / 2
         interest = average * all_in_rate
-        unused_average = max(0.0, facility - average)
-        commitment_fee = unused_average * _number(terms.get("Commitment Fee")) if bool(terms.get("Commitment Fee Applicable")) and index > 0 else 0.0
+        undrawn_commitment = max(0.0, facility - cumulative_drawdown)
+        commitment_fee = undrawn_commitment * _number(terms.get("Commitment Fee")) if bool(terms.get("Commitment Fee Applicable")) and index > 0 else 0.0
         arrangement_fee = facility * _number(terms.get("Arrangement Fee")) if index == 0 else 0.0
         financing_fees = arrangement_fee + commitment_fee
         rows.append({
@@ -220,6 +249,7 @@ def _build_debt_schedule(facility: float, terms: dict[str, Any], custom: list[di
             "Cash Interest Expense": interest,
             "Financing Fees": financing_fees,
             "Total Debt Service": principal_repayment + interest,
+            "Validation": "; ".join(validation),
         })
         opening = closing
     return pd.DataFrame(rows)
@@ -238,14 +268,11 @@ def calculate_financing_scenario(
     controlled = ensure_financing_inputs(financing)
     scenario = deepcopy(controlled["scenarios"][scenario_id])
     mix = scenario["Funding Mix"]
-    internal_pct = _number(mix.get("Internal Cash / Equity %"))
     debt_pct = _number(mix.get("Debt %"))
-    alternative_pct = _number(mix.get("Alternative Funding %"))
-    mix_total = internal_pct + debt_pct + alternative_pct
+    debt_pct = min(1.0, max(0.0, debt_pct))
 
     use_components = _investment_uses(model["inputs"])
-    additional_uses = scenario["Additional Uses"]
-    pre_fee_uses = sum(use_components.values()) + sum(_number(value) for value in additional_uses.values())
+    pre_fee_uses = sum(use_components.values())
     terms = scenario["Debt Terms"]
     arrangement_rate = _number(terms.get("Arrangement Fee")) if debt_pct > 0 else 0.0
     denominator = 1 - debt_pct * arrangement_rate
@@ -253,21 +280,29 @@ def calculate_financing_scenario(
     debt_source = total_uses * debt_pct
     arrangement_fee = debt_source * arrangement_rate
     total_uses = pre_fee_uses + arrangement_fee
-    internal_source = total_uses * internal_pct
-    alternative_target = total_uses * alternative_pct
     non_repayable_alt, repayable_alt, alternative_annual_cost = _alternative_totals(scenario["Alternative Funding"])
     actual_alternative = non_repayable_alt + repayable_alt
+    alternative_target = actual_alternative
+    internal_source = max(0.0, total_uses - debt_source - actual_alternative)
+    impossible_sources = debt_source + actual_alternative > total_uses + 0.01
     total_sources = internal_source + debt_source + actual_alternative
     funding_gap = total_sources - total_uses
+    alternative_pct = _ratio(actual_alternative, total_uses) or 0.0
+    internal_pct = _ratio(internal_source, total_uses) or 0.0
+    mix_total = internal_pct + debt_pct + alternative_pct
+    scenario["Funding Mix"] = {
+        "Internal Cash / Equity %": internal_pct,
+        "Debt %": debt_pct,
+        "Alternative Funding %": alternative_pct,
+    }
 
     uses = pd.DataFrame([
         {"Use": "Initial Investment / CAPEX", "Amount": use_components["Initial Investment / CAPEX"], "Type": "Model"},
         {"Use": "Implementation Costs", "Amount": use_components["Implementation Costs"], "Type": "Model"},
-        {"Use": "Transaction Fees", "Amount": use_components["Transaction Fees"], "Type": "Model"},
-        {"Use": "Initial Working Capital", "Amount": _number(additional_uses.get("Initial Working Capital")), "Type": "Input"},
-        {"Use": "Financing Fees", "Amount": arrangement_fee, "Type": "Calculated"},
-        {"Use": "Contingency", "Amount": _number(additional_uses.get("Contingency")), "Type": "Input"},
-        {"Use": "Other Uses", "Amount": _number(additional_uses.get("Other Uses")), "Type": "Input"},
+        {"Use": "Transaction Costs", "Amount": use_components["Transaction Costs"], "Type": "Model"},
+        {"Use": "Initial Working Capital", "Amount": use_components["Initial Working Capital"], "Type": "Model"},
+        {"Use": "Contingency / Other Uses", "Amount": use_components["Contingency / Other Uses"], "Type": "Model"},
+        {"Use": "Upfront Debt Arrangement Fee", "Amount": arrangement_fee, "Type": "Financing"},
     ])
     source_rows = [
         {"Source": "Internal Cash / Equity", "Amount": internal_source, "Type": "Calculated from mix"},
@@ -287,6 +322,7 @@ def calculate_financing_scenario(
     scenario_ebitda = _metric_source(model, "EBITDA")
     incremental_ebitda_frame = model["incremental"].set_index("Metric")
     ufcf_by_period = {str(row["Year"]): _number(row["Unlevered Free Cash Flow"]) for _, row in model["cash_flow"].iterrows()}
+    unlevered_tax_by_period = {str(row["Year"]): _number(row["Cash Taxes"]) for _, row in model["cash_flow"].iterrows()}
     tax_rate = _number(model["inputs"]["settings"].get("Applicable Tax Rate"))
     maturity = max(1, min(10, int(_number(terms.get("Maturity Year")) or 1)))
 
@@ -318,8 +354,14 @@ def calculate_financing_scenario(
 
         ufcf = ufcf_by_period.get(period, 0.0)
         external_inflow = actual_alternative if index == 0 else 0.0
-        tax_shield = min(total_interest, max(0.0, ebit)) * tax_rate if index > 0 else 0.0
-        extra_initial_uses = sum(_number(value) for value in additional_uses.values()) if index == 0 else 0.0
+        shield_method = str(terms.get("Interest Tax Shield Availability", "Project taxable income only"))
+        if index == 0:
+            tax_shield = 0.0
+        elif shield_method == "Immediate / Group taxable income available":
+            tax_shield = total_interest * tax_rate
+        else:
+            tax_shield = max(0.0, unlevered_tax_by_period.get(period, 0.0) - levered_tax)
+        extra_initial_uses = 0.0
         equity_cash_flow = (
             ufcf
             + _number(debt_row["Debt Drawdown"])
@@ -391,11 +433,19 @@ def calculate_financing_scenario(
     positive_closing = debt_schedule.loc[debt_schedule["Closing Debt"] > 0.01, "Period"].tolist()
     fully_repaid = "Not within schedule" if positive_closing and positive_closing[-1] == "Y10" else (f"Y{int(positive_closing[-1][1:]) + 1}" if positive_closing else ("N/A" if debt_source <= 0 else "Y0"))
 
+    initial_equity_contribution = max(0.0, -equity_cash_flows[0]) if equity_cash_flows else 0.0
+    additional_equity_support = sum(max(0.0, -value) for value in equity_cash_flows[1:])
+    total_equity_contributions = initial_equity_contribution + additional_equity_support
+    sustaining_capex = sum(_number(model["inputs"].get("investment", {}).get("Sustaining CAPEX", {}).get(year)) for year in years)
+
     metrics = {
         "Project NPV": _number(model["returns"].get("Project NPV")),
         "Project IRR": model["returns"].get("Project IRR"),
         "Total Funding Requirement": total_uses,
-        "Equity Required": sum(max(0.0, -value) for value in equity_cash_flows),
+        "Equity Required": total_equity_contributions,
+        "Initial Equity Contribution": initial_equity_contribution,
+        "Additional Equity Support": additional_equity_support,
+        "Total Equity Contributions": total_equity_contributions,
         "Debt Funding": debt_source,
         "Alternative Funding Target": alternative_target,
         "Equity IRR": _irr(equity_cash_flows),
@@ -414,6 +464,8 @@ def calculate_financing_scenario(
         "Total Uses": total_uses,
         "Total Sources": total_sources,
         "Funding Gap / Excess Funding": funding_gap,
+        "Funding Inputs Valid": not impossible_sources,
+        "Sustaining CAPEX Over Forecast": sustaining_capex,
         "All-in Interest Rate": _number(terms.get("Fixed Interest Rate")) if str(terms.get("Interest Rate Type")) == "Fixed" else _number(terms.get("Reference / Base Rate")) + _number(terms.get("Credit Spread")),
     }
     return {
