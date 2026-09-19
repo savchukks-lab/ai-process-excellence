@@ -51,6 +51,11 @@ from investment_financing import (
     calculate_financing_scenario,
     ensure_financing_inputs,
 )
+from investment_sensitivity import (
+    calculate_investment_sensitivity,
+    calculate_standardized_sensitivity,
+    normalize_sensitivity_settings as normalize_investment_sensitivity_settings,
+)
 
 try:
     faulthandler.enable()
@@ -8730,6 +8735,7 @@ def render_finance_table(
     secondary_rows: set[str] | None = None,
     exception_values: dict[str, str] | None = None,
     nonzero_highlights: dict[str, str] | None = None,
+    emphasized_columns: set[str] | None = None,
 ) -> None:
     """Render a small Finance table without Streamlit's internal scroll container."""
     if not isinstance(table, pd.DataFrame) or table.empty:
@@ -8738,9 +8744,11 @@ def render_finance_table(
     secondary_rows = secondary_rows or set()
     exception_values = exception_values or {}
     nonzero_highlights = nonzero_highlights or {}
+    emphasized_columns = emphasized_columns or set()
     headers = "".join(
         f"<th style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
-        "border-bottom:1px solid #d8dee8;background:#eef2f7;font-weight:650;white-space:normal'>"
+        f"border-bottom:1px solid #d8dee8;background:{'#e5ebf3' if str(column) in emphasized_columns else '#eef2f7'};"
+        f"font-weight:{'750' if str(column) in emphasized_columns else '650'};white-space:normal'>"
         f"{escape(str(column))}</th>"
         for column in table.columns
     )
@@ -8755,10 +8763,11 @@ def render_finance_table(
             exception_background = exception_values.get(value, "transparent")
             if str(column) in nonzero_highlights and abs(safe_float(row.get(column))) > 1e-9:
                 exception_background = nonzero_highlights[str(column)]
+            column_emphasis = "font-weight:700;color:#233044;" if str(column) in emphasized_columns else ""
             cells += (
                 f"<td style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
                 f"border-bottom:1px solid #e5e9f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere;"
-                f"background:{exception_background};{row_style}'>{escape(value)}</td>"
+                f"background:{exception_background};{row_style}{column_emphasis}'>{escape(value)}</td>"
             )
         body_rows.append(f"<tr style='background:{background}'>{cells}</tr>")
     st.markdown(
@@ -11882,6 +11891,159 @@ def render_investment_overview(case: dict[str, object]) -> None:
     st.info("Overview values are sourced directly from the current controlled investment model.")
 
 
+def _format_investment_sensitivity_results(results: pd.DataFrame) -> pd.DataFrame:
+    formatted = results.astype(object).copy()
+    for column in ("NPV", "Cumulative FCF", "Y5 Revenue", "Y5 EBITDA"):
+        if column in formatted:
+            formatted[column] = formatted[column].map(money)
+    for column in ("IRR", "Y5 EBITDA Margin"):
+        if column in formatted:
+            formatted[column] = formatted[column].map(lambda value: "N/A" if value is None or pd.isna(value) else pct(value))
+    if "Payback" in formatted:
+        formatted["Payback"] = formatted["Payback"].map(investment_payback_label)
+    return formatted
+
+
+def investment_sensitivity_interpretation(results: dict[str, object], inputs: dict[str, object]) -> str:
+    tornado = results.get("tornado", pd.DataFrame())
+    scenarios = results.get("scenarios", pd.DataFrame())
+    if not isinstance(scenarios, pd.DataFrame) or scenarios.empty:
+        return "Sensitivity outputs are not yet available for interpretation."
+    indexed = scenarios.set_index("Scenario")
+    base_npv = safe_float(indexed.at["Base", "NPV"])
+    downside_npv = safe_float(indexed.at["Downside", "NPV"])
+    upside_npv = safe_float(indexed.at["Upside", "NPV"])
+    downside_irr = indexed.at["Downside", "IRR"]
+    wacc = safe_float(results["base_model"]["returns"].get("WACC"))
+    hurdle = safe_float(inputs.get("capital", {}).get("Corporate Hurdle Rate"))
+    strongest_downside = "the combined downside assumptions"
+    strongest_upside = "the combined upside assumptions"
+    if isinstance(tornado, pd.DataFrame) and not tornado.empty:
+        strongest_downside = str(tornado.loc[tornado["Downside Impact"].idxmin(), "Driver"])
+        strongest_upside = str(tornado.loc[tornado["Upside Impact"].idxmax(), "Driver"])
+    threshold_notes = []
+    if downside_npv < 0:
+        threshold_notes.append("downside NPV falls below zero")
+    if downside_irr is not None and not pd.isna(downside_irr):
+        if safe_float(downside_irr) < wacc:
+            threshold_notes.append("downside IRR falls below WACC")
+        if safe_float(downside_irr) < hurdle:
+            threshold_notes.append("downside IRR falls below the corporate hurdle rate")
+    resilience = "; ".join(threshold_notes) if threshold_notes else "the combined downside remains above the modeled NPV and return thresholds"
+    return (
+        f"The Base Case NPV is {money(base_npv)}, compared with {money(downside_npv)} in the combined downside and {money(upside_npv)} in the combined upside. "
+        f"The strongest one-at-a-time downside driver is {strongest_downside}, while the largest upside response comes from {strongest_upside}. "
+        f"On the current ranges, {resilience}. "
+        "Management attention should focus on the assumptions with the widest NPV range and the lowest range confidence, while recognizing that these are analytical ranges rather than probability-weighted outcomes."
+    )
+
+
+def render_investment_sensitivity(case: dict[str, object]) -> None:
+    case_id = str(case.get("Case ID", ""))
+    base_inputs = investment_case_inputs(case)
+    base_model = calculate_investment_model(base_inputs)
+
+    st.markdown("<div class='enterprise-section-title'>How Sensitivity Analysis Works</div>", unsafe_allow_html=True)
+    st.caption("Sensitivity analysis tests how uncertainty in key assumptions changes investment outcomes without changing the approved Base Case.")
+    for step in (
+        "1. Choose Outcome",
+        "2. Define Uncertainty Ranges",
+        "3. Test Drivers Independently",
+        "4. Compare Combined Scenarios",
+        "5. Interpret Risk",
+    ):
+        st.markdown(f"<div style='padding:2px 0;color:#344054;font-weight:600'>{step}</div>", unsafe_allow_html=True)
+
+    summary_slot = st.container()
+    st.markdown("<div class='enterprise-section-title'>Sensitivity Driver Setup</div>", unsafe_allow_html=True)
+    st.caption("Define plausible business ranges for relevant drivers. Base values are read-only and always come from the current controlled Model.")
+    st.caption("Downside and Upside are plausible ranges, not probabilities. Each one-at-a-time test changes only the selected driver and leaves all other assumptions at Base.")
+
+    all_saved = dict(st.session_state.get("investment_sensitivity_inputs", {}))
+    settings = normalize_investment_sensitivity_settings(base_inputs, all_saved.get(case_id))
+    editor_key = f"investment_sensitivity_driver_editor_{case_id}"
+    visible_columns = ["Applicable", "Driver", "Base", "Downside", "Upside", "Unit", "Input Method", "Range Basis", "Range Confidence"]
+    source = pd.DataFrame(settings)[visible_columns]
+    source = apply_data_editor_state(source, st.session_state.get(editor_key))
+    edited = st.data_editor(
+        source,
+        key=editor_key,
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        disabled=["Driver", "Base", "Unit", "Input Method"],
+        column_config={
+            "Applicable": st.column_config.CheckboxColumn("Applicable", width="small"),
+            "Driver": st.column_config.TextColumn("Driver", width="medium", help="A controlled Model input tested independently against Base."),
+            "Base": st.column_config.TextColumn("Base", width="small", help="Current read-only value from the controlled Model."),
+            "Downside": st.column_config.NumberColumn("Downside", format="%.1f", width="small", help="Plausible adverse range; this is not a probability."),
+            "Upside": st.column_config.NumberColumn("Upside", format="%.1f", width="small", help="Plausible favorable range; this is not a probability."),
+            "Unit": st.column_config.TextColumn("Unit", width="small"),
+            "Input Method": st.column_config.TextColumn("Input Method", width="medium"),
+            "Range Basis": st.column_config.TextColumn("Range Basis", width="medium", help="Business evidence or rationale supporting the selected range."),
+            "Range Confidence": st.column_config.SelectboxColumn("Range Confidence", options=["High", "Medium", "Low"], width="small", help="Confidence in the selected range, not outcome probability."),
+        },
+    )
+    edited = apply_data_editor_state(edited.copy(), st.session_state.get(editor_key))
+    defaults_by_driver = {str(row["Driver"]): row for row in settings}
+    updated_settings = []
+    for row in edited.to_dict("records"):
+        default = defaults_by_driver[str(row["Driver"])]
+        updated = deepcopy(default)
+        for field in ("Applicable", "Downside", "Upside", "Range Basis", "Range Confidence"):
+            updated[field] = row.get(field, default.get(field))
+        updated_settings.append(updated)
+    all_saved[case_id] = deepcopy(updated_settings)
+    st.session_state.investment_sensitivity_inputs = all_saved
+
+    results = calculate_investment_sensitivity(base_inputs, updated_settings)
+    scenarios = results["scenarios"]
+    scenario_index = scenarios.set_index("Scenario")
+    tornado = results["tornado"]
+    largest_driver = str(tornado.iloc[0]["Driver"]) if not tornado.empty else "N/A"
+    with summary_slot:
+        st.markdown("<div class='enterprise-section-title'>Management Summary</div>", unsafe_allow_html=True)
+        st.caption("Headline outcomes are calculated from the controlled Base Model and the current sensitivity ranges.")
+        cards = st.columns(6)
+        cards[0].metric("Base NPV", money(scenario_index.at["Base", "NPV"]))
+        cards[1].metric("Base IRR", pct(scenario_index.at["Base", "IRR"]))
+        cards[2].metric("Downside NPV", money(scenario_index.at["Downside", "NPV"]))
+        cards[3].metric("Upside NPV", money(scenario_index.at["Upside", "NPV"]))
+        cards[4].metric("Largest NPV Sensitivity", largest_driver)
+        cards[5].metric("Base Project Payback", investment_payback_label(scenario_index.at["Base", "Payback"]))
+
+    st.markdown("<div class='enterprise-section-title'>One-at-a-Time NPV Sensitivity</div>", unsafe_allow_html=True)
+    st.caption("Tornado uses plausible downside/upside ranges defined below. Each driver is changed independently while all other assumptions remain at Base Case. Range width reflects business uncertainty and is not a probability estimate.")
+    if tornado.empty:
+        st.info("Select at least one applicable sensitivity driver to calculate the NPV impact.")
+    else:
+        display_tornado = tornado.drop(columns=["NPV Range"]).copy()
+        for column in ["Downside NPV", "Base NPV", "Upside NPV", "Downside Impact", "Upside Impact"]:
+            display_tornado[column] = display_tornado[column].map(money)
+        render_finance_table(display_tornado, right_align=set(display_tornado.columns) - {"Driver"})
+
+    with st.expander("Standardized Sensitivity — Optional", expanded=False):
+        st.caption("Applies a common ±10% change to mathematically comparable relative drivers for elasticity analysis. This is not the primary management risk view and is not applied to absolute or categorical assumptions.")
+        standardized = calculate_standardized_sensitivity(base_inputs, updated_settings)
+        if standardized.empty:
+            st.info("No applicable relative drivers are enabled.")
+        else:
+            for column in ["-10% NPV", "Base NPV", "+10% NPV"]:
+                standardized[column] = standardized[column].map(money)
+            render_finance_table(standardized, right_align=set(standardized.columns) - {"Driver"})
+
+    st.markdown("<div class='enterprise-section-title'>Combined Scenario Comparison</div>", unsafe_allow_html=True)
+    st.caption("Tornado changes one driver at a time. Scenario comparison moves all selected Downside or Upside assumptions together; it does not create a probability-weighted expected value.")
+    formatted_scenarios = _format_investment_sensitivity_results(scenarios)
+    render_finance_table(formatted_scenarios, right_align=set(formatted_scenarios.columns) - {"Scenario"}, exception_values={})
+
+    st.markdown("<div class='enterprise-section-title'>AI Sensitivity Interpretation</div>", unsafe_allow_html=True)
+    st.caption("Advisory interpretation of current structured sensitivity outputs; it does not recalculate values or make an investment recommendation.")
+    interpretation = investment_sensitivity_interpretation(results, base_inputs)
+    st.markdown(f"<p style='margin:0;color:#344054;font-style:normal;line-height:1.55'>{escape(interpretation)}</p>", unsafe_allow_html=True)
+    st.caption("AI-generated interpretation may contain inaccuracies. Review the controlled assumptions and model outputs before management use.")
+
+
 def _financing_ratio(value: object) -> str:
     if value is None or pd.isna(value):
         return "N/A"
@@ -12190,6 +12352,7 @@ def render_investment_financing(case: dict[str, object]) -> None:
         else:
             st.caption("Sources equal Uses automatically through residual Internal Cash / Equity.")
         st.markdown("**Future Funding Through Operations**")
+        st.caption("Sustaining CAPEX is funded from project operating cash flow where available; additional equity support is required only when annual project cash flow is insufficient.")
         future_funding = pd.DataFrame([
             {"Item": "Sustaining CAPEX over forecast", "Amount / Treatment": money(metrics["Sustaining CAPEX Over Forecast"])},
             {"Item": "Primary funding source", "Amount / Treatment": "Project operating cash flow"},
@@ -12298,20 +12461,43 @@ def render_investment_financing(case: dict[str, object]) -> None:
                 "Debt Repaid": str(result_metrics["Debt Fully Repaid Year"]),
             })
         comparison = pd.DataFrame(comparison_rows)
-        render_finance_table(comparison, right_align=set(comparison.columns) - {"Funding Scenario", "Covenant Breach", "Debt Repaid"}, exception_values={"Yes": "#fdecec"})
+        render_finance_table(
+            comparison,
+            right_align=set(comparison.columns) - {"Funding Scenario", "Covenant Breach", "Debt Repaid"},
+            exception_values={"Yes": "#fdecec"},
+            emphasized_columns={"Total Equity Contributions"},
+        )
         st.caption("Standalone Project Economics are identical across funding scenarios. Funding and Equity Economics show the return, leverage, liquidity, and covenant trade-offs; scenarios are not automatically ranked.")
 
     with interpretation_slot:
         scenario_name = str(selected.get("Scenario Name", selected_id))
-        leverage_text = "no debt service" if metrics["Debt Funding"] <= 0 else f"{money(metrics['Debt Funding'])} of debt and {money(metrics['Interest Cost'])} of cumulative interest"
-        covenant_text = "no modeled covenant breaches" if metrics["Covenant Breaches"] == 0 else f"{int(metrics['Covenant Breaches'])} modeled covenant breach(es)"
-        interpretation = (
-            f"The standalone project produces a Project NPV of {money(metrics['Project NPV'])} and Project IRR of {_financing_percent(metrics['Project IRR'])}, which remain independent of the funding choice. "
-            f"Under {scenario_name}, the structure requires an initial equity contribution of {money(metrics['Initial Equity Contribution'])}, subsequent equity support of {money(metrics['Additional Equity Support'])}, and total equity contributions of {money(metrics['Total Equity Contributions'])}. "
-            f"The funding structure uses {leverage_text} and results in an Equity IRR of {_financing_percent(metrics['Equity IRR'])}. "
-            f"Debt capacity is reflected in a minimum DSCR of {_financing_ratio(metrics['Minimum DSCR'])} with {covenant_text}. "
-            "The analysis highlights how leverage may reduce initial equity while increasing debt-service pressure and later liquidity support; it does not rank or recommend a funding option."
-        )
+        initial_equity = safe_float(metrics["Initial Equity Contribution"])
+        additional_equity = safe_float(metrics["Additional Equity Support"])
+        total_equity = safe_float(metrics["Total Equity Contributions"])
+        debt_funding = safe_float(metrics["Debt Funding"])
+        interpretation_parts = [
+            f"The standalone project produces a Project NPV of {money(metrics['Project NPV'])} and Project IRR of {_financing_percent(metrics['Project IRR'])}, which remain independent of the funding choice.",
+            f"Under {scenario_name}, the initial equity contribution is {money(initial_equity)} and total equity contributions are {money(total_equity)}."
+        ]
+        if additional_equity > 0.5:
+            interpretation_parts.append(f"The difference includes {money(additional_equity)} of additional equity support for annual project cash-flow shortfalls.")
+        if debt_funding > 0.5:
+            debt_sentence = f"The structure uses {money(debt_funding)} of debt and incurs {money(metrics['Interest Cost'])} of cumulative interest"
+            minimum_dscr = metrics.get("Minimum DSCR")
+            if minimum_dscr is not None and not pd.isna(minimum_dscr):
+                debt_sentence += f", with a minimum DSCR of {_financing_ratio(minimum_dscr)}"
+            if metrics["Covenant Breaches"]:
+                debt_sentence += f" and {int(metrics['Covenant Breaches'])} modeled covenant breach(es)"
+            else:
+                debt_sentence += " and no modeled covenant breaches"
+            interpretation_parts.append(debt_sentence + ".")
+            interpretation_parts.append("The key trade-off is lower upfront equity against interest, debt-service pressure, covenant exposure, and possible later liquidity support.")
+        else:
+            interpretation_parts.append("The structure avoids debt-service and covenant exposure but places the funding burden on shareholder capital.")
+        equity_irr = metrics.get("Equity IRR")
+        if equity_irr is not None and not pd.isna(equity_irr):
+            interpretation_parts.append(f"The resulting Equity IRR is {_financing_percent(equity_irr)}.")
+        interpretation = " ".join(interpretation_parts)
         st.markdown(
             f"<p style='margin:0;color:#344054;font-style:normal;line-height:1.55'>{escape(interpretation)}</p>",
             unsafe_allow_html=True,
@@ -12402,8 +12588,7 @@ def page_investment_case() -> None:
     elif section == "Financing":
         render_investment_financing(case)
     elif section == "Sensitivity":
-        st.markdown("<div class='enterprise-section-title'>Sensitivity</div>", unsafe_allow_html=True)
-        st.info("Downside, Base, and Upside analysis across operating, timing, capital, and discount-rate drivers will be added in a future increment.")
+        render_investment_sensitivity(case)
     else:
         st.markdown("<div class='enterprise-section-title'>Decision Case</div>", unsafe_allow_html=True)
         st.info("The management summary, financing comparison, sensitivity synthesis, and investment decision package will be added in a future increment.")
