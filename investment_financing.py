@@ -29,6 +29,17 @@ def _ratio(numerator: float, denominator: float) -> float | None:
     return numerator / denominator if abs(denominator) > 1e-12 else None
 
 
+def _covenant_values(table: pd.DataFrame, covenant: str) -> list[float]:
+    """Return the single controlled series used by summaries and comparisons."""
+    if table.empty:
+        return []
+    values = table.loc[
+        table["Covenant"].eq(covenant) & table["Metric Value"].notna(),
+        "Metric Value",
+    ].tolist()
+    return [_number(value) for value in values]
+
+
 def _npv(rate: float, cash_flows: list[float]) -> float:
     return sum(value / (1 + rate) ** index for index, value in enumerate(cash_flows))
 
@@ -396,7 +407,9 @@ def calculate_financing_scenario(
         debt_service = _number(debt_row["Total Debt Service"]) + alt_interest + alt_repayment
         relevant_ebitda = scenario_ebitda.get(period, 0.0)
         project_ebitda = _number(incremental_ebitda_frame.at["Incremental EBITDA", period]) if period in years else 0.0
-        cfads = max(0.0, ufcf + total_interest - tax_shield)
+        # Unlevered FCF is before financing cash flows; the available interest
+        # tax shield increases cash available for contractual debt service.
+        cfads = ufcf + tax_shield
         for covenant_name, covenant in covenant_lookup.items():
             basis = str(covenant.get("Calculation Basis", "Project"))
             available = basis != "Borrower / Company" and covenant_name != "Minimum Cash"
@@ -408,7 +421,7 @@ def calculate_financing_scenario(
             elif covenant_name == "Interest Coverage":
                 metric_value = _ratio(project_ebitda if basis == "Project" else relevant_ebitda, total_interest)
             elif covenant_name == "DSCR":
-                metric_value = _ratio(cfads, debt_service)
+                metric_value = _ratio(cfads, debt_service) if debt_service > 1e-12 else None
             else:
                 metric_value = None
             limit = _number(covenant.get("Limit"))
@@ -420,16 +433,27 @@ def calculate_financing_scenario(
             else:
                 headroom = limit - metric_value if direction == "Maximum" else metric_value - limit
                 status = "OK" if headroom >= 0 else "Breach"
-            covenant_rows.append({"Period": period, "Covenant": covenant_name, "Calculation Basis": basis, "Metric Value": metric_value, "Covenant Limit": limit, "Headroom": headroom, "Status": status})
+            covenant_rows.append({
+                "Period": period,
+                "Covenant": covenant_name,
+                "Calculation Basis": basis,
+                "Metric Value": metric_value,
+                "Covenant Limit": limit,
+                "Direction": direction,
+                "Headroom": headroom,
+                "Status": status,
+                "Cash Flow Available for Debt Service": cfads if covenant_name == "DSCR" else None,
+                "Contractual Debt Service": debt_service if covenant_name == "DSCR" else None,
+            })
 
     equity_override = scenario["Equity Discount Rate Override"]
     valid_equity_override = bool(equity_override.get("Enabled")) and bool(str(equity_override.get("Rationale", "")).strip())
     equity_discount_rate = _number(equity_override.get("Rate")) if valid_equity_override else _number(model["returns"].get("Cost of Equity"))
     covenant_table = pd.DataFrame(covenant_rows)
     applicable_statuses = covenant_table["Status"].tolist() if not covenant_table.empty else []
-    dscr_values = covenant_table.loc[(covenant_table["Covenant"] == "DSCR") & covenant_table["Metric Value"].notna(), "Metric Value"].tolist() if not covenant_table.empty else []
-    leverage_values = covenant_table.loc[(covenant_table["Covenant"] == "Net Debt / EBITDA") & covenant_table["Metric Value"].notna(), "Metric Value"].tolist() if not covenant_table.empty else []
-    coverage_values = covenant_table.loc[(covenant_table["Covenant"] == "Interest Coverage") & covenant_table["Metric Value"].notna(), "Metric Value"].tolist() if not covenant_table.empty else []
+    dscr_values = _covenant_values(covenant_table, "DSCR")
+    leverage_values = _covenant_values(covenant_table, "Net Debt / EBITDA")
+    coverage_values = _covenant_values(covenant_table, "Interest Coverage")
     positive_closing = debt_schedule.loc[debt_schedule["Closing Debt"] > 0.01, "Period"].tolist()
     fully_repaid = "Not within schedule" if positive_closing and positive_closing[-1] == "Y10" else (f"Y{int(positive_closing[-1][1:]) + 1}" if positive_closing else ("N/A" if debt_source <= 0 else "Y0"))
 

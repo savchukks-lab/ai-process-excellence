@@ -12303,15 +12303,17 @@ def render_investment_financing(case: dict[str, object]) -> None:
     with interpretation_slot:
         scenario_name = str(selected.get("Scenario Name", selected_id))
         leverage_text = "no debt service" if metrics["Debt Funding"] <= 0 else f"{money(metrics['Debt Funding'])} of debt and {money(metrics['Interest Cost'])} of cumulative interest"
-        contribution_change = metrics["Total Equity Contributions"] - metrics["Initial Equity Contribution"]
-        support_text = "no subsequent equity support" if contribution_change <= 1 else f"{money(contribution_change)} of subsequent equity support"
         covenant_text = "no modeled covenant breaches" if metrics["Covenant Breaches"] == 0 else f"{int(metrics['Covenant Breaches'])} modeled covenant breach(es)"
-        st.write(
-            f"The standalone project remains unchanged at a Project NPV of {money(metrics['Project NPV'])} and a Project IRR of {_financing_percent(metrics['Project IRR'])}, regardless of funding choice. "
-            f"Under {scenario_name}, the structure uses {leverage_text}, producing an Equity IRR of {_financing_percent(metrics['Equity IRR'])}. "
-            f"Liquidity exposure includes {support_text}, so lower initial equity does not necessarily translate into lower total equity contributions. "
-            f"The modeled credit profile shows a minimum DSCR of {_financing_ratio(metrics['Minimum DSCR'])} and {covenant_text}. "
-            "These outputs describe the leverage, liquidity and covenant trade-offs and do not constitute an approval recommendation."
+        interpretation = (
+            f"The standalone project produces a Project NPV of {money(metrics['Project NPV'])} and Project IRR of {_financing_percent(metrics['Project IRR'])}, which remain independent of the funding choice. "
+            f"Under {scenario_name}, the structure requires an initial equity contribution of {money(metrics['Initial Equity Contribution'])}, subsequent equity support of {money(metrics['Additional Equity Support'])}, and total equity contributions of {money(metrics['Total Equity Contributions'])}. "
+            f"The funding structure uses {leverage_text} and results in an Equity IRR of {_financing_percent(metrics['Equity IRR'])}. "
+            f"Debt capacity is reflected in a minimum DSCR of {_financing_ratio(metrics['Minimum DSCR'])} with {covenant_text}. "
+            "The analysis highlights how leverage may reduce initial equity while increasing debt-service pressure and later liquidity support; it does not rank or recommend a funding option."
+        )
+        st.markdown(
+            f"<p style='margin:0;color:#344054;font-style:normal;line-height:1.55'>{escape(interpretation)}</p>",
+            unsafe_allow_html=True,
         )
 
 

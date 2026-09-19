@@ -51,6 +51,29 @@ for scenario_id in ("mixed", "high_debt"):
     for _, row in schedule.iterrows():
         assert abs(row["Opening Debt"] + row["Debt Drawdown"] - row["Principal Repayment"] - row["Closing Debt"]) < 0.01
 
+for scenario_id, result in results.items():
+    covenants = result["covenants"]
+    dscr_rows = covenants[covenants["Covenant"].eq("DSCR")]
+    valid_dscr = []
+    for _, row in dscr_rows.iterrows():
+        debt_service = row["Contractual Debt Service"]
+        if debt_service is None or debt_service <= 1e-12:
+            assert row["Metric Value"] is None or row["Metric Value"] != row["Metric Value"]
+            continue
+        expected_dscr = row["Cash Flow Available for Debt Service"] / debt_service
+        assert abs(row["Metric Value"] - expected_dscr) < 1e-12
+        valid_dscr.append(expected_dscr)
+    expected_minimum = min(valid_dscr) if valid_dscr else None
+    assert result["metrics"]["Minimum DSCR"] == expected_minimum
+
+    for _, row in covenants[covenants["Metric Value"].notna()].iterrows():
+        if row["Status"] not in {"OK", "Breach"}:
+            assert row["Headroom"] is None or row["Headroom"] != row["Headroom"]
+            continue
+        expected_headroom = row["Covenant Limit"] - row["Metric Value"] if row["Direction"] == "Maximum" else row["Metric Value"] - row["Covenant Limit"]
+        assert abs(row["Headroom"] - expected_headroom) < 1e-12
+        assert row["Status"] == ("OK" if expected_headroom >= 0 else "Breach")
+
 floating = deepcopy(financing)
 floating_terms = floating["scenarios"]["mixed"]["Debt Terms"]
 floating_terms["Interest Rate Type"] = "Floating"
@@ -129,6 +152,14 @@ app.session_state["investment_case_inputs"] = {case_id: model_inputs}
 app.session_state[f"investment_case_section_{case_id}"] = "Financing"
 app.run()
 assert not list(app.exception)
+minimum_dscr_values = [metric.value for metric in app.metric if metric.label == "Minimum DSCR"]
+assert len(minimum_dscr_values) == 2
+assert len(set(minimum_dscr_values)) == 1
+interpretation_html = " ".join(markdown.value for markdown in app.markdown if "standalone project produces" in markdown.value)
+assert "Project NPV of $" in interpretation_html
+assert "initial equity contribution" in interpretation_html
+assert "total equity contributions" in interpretation_html
+assert "*" not in interpretation_html
 
 debt_mix_key = f"investment_financing_{case_id}_mixed_debt_pct"
 widget_by_key(app.number_input, debt_mix_key).set_value(55.0).run()
