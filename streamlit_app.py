@@ -12007,6 +12007,378 @@ def render_investment_overview(case: dict[str, object]) -> None:
     st.caption("AI-generated synthesis is advisory and may contain inaccuracies. Review the controlled source tabs before management use.")
 
 
+def render_investment_decision_case(case: dict[str, object]) -> None:
+    """Render a read-only management decision paper from controlled source outputs."""
+    case_id = str(case.get("Case ID", ""))
+    model_inputs = investment_case_inputs(case)
+    model = calculate_investment_model(model_inputs)
+    inputs = model["inputs"]
+    settings = inputs["settings"]
+    capital = inputs["capital"]
+    returns = model["returns"]
+    years = list(model["years"])
+    terminal_year = "Y5" if "Y5" in years else years[-1]
+
+    financing = ensure_financing_inputs(model_inputs.get("financing"))
+    selected_financing_id = str(financing.get("selected_scenario_id", "mixed"))
+    selected_financing = calculate_financing_scenario(model, financing, selected_financing_id)
+    financing_metrics = selected_financing["metrics"]
+    financing_scenario = selected_financing["scenario"]
+    financing_name = str(financing_scenario.get("Scenario Name", selected_financing_id))
+    funding_mix = financing_scenario.get("Funding Mix", {})
+
+    saved_sensitivity = dict(st.session_state.get("investment_sensitivity_inputs", {})).get(case_id)
+    sensitivity_settings = normalize_investment_sensitivity_settings(model_inputs, saved_sensitivity)
+    sensitivity = calculate_investment_sensitivity(model_inputs, sensitivity_settings)
+    sensitivity_scenarios = sensitivity["scenarios"].set_index("Scenario")
+    tornado = sensitivity["tornado"].sort_values("NPV Range", ascending=False).reset_index(drop=True)
+    largest_driver = str(tornado.iloc[0]["Driver"]) if not tornado.empty else "N/A"
+
+    baseline = model["baseline_pnl"].set_index("Metric")
+    scenario = model["scenario_pnl"].set_index("Metric")
+    incremental = model["incremental"].set_index("Metric")
+    cash_flow = model["cash_flow"].set_index("Year")
+    value_drivers = [str(value) for value in settings.get("Value Creation Drivers", [])]
+    driver_text = ", ".join(value_drivers) if value_drivers else "No active value-creation driver"
+    y5_incremental_revenue = safe_float(incremental.at["Incremental Revenue", terminal_year])
+    y5_incremental_ebitda = safe_float(incremental.at["Incremental EBITDA", terminal_year])
+    y5_margin_uplift = safe_float(scenario.at["EBITDA Margin %", terminal_year]) - safe_float(baseline.at["EBITDA Margin %", terminal_year])
+    cumulative_ebitda = sum(safe_float(incremental.at["Incremental EBITDA", year]) for year in years)
+    sustaining_capex = safe_float(financing_metrics.get("Sustaining CAPEX Over Forecast"))
+    covenant_breaches = int(safe_float(financing_metrics.get("Covenant Breaches")))
+    covenant_status = "No modeled breaches" if covenant_breaches == 0 else f"{covenant_breaches} modeled breach(es)"
+    downside_npv = safe_float(sensitivity_scenarios.at["Downside", "NPV"])
+    downside_irr = sensitivity_scenarios.at["Downside", "IRR"]
+    wacc = safe_float(returns.get("WACC"))
+    hurdle = safe_float(capital.get("Corporate Hurdle Rate"))
+
+    st.caption("Structured management decision paper based on the current controlled Model, selected Financing scenario and saved Sensitivity ranges.")
+
+    st.markdown("<div class='enterprise-section-title'>1. Executive Summary</div>", unsafe_allow_html=True)
+    funding_description = (
+        f"The selected {financing_name} structure uses {pct(funding_mix.get('Debt %'))} debt and requires "
+        f"{money(financing_metrics.get('Total Equity Contributions'))} of total equity contributions."
+    )
+    downside_description = f"The combined downside produces an NPV of {money(downside_npv)}, with {largest_driver} as the largest one-at-a-time NPV sensitivity."
+    executive_summary = (
+        f"This {settings.get('Case Archetype', '')} case requires {money(model['total_initial_investment'])} of upfront investment and generates "
+        f"a Project NPV of {money(returns.get('Project NPV'))}, Project IRR of {pct(returns.get('Project IRR'))}, and payback of "
+        f"{investment_payback_label(returns.get('Payback Period'))}. Value creation is driven by {driver_text}, reaching "
+        f"{money(y5_incremental_ebitda)} of {terminal_year} incremental EBITDA. {funding_description} {downside_description}"
+    )
+    st.markdown(f"<p style='margin:0 0 12px;color:#344054;line-height:1.55'>{escape(executive_summary)}</p>", unsafe_allow_html=True)
+    summary_cards = st.columns(8)
+    summary_cards[0].metric("Initial Investment", money(model["total_initial_investment"]))
+    summary_cards[1].metric("Project NPV", money(returns.get("Project NPV")))
+    summary_cards[2].metric("Project IRR", pct(returns.get("Project IRR")))
+    summary_cards[3].metric("Payback", investment_payback_label(returns.get("Payback Period")))
+    summary_cards[4].metric(f"{terminal_year} Incremental EBITDA", money(y5_incremental_ebitda))
+    summary_cards[5].metric("Total Equity Contributions", money(financing_metrics.get("Total Equity Contributions")))
+    summary_cards[6].metric("Peak Debt", money(financing_metrics.get("Peak Debt")))
+    summary_cards[7].metric("Minimum DSCR / Covenants", f"{_financing_ratio(financing_metrics.get('Minimum DSCR'))} · {covenant_status}")
+    with st.expander("Source / Traceability", expanded=False):
+        st.caption("Model → Investment Uses, Investment Returns and Incremental Impact · Financing → selected scenario and Covenants · Sensitivity → combined scenarios and OAT analysis.")
+
+    st.markdown("<div class='enterprise-section-title'>2. Investment Rationale / Case Overview</div>", unsafe_allow_html=True)
+    rationale = pd.DataFrame([
+        {"Case Attribute": "Case Archetype", "Current Basis": settings.get("Case Archetype", "")},
+        {"Case Attribute": "Financial Scope", "Current Basis": settings.get("Financial Scope", "")},
+        {"Case Attribute": "Investment Start", "Current Basis": settings.get("Investment Start Date", "")},
+        {"Case Attribute": "Operational / Commercial Start", "Current Basis": settings.get("Operational Start Date", "")},
+        {"Case Attribute": "Upfront Investment", "Current Basis": money(model["total_initial_investment"])},
+        {"Case Attribute": "Total Sustaining CAPEX", "Current Basis": money(sustaining_capex)},
+        {"Case Attribute": "Value Creation Drivers", "Current Basis": driver_text},
+    ])
+    render_finance_table(rationale)
+    st.caption(f"Value is created through {driver_text}, using the operating assumptions and benefit-recognition profiles maintained in the controlled Model.")
+    with st.expander("Source / Traceability", expanded=False):
+        st.caption("Model → Model Settings, Value Creation Drivers and Investment Uses. Owner and source-basis metadata remains available in Annex A.")
+
+    st.markdown("<div class='enterprise-section-title'>3. Economics & Value Creation</div>", unsafe_allow_html=True)
+    economics_cards = st.columns(6)
+    economics_cards[0].metric(f"{terminal_year} Incremental Revenue", money(y5_incremental_revenue))
+    economics_cards[1].metric(f"{terminal_year} Incremental EBITDA", money(y5_incremental_ebitda))
+    economics_cards[2].metric("EBITDA Margin Uplift", f"{y5_margin_uplift * 100:+.1f}pp")
+    economics_cards[3].metric("Cumulative EBITDA Impact", money(cumulative_ebitda))
+    economics_cards[4].metric("Discounted Payback", investment_payback_label(returns.get("Discounted Payback")))
+    economics_cards[5].metric("Profitability Index", f"{safe_float(returns.get('Profitability Index')):.2f}x")
+    selected_years = [year for year in ["Y1", "Y3", "Y5", "Y10"] if year in years]
+    annual_rows: list[dict[str, object]] = []
+    for label, source, metric in (
+        ("Baseline Revenue", baseline, "Revenue"),
+        ("Investment Scenario Revenue", scenario, "Revenue"),
+        ("Baseline EBITDA", baseline, "EBITDA"),
+        ("Investment Scenario EBITDA", scenario, "EBITDA"),
+        ("Investment Scenario EBIT", scenario, "EBIT"),
+    ):
+        annual_rows.append({"Metric": label, **{year: money(source.at[metric, year]) for year in selected_years}})
+    annual_rows.extend([
+        {"Metric": "Unlevered FCF", **{year: money(cash_flow.at[year, "Unlevered Free Cash Flow"]) for year in selected_years}},
+        {"Metric": "Cumulative FCF", **{year: money(cash_flow.at[year, "Cumulative FCF"]) for year in selected_years}},
+    ])
+    render_finance_table(pd.DataFrame(annual_rows), right_align=set(selected_years))
+    wc_impact = cash_flow.at[terminal_year, "Change in NWC"] if terminal_year in cash_flow.index else 0.0
+    st.caption(f"{terminal_year} working-capital cash-flow impact: {money(wc_impact)}. Detailed P&L, working-capital and cash-flow schedules are retained in Annex B.")
+    with st.expander("Source / Traceability", expanded=False):
+        st.caption("Model → Baseline P&L, Investment Scenario P&L, Incremental Impact, Working Capital, Unlevered FCF and Investment Returns.")
+
+    st.markdown("<div class='enterprise-section-title'>4. Financing & Capital Structure</div>", unsafe_allow_html=True)
+    st.caption(f"Selected funding scenario: {financing_name}.")
+    funding_rows = pd.DataFrame([
+        {"Funding Metric": "Initial Funding Need", "Value": money(financing_metrics.get("Total Funding Requirement"))},
+        {"Funding Metric": "Debt %", "Value": pct(funding_mix.get("Debt %"))},
+        {"Funding Metric": "Internal Cash / Equity %", "Value": pct(funding_mix.get("Internal Cash / Equity %"))},
+        {"Funding Metric": "Other Funding", "Value": money(financing_metrics.get("Alternative Funding Target"))},
+        {"Funding Metric": "Initial Equity Contribution", "Value": money(financing_metrics.get("Initial Equity Contribution"))},
+        {"Funding Metric": "Additional Equity Support", "Value": money(financing_metrics.get("Additional Equity Support"))},
+        {"Funding Metric": "Total Equity Contributions", "Value": money(financing_metrics.get("Total Equity Contributions"))},
+        {"Funding Metric": "Equity IRR", "Value": _financing_percent(financing_metrics.get("Equity IRR"))},
+        {"Funding Metric": "Equity NPV", "Value": money(financing_metrics.get("Equity NPV"))},
+        {"Funding Metric": "Peak Debt", "Value": money(financing_metrics.get("Peak Debt"))},
+        {"Funding Metric": "Cumulative Interest", "Value": money(financing_metrics.get("Interest Cost"))},
+        {"Funding Metric": "Debt Fully Repaid", "Value": financing_metrics.get("Debt Fully Repaid Year", "N/A")},
+        {"Funding Metric": "Minimum DSCR", "Value": _financing_ratio(financing_metrics.get("Minimum DSCR"))},
+        {"Funding Metric": "Covenant Status", "Value": covenant_status},
+    ])
+    funding_columns = st.columns([1.05, 1.55])
+    with funding_columns[0]:
+        render_finance_table(funding_rows, right_align={"Value"}, emphasized_columns={"Value"})
+    with funding_columns[1]:
+        uses = selected_financing["uses"][["Use", "Amount"]].copy()
+        uses["Amount"] = uses["Amount"].map(money)
+        sources = selected_financing["sources"][["Source", "Amount"]].copy()
+        sources["Amount"] = sources["Amount"].map(money)
+        st.markdown("**Sources & Uses Bridge**")
+        bridge_columns = st.columns(2)
+        with bridge_columns[0]:
+            render_finance_table(uses, right_align={"Amount"})
+        with bridge_columns[1]:
+            render_finance_table(sources, right_align={"Amount"})
+        st.caption(f"Total Sources {money(financing_metrics.get('Total Sources'))} · Total Uses {money(financing_metrics.get('Total Uses'))} · Difference {money(financing_metrics.get('Funding Gap / Excess Funding'))}")
+    with st.expander("Source / Traceability", expanded=False):
+        st.caption(f"Financing → {financing_name}: Sources & Uses, Debt Terms, Equity Returns and Covenants. Project NPV and Project IRR are sourced unchanged from the standalone Model.")
+
+    st.markdown("<div class='enterprise-section-title'>5. Sensitivity & Risk</div>", unsafe_allow_html=True)
+    st.caption("Shows the current saved plausible ranges; one-at-a-time tests isolate each driver while combined scenarios move all selected ranges together.")
+    sensitivity_cards = st.columns(5)
+    sensitivity_cards[0].metric("Downside NPV", money(downside_npv))
+    sensitivity_cards[1].metric("Base NPV", money(sensitivity_scenarios.at["Base", "NPV"]))
+    sensitivity_cards[2].metric("Upside NPV", money(sensitivity_scenarios.at["Upside", "NPV"]))
+    sensitivity_cards[3].metric("Largest Sensitivity Driver", largest_driver)
+    sensitivity_cards[4].metric("Base Payback", investment_payback_label(sensitivity_scenarios.at["Base", "Payback"]))
+    chart_source = tornado.head(10)
+    chart_rows: list[dict[str, object]] = []
+    for _, row in chart_source.iterrows():
+        for direction in ("Downside", "Upside"):
+            impact = safe_float(row.get(f"{direction} NPV Impact"))
+            absolute = abs(impact)
+            sign = "+" if impact >= 0 else "-"
+            label = f"{sign}${absolute / 1_000_000:.1f}m" if absolute >= 1_000_000 else f"{sign}${absolute / 1_000:.0f}k"
+            chart_rows.append({"Driver": row["Driver"], "Direction": direction, "Impact": impact / 1_000_000, "Zero": 0.0, "Impact Label": label})
+    chart_data = pd.DataFrame(chart_rows)
+    if not chart_data.empty:
+        order = chart_source["Driver"].astype(str).tolist()
+        base_chart = alt.Chart(chart_data).encode(
+            y=alt.Y("Driver:N", sort=order, title=None, axis=alt.Axis(labelLimit=230, labelPadding=8)),
+            yOffset=alt.YOffset("Direction:N", sort=["Downside", "Upside"]),
+        )
+        bars = base_chart.mark_bar(size=11, cornerRadiusEnd=2).encode(
+            x=alt.X("Impact:Q", title="NPV impact from Base ($m)", axis=alt.Axis(grid=True, tickCount=7)),
+            x2=alt.X2("Zero:Q"),
+            color=alt.Color("Direction:N", scale=alt.Scale(domain=["Downside", "Upside"], range=["#a65f5f", "#4f7894"]), legend=None),
+            tooltip=["Driver:N", "Direction:N", alt.Tooltip("Impact Label:N", title="NPV impact")],
+        )
+        positive = base_chart.transform_filter("datum.Impact >= 0").mark_text(align="left", dx=5, fontSize=11, color="#344054").encode(x="Impact:Q", text="Impact Label:N")
+        negative = base_chart.transform_filter("datum.Impact < 0").mark_text(align="right", dx=-5, fontSize=11, color="#344054").encode(x="Impact:Q", text="Impact Label:N")
+        zero = alt.Chart(pd.DataFrame({"Zero": [0.0]})).mark_rule(color="#344054", strokeWidth=1.4).encode(x="Zero:Q")
+        chart = (bars + positive + negative + zero).properties(height=max(220, len(order) * 34)).configure_view(stroke=None).configure_axis(labelColor="#475467", titleColor="#344054", gridColor="#e7ebf0")
+        st.altair_chart(chart, use_container_width=True)
+    compact_scenarios = _format_investment_sensitivity_results(sensitivity["scenarios"])
+    render_finance_table(compact_scenarios, right_align=set(compact_scenarios.columns) - {"Scenario"})
+    top_risks = []
+    settings_by_driver = {str(row.get("Driver")): row for row in sensitivity_settings}
+    for _, row in tornado.head(3).iterrows():
+        driver = str(row["Driver"])
+        source = settings_by_driver.get(driver, {})
+        top_risks.append({"Sensitivity Driver": driver, "Downside NPV Impact": money(row["Downside NPV Impact"]), "Upside NPV Impact": money(row["Upside NPV Impact"]), "Range Confidence": source.get("Range Confidence", "N/A")})
+    render_finance_table(pd.DataFrame(top_risks), right_align={"Downside NPV Impact", "Upside NPV Impact"})
+    threshold_notes = []
+    if downside_npv < 0:
+        threshold_notes.append("combined downside NPV falls below zero")
+    if downside_irr is not None and not pd.isna(downside_irr) and safe_float(downside_irr) < wacc:
+        threshold_notes.append("combined downside IRR falls below WACC")
+    if downside_irr is not None and not pd.isna(downside_irr) and safe_float(downside_irr) < hurdle:
+        threshold_notes.append("combined downside IRR falls below the corporate hurdle rate")
+    if threshold_notes:
+        st.warning("Threshold observation: " + "; ".join(threshold_notes) + ".")
+    else:
+        st.caption("No modeled downside threshold crossing for NPV, WACC or the corporate hurdle rate.")
+    with st.expander("Source / Traceability", expanded=False):
+        st.caption("Sensitivity → saved driver ranges, current Base reconciliation, OAT tornado analysis and combined Downside / Base / Upside scenarios.")
+
+    st.markdown("<div class='enterprise-section-title'>6. Key Takeaways / Decision Required</div>", unsafe_allow_html=True)
+    tradeoff = (
+        f"{pct(funding_mix.get('Debt %'))} debt reduces initial shareholder funding but introduces {money(financing_metrics.get('Interest Cost'))} of cumulative interest and a minimum DSCR of {_financing_ratio(financing_metrics.get('Minimum DSCR'))}."
+        if safe_float(financing_metrics.get("Debt Funding")) > 0 else
+        "The selected structure avoids debt-service exposure but relies fully on shareholder or internal capital."
+    )
+    takeaways = [
+        f"Primary value source: {driver_text}, supporting {money(y5_incremental_ebitda)} of {terminal_year} incremental EBITDA.",
+        f"Main downside exposure: {largest_driver}; combined downside NPV is {money(downside_npv)}.",
+        f"Financing trade-off: {tradeoff}",
+    ]
+    if safe_float(financing_metrics.get("Additional Equity Support")) > 0:
+        takeaways.append(f"Liquidity requirement: {money(financing_metrics.get('Additional Equity Support'))} of additional equity support is modeled after the initial contribution.")
+    takeaways.extend([
+        f"Management challenge: confirm the evidence and confidence supporting the {largest_driver} range and the timing of value realization.",
+        f"Decision Required: discuss whether the current economics, {financing_name} funding profile and downside resilience provide an acceptable basis for the next governance step.",
+    ])
+    for point in takeaways[:6]:
+        st.markdown(f"- {escape(point)}")
+    st.caption("AI-generated synthesis is advisory, uses structured outputs only, and does not constitute an approval or investment recommendation.")
+
+    st.markdown("<div class='enterprise-section-title'>7. Functional Annex</div>", unsafe_allow_html=True)
+    st.caption("Detailed controlled outputs and source evidence for audit and challenge.")
+
+    with st.expander("Annex A — Investment Assumptions", expanded=False):
+        settings_table = pd.DataFrame([{"Model Setting": key, "Value": value} for key, value in settings.items() if key != "Value Creation Drivers"])
+        settings_table = pd.concat([settings_table, pd.DataFrame([{"Model Setting": "Value Creation Drivers", "Value": driver_text}])], ignore_index=True)
+        render_finance_table(settings_table)
+        render_finance_table(pd.DataFrame(inputs["investment"].get("uses", [])))
+        capex_table = pd.DataFrame([
+            {"CAPEX Schedule": "Sustaining CAPEX", **{year: money(inputs["investment"].get("Sustaining CAPEX", {}).get(year)) for year in years}},
+            {"CAPEX Schedule": "Avoided Future CAPEX", **{year: money(inputs["investment"].get("CAPEX Avoidance", {}).get(year)) for year in years}},
+        ])
+        render_finance_table(capex_table, right_align=set(years))
+        operating_driver_rows = []
+        for group_name in ("capacity", "revenue_based", "acquisition"):
+            for name, value in inputs.get(group_name, {}).items():
+                if isinstance(value, dict) and any(year in value for year in years):
+                    operating_driver_rows.append({"Driver Group": group_name.replace("_", " ").title(), "Driver": name, **{year: value.get(year, "") for year in years}})
+        if operating_driver_rows:
+            operating_drivers = pd.DataFrame(operating_driver_rows)
+            for year in years:
+                operating_drivers[year] = operating_drivers[year].map(lambda value: f"{safe_float(value):,.2f}" if value != "" else "")
+            render_finance_table(operating_drivers, right_align=set(years))
+        for cost_group, rows in inputs.get("operating_costs", {}).items():
+            if rows:
+                st.markdown(f"**{str(cost_group).replace('_', ' ').title()}**")
+                render_finance_table(pd.DataFrame(rows))
+        capital_table = pd.DataFrame([{"Cost of Capital / Benchmark": key, "Value": pct(value) if isinstance(value, (int, float)) else value} for key, value in capital.items()])
+        render_finance_table(capital_table)
+
+    with st.expander("Annex B — Financial Model", expanded=False):
+        for title, table, percent_rows in (
+            ("Baseline P&L", model["baseline_pnl"], {"Gross Margin %", "EBITDA Margin %", "EBIT Margin %"}),
+            ("Investment Scenario P&L", model["scenario_pnl"], {"Gross Margin %", "EBITDA Margin %", "EBIT Margin %"}),
+            ("Incremental Impact", model["incremental"], set()),
+        ):
+            st.markdown(f"**{title}**")
+            render_finance_table(format_investment_table(table, years, percent_rows), right_align=set(years))
+        st.markdown("**Working Capital**")
+        render_finance_table(_format_financing_money_table(model["working_capital"], {"Year"}), right_align=set(model["working_capital"].columns) - {"Year"})
+        st.markdown("**Unlevered FCF**")
+        formatted_cash_flow = model["cash_flow"].astype(object).copy()
+        for column in formatted_cash_flow.columns:
+            if column != "Year":
+                formatted_cash_flow[column] = formatted_cash_flow[column].map(lambda value: f"{safe_float(value):.4f}" if column == "Discount Factor" else money(value))
+        render_finance_table(formatted_cash_flow, right_align=set(formatted_cash_flow.columns) - {"Year"})
+        returns_table = pd.DataFrame([
+            {"Investment Return": "Project NPV", "Value": money(returns.get("Project NPV"))},
+            {"Investment Return": "Project IRR", "Value": pct(returns.get("Project IRR"))},
+            {"Investment Return": "Payback", "Value": investment_payback_label(returns.get("Payback Period"))},
+            {"Investment Return": "Discounted Payback", "Value": investment_payback_label(returns.get("Discounted Payback"))},
+            {"Investment Return": "Profitability Index", "Value": f"{safe_float(returns.get('Profitability Index')):.2f}x"},
+            {"Investment Return": "WACC", "Value": pct(returns.get("WACC"))},
+        ])
+        render_finance_table(returns_table, right_align={"Value"})
+
+    with st.expander("Annex C — Financing", expanded=False):
+        st.markdown(f"**Selected Scenario: {financing_name}**")
+        st.markdown("**Sources & Uses**")
+        annex_bridge = st.columns(2)
+        with annex_bridge[0]:
+            render_finance_table(_format_financing_money_table(selected_financing["uses"], {"Use", "Type"}), right_align={"Amount"})
+        with annex_bridge[1]:
+            render_finance_table(_format_financing_money_table(selected_financing["sources"], {"Source", "Type"}), right_align={"Amount"})
+        st.markdown("**Debt Terms**")
+        render_finance_table(pd.DataFrame([{"Debt Term": key, "Value": value} for key, value in financing_scenario.get("Debt Terms", {}).items()]))
+        st.markdown("**Debt Schedule**")
+        render_finance_table(_format_financing_money_table(selected_financing["debt_schedule"].drop(columns=["Validation"], errors="ignore"), {"Period"}), right_align=set(selected_financing["debt_schedule"].columns) - {"Period", "Validation"})
+        st.markdown("**Covenants**")
+        covenant_table = selected_financing["covenants"].copy()
+        for column in ["Metric Value", "Covenant Limit", "Headroom"]:
+            if column in covenant_table:
+                covenant_table[column] = covenant_table[column].map(_financing_ratio)
+        for column in ["Cash Flow Available for Debt Service", "Contractual Debt Service"]:
+            if column in covenant_table:
+                covenant_table[column] = covenant_table[column].map(money)
+        render_finance_table(covenant_table)
+        st.markdown("**Levered P&L**")
+        render_finance_table(_format_financing_money_table(selected_financing["levered_pnl"], {"Metric", "Period"}), right_align={"Amount"})
+        st.markdown("**Equity Cash Flow / Returns**")
+        render_finance_table(_format_financing_money_table(selected_financing["equity_cash_flow"], {"Period"}), right_align=set(selected_financing["equity_cash_flow"].columns) - {"Period"})
+        comparison_rows = []
+        for scenario_id, result in calculate_all_financing_scenarios(model, financing).items():
+            metrics = result["metrics"]
+            comparison_rows.append({"Funding Scenario": result["scenario"].get("Scenario Name", scenario_id), "Project NPV": money(metrics.get("Project NPV")), "Project IRR": pct(metrics.get("Project IRR")), "Total Equity Contributions": money(metrics.get("Total Equity Contributions")), "Debt Funding": money(metrics.get("Debt Funding")), "Equity IRR": _financing_percent(metrics.get("Equity IRR")), "Peak Debt": money(metrics.get("Peak Debt")), "Minimum DSCR": _financing_ratio(metrics.get("Minimum DSCR")), "Covenant Breaches": int(safe_float(metrics.get("Covenant Breaches")))})
+        st.markdown("**Funding Option Comparison**")
+        comparison = pd.DataFrame(comparison_rows)
+        render_finance_table(comparison, right_align=set(comparison.columns) - {"Funding Scenario"}, emphasized_columns={"Total Equity Contributions"})
+
+    with st.expander("Annex D — Sensitivity", expanded=False):
+        ranges = pd.DataFrame(sensitivity_settings)
+        range_columns = [column for column in ["Applicable", "Driver", "Base", "Downside", "Upside", "Unit", "Input Method", "Range Basis", "Range Confidence"] if column in ranges.columns]
+        render_finance_table(ranges[range_columns])
+        st.markdown("**One-at-a-Time Sensitivity**")
+        oat = tornado.copy()
+        for column in ["Downside NPV", "Base NPV", "Upside NPV", "Downside NPV Impact", "Upside NPV Impact", "NPV Range"]:
+            if column in oat:
+                oat[column] = oat[column].map(money)
+        for column in ["Downside IRR", "Base IRR", "Upside IRR", "Downside IRR Impact", "Upside IRR Impact", "IRR Range"]:
+            if column in oat:
+                oat[column] = oat[column].map(lambda value, field=column: "N/A" if value is None or pd.isna(value) or (field == "IRR Range" and safe_float(value) < 0) else pct(value))
+        render_finance_table(oat, right_align=set(oat.columns) - {"Driver"})
+        standardized = calculate_standardized_sensitivity(model_inputs, sensitivity_settings)
+        if not standardized.empty:
+            st.markdown("**Standardized Sensitivity — Enabled Comparable Drivers**")
+            for column in ["-10% NPV", "Base NPV", "+10% NPV"]:
+                standardized[column] = standardized[column].map(money)
+            render_finance_table(standardized, right_align=set(standardized.columns) - {"Driver"})
+        st.markdown("**Combined Scenario Comparison**")
+        formatted_scenarios = _format_investment_sensitivity_results(sensitivity["scenarios"])
+        render_finance_table(formatted_scenarios, right_align=set(formatted_scenarios.columns) - {"Scenario"})
+
+    with st.expander("Annex E — Methodology / Definitions / Sources", expanded=False):
+        methodology = pd.DataFrame([
+            {"Term": "Project NPV", "Definition / Convention": "Present value of controlled unlevered project cash flows discounted at WACC.", "Source": "Model → Investment Returns"},
+            {"Term": "Project IRR", "Definition / Convention": "Internal rate of return on the same controlled unlevered project cash flows.", "Source": "Model → Investment Returns"},
+            {"Term": "Payback", "Definition / Convention": "Point when cumulative undiscounted project cash flow becomes positive.", "Source": "Model → Unlevered FCF"},
+            {"Term": "Discounted Payback", "Definition / Convention": "Point when cumulative discounted project cash flow becomes positive.", "Source": "Model → Unlevered FCF"},
+            {"Term": "Minimum DSCR", "Definition / Convention": "Minimum valid cash flow available for debt service divided by contractual debt service in periods where debt service exists.", "Source": "Financing → Covenants"},
+            {"Term": "Sensitivity OAT", "Definition / Convention": "One driver changes at a time while all other controlled Base inputs remain unchanged.", "Source": "Sensitivity → One-at-a-Time"},
+            {"Term": "Combined Scenario", "Definition / Convention": "All selected Downside or Upside ranges move simultaneously; scenarios are not probability-weighted forecasts.", "Source": "Sensitivity → Combined Scenario"},
+        ])
+        render_finance_table(methodology)
+        source_rows = []
+        for section_name, section_value in inputs.items():
+            if not isinstance(section_value, dict):
+                continue
+            for key, value in section_value.items():
+                if any(token in str(key).lower() for token in ("source", "basis", "comment", "rationale")) and value not in (None, "", [], {}):
+                    source_rows.append({"Model Section": str(section_name).replace("_", " ").title(), "Field": key, "Source / Basis": value})
+        for group_name, rows in inputs.get("operating_costs", {}).items():
+            for row in rows:
+                if row.get("Source / Basis"):
+                    source_rows.append({"Model Section": str(group_name).replace("_", " ").title(), "Field": row.get("Cost Line", "Operating cost"), "Source / Basis": row.get("Source / Basis")})
+        for row in inputs.get("investment", {}).get("uses", []):
+            if row.get("Source / Basis"):
+                source_rows.append({"Model Section": "Investment Uses", "Field": row.get("Investment Component", "Investment use"), "Source / Basis": row.get("Source / Basis")})
+        if source_rows:
+            st.markdown("**Stored Source / Basis Metadata**")
+            render_finance_table(pd.DataFrame(source_rows))
+
+
 def _format_investment_sensitivity_results(results: pd.DataFrame) -> pd.DataFrame:
     formatted = results.astype(object).copy()
     for column in ("NPV", "Cumulative FCF", "Y5 Revenue", "Y5 EBITDA"):
@@ -12794,8 +13166,7 @@ def page_investment_case() -> None:
     elif section == "Sensitivity":
         render_investment_sensitivity(case)
     else:
-        st.markdown("<div class='enterprise-section-title'>Decision Case</div>", unsafe_allow_html=True)
-        st.info("The management summary, financing comparison, sensitivity synthesis, and investment decision package will be added in a future increment.")
+        render_investment_decision_case(case)
 
 
 def page_investment_case_module() -> None:
