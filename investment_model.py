@@ -186,6 +186,31 @@ def _payback(cf:list[float])->float|None:
     return 0.0 if cf and cf[0]>=0 else None
 
 
+def _shift_incremental_values(values: list[float], shift_months: float) -> list[float]:
+    """Shift annual incremental economics using linear interpolation; zero shift is exact."""
+    if abs(shift_months) < 1e-12 or not values:
+        return list(values)
+    shift_years = shift_months / 12.0
+    shifted: list[float] = []
+    for index in range(len(values)):
+        source_position = index - shift_years
+        if source_position < 0:
+            lower_value = 0.0
+            upper_value = values[0]
+            fraction = source_position + 1.0
+        elif source_position >= len(values) - 1:
+            lower_value = values[-1]
+            upper_value = values[-1]
+            fraction = 0.0
+        else:
+            lower_index = int(source_position)
+            fraction = source_position - lower_index
+            lower_value = values[lower_index]
+            upper_value = values[lower_index + 1]
+        shifted.append(lower_value + (upper_value - lower_value) * min(1.0, max(0.0, fraction)))
+    return shifted
+
+
 def _pnl(rows:dict[str,dict[str,float]], years:list[str])->pd.DataFrame:
     order=["Revenue","COGS","Gross Profit","Gross Margin %","Personnel","Other Operating Expenses","EBITDA","EBITDA Margin %","Depreciation & Amortization","EBIT","EBIT Margin %"]
     return pd.DataFrame([{"Metric":m,**{y:rows[m][y] for y in years}} for m in order])
@@ -244,6 +269,24 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
         if wc_on:
             wc=x["working_capital"]; dso,dio,dpo=(_n(wc.get(k)) for k in ["Relevant DSO","Relevant DIO","Relevant DPO"]); bnwc[y]=br*dso/365+bc*dio/365-bc*dpo/365; snwc[y]=sr*dso/365+sc*dio/365-sc*dpo/365
         else:bnwc[y]=snwc[y]=0
+    timing_shift_months=_n(s.get("Sensitivity Operational Start Shift Months",0))
+    if abs(timing_shift_months)>1e-12:
+        for metric in ["Revenue","COGS","Personnel","Other Operating Expenses","Depreciation & Amortization"]:
+            original_deltas=[scenario[metric][year]-base[metric][year] for year in years]
+            shifted_deltas=_shift_incremental_values(original_deltas,timing_shift_months)
+            for year,delta in zip(years,shifted_deltas):scenario[metric][year]=base[metric][year]+delta
+        for year in years:
+            scenario["Gross Profit"][year]=scenario["Revenue"][year]-scenario["COGS"][year]
+            scenario["Gross Margin %"][year]=_r(scenario["Gross Profit"][year],scenario["Revenue"][year])
+            scenario["EBITDA"][year]=scenario["Gross Profit"][year]-scenario["Personnel"][year]-scenario["Other Operating Expenses"][year]
+            scenario["EBITDA Margin %"][year]=_r(scenario["EBITDA"][year],scenario["Revenue"][year])
+            scenario["EBIT"][year]=scenario["EBITDA"][year]-scenario["Depreciation & Amortization"][year]
+            scenario["EBIT Margin %"][year]=_r(scenario["EBIT"][year],scenario["Revenue"][year])
+            drivers["Scenario Revenue"][year]=scenario["Revenue"][year]
+            drivers["Incremental Revenue"][year]=scenario["Revenue"][year]-base["Revenue"][year]
+            if wc_on:
+                wc=x["working_capital"]; dso,dio,dpo=(_n(wc.get(k)) for k in ["Relevant DSO","Relevant DIO","Relevant DPO"])
+                snwc[year]=scenario["Revenue"][year]*dso/365+scenario["COGS"][year]*dio/365-scenario["COGS"][year]*dpo/365
     baseline,scenario_pnl=_pnl(base,years),_pnl(scenario,years); incremental=pd.DataFrame([{"Metric":f"Incremental {m}",**{y:scenario[m][y]-base[m][y] for y in years}} for m in ["Revenue","Gross Profit","EBITDA","EBIT"]])
     wc_rows=[]; changes={}; prior=0
     for y in years:

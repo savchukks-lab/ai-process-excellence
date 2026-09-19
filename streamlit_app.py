@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pandas as pd
+import altair as alt
 import streamlit as st
 
 from deal_logic import (
@@ -11904,7 +11905,7 @@ def _format_investment_sensitivity_results(results: pd.DataFrame) -> pd.DataFram
     return formatted
 
 
-def investment_sensitivity_interpretation(results: dict[str, object], inputs: dict[str, object]) -> str:
+def investment_sensitivity_interpretation(results: dict[str, object], inputs: dict[str, object], outcome: str) -> str:
     tornado = results.get("tornado", pd.DataFrame())
     scenarios = results.get("scenarios", pd.DataFrame())
     if not isinstance(scenarios, pd.DataFrame) or scenarios.empty:
@@ -11918,9 +11919,17 @@ def investment_sensitivity_interpretation(results: dict[str, object], inputs: di
     hurdle = safe_float(inputs.get("capital", {}).get("Corporate Hurdle Rate"))
     strongest_downside = "the combined downside assumptions"
     strongest_upside = "the combined upside assumptions"
+    largest_drivers: list[str] = []
     if isinstance(tornado, pd.DataFrame) and not tornado.empty:
-        strongest_downside = str(tornado.loc[tornado["Downside Impact"].idxmin(), "Driver"])
-        strongest_upside = str(tornado.loc[tornado["Upside Impact"].idxmax(), "Driver"])
+        impact_suffix = "NPV" if outcome == "NPV" else "IRR"
+        downside_column = f"Downside {impact_suffix} Impact"
+        upside_column = f"Upside {impact_suffix} Impact"
+        range_column = f"{impact_suffix} Range"
+        valid = tornado[tornado[range_column].ge(0)].sort_values(range_column, ascending=False)
+        if not valid.empty:
+            largest_drivers = valid["Driver"].astype(str).head(3).tolist()
+            strongest_downside = str(valid.loc[valid[downside_column].idxmin(), "Driver"])
+            strongest_upside = str(valid.loc[valid[upside_column].idxmax(), "Driver"])
     threshold_notes = []
     if downside_npv < 0:
         threshold_notes.append("downside NPV falls below zero")
@@ -11932,9 +11941,9 @@ def investment_sensitivity_interpretation(results: dict[str, object], inputs: di
     resilience = "; ".join(threshold_notes) if threshold_notes else "the combined downside remains above the modeled NPV and return thresholds"
     return (
         f"The Base Case NPV is {money(base_npv)}, compared with {money(downside_npv)} in the combined downside and {money(upside_npv)} in the combined upside. "
-        f"The strongest one-at-a-time downside driver is {strongest_downside}, while the largest upside response comes from {strongest_upside}. "
+        f"The largest one-at-a-time {outcome} sensitivity drivers are {', '.join(largest_drivers) if largest_drivers else 'not yet available'}; the strongest downside is {strongest_downside}, while the largest upside response comes from {strongest_upside}. "
         f"On the current ranges, {resilience}. "
-        "Management attention should focus on the assumptions with the widest NPV range and the lowest range confidence, while recognizing that these are analytical ranges rather than probability-weighted outcomes."
+        "The OAT view isolates individual drivers, whereas the combined scenarios move all selected ranges together. Management attention should focus on wide-impact, low-confidence assumptions; these are analytical ranges rather than probability-weighted outcomes."
     )
 
 
@@ -11955,44 +11964,55 @@ def render_investment_sensitivity(case: dict[str, object]) -> None:
         st.markdown(f"<div style='padding:2px 0;color:#344054;font-weight:600'>{step}</div>", unsafe_allow_html=True)
 
     summary_slot = st.container()
+    outcome_key = f"investment_sensitivity_outcome_{case_id}"
+    investment_seed_widget(outcome_key, "NPV")
+    outcome = str(st.session_state[outcome_key]) if str(st.session_state[outcome_key]) in {"NPV", "IRR"} else "NPV"
     st.markdown("<div class='enterprise-section-title'>Sensitivity Driver Setup</div>", unsafe_allow_html=True)
     st.caption("Define plausible business ranges for relevant drivers. Base values are read-only and always come from the current controlled Model.")
-    st.caption("Downside and Upside are plausible ranges, not probabilities. Each one-at-a-time test changes only the selected driver and leaves all other assumptions at Base.")
+    st.caption("Downside and Upside are plausible changes, not probabilities. Each one-at-a-time test changes only the selected driver and leaves all other assumptions at Base. For cost drivers, higher cost is typically Downside and lower cost is Upside.")
 
     all_saved = dict(st.session_state.get("investment_sensitivity_inputs", {}))
     settings = normalize_investment_sensitivity_settings(base_inputs, all_saved.get(case_id))
-    editor_key = f"investment_sensitivity_driver_editor_{case_id}"
-    visible_columns = ["Applicable", "Driver", "Base", "Downside", "Upside", "Unit", "Input Method", "Range Basis", "Range Confidence"]
-    source = pd.DataFrame(settings)[visible_columns]
-    source = apply_data_editor_state(source, st.session_state.get(editor_key))
-    edited = st.data_editor(
-        source,
-        key=editor_key,
-        hide_index=True,
-        use_container_width=True,
-        num_rows="fixed",
-        disabled=["Driver", "Base", "Unit", "Input Method"],
-        column_config={
-            "Applicable": st.column_config.CheckboxColumn("Applicable", width="small"),
-            "Driver": st.column_config.TextColumn("Driver", width="medium", help="A controlled Model input tested independently against Base."),
-            "Base": st.column_config.TextColumn("Base", width="small", help="Current read-only value from the controlled Model."),
-            "Downside": st.column_config.NumberColumn("Downside", format="%.1f", width="small", help="Plausible adverse range; this is not a probability."),
-            "Upside": st.column_config.NumberColumn("Upside", format="%.1f", width="small", help="Plausible favorable range; this is not a probability."),
-            "Unit": st.column_config.TextColumn("Unit", width="small"),
-            "Input Method": st.column_config.TextColumn("Input Method", width="medium"),
-            "Range Basis": st.column_config.TextColumn("Range Basis", width="medium", help="Business evidence or rationale supporting the selected range."),
-            "Range Confidence": st.column_config.SelectboxColumn("Range Confidence", options=["High", "Medium", "Low"], width="small", help="Confidence in the selected range, not outcome probability."),
-        },
-    )
-    edited = apply_data_editor_state(edited.copy(), st.session_state.get(editor_key))
-    defaults_by_driver = {str(row["Driver"]): row for row in settings}
     updated_settings = []
-    for row in edited.to_dict("records"):
-        default = defaults_by_driver[str(row["Driver"])]
-        updated = deepcopy(default)
-        for field in ("Applicable", "Downside", "Upside", "Range Basis", "Range Confidence"):
-            updated[field] = row.get(field, default.get(field))
-        updated_settings.append(updated)
+    visible_columns = ["Applicable", "Driver", "Base", "Downside", "Upside", "Unit", "Input Method", "Range Basis", "Range Confidence"]
+    group_order = ["Business Drivers", "Operating Economics", "Investment & Timing", "Working Capital — Advanced"]
+    for group in group_order:
+        group_settings = [row for row in settings if str(row.get("Group")) == group]
+        if not group_settings:
+            continue
+        st.markdown(f"**{group}**")
+        if group == "Working Capital — Advanced":
+            st.caption("Advanced cash-conversion assumptions shown only when Working Capital Improvement is active.")
+        editor_key = f"investment_sensitivity_driver_editor_{case_id}_{re.sub(r'[^a-z0-9]+', '_', group.lower()).strip('_')}"
+        source = pd.DataFrame(group_settings)[visible_columns]
+        source = apply_data_editor_state(source, st.session_state.get(editor_key))
+        edited = st.data_editor(
+            source,
+            key=editor_key,
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+            disabled=["Driver", "Base", "Unit", "Input Method"],
+            column_config={
+                "Applicable": st.column_config.CheckboxColumn("Applicable", width="small"),
+                "Driver": st.column_config.TextColumn("Driver", width="medium", help="Exact controlled Model source tested independently against Base."),
+                "Base": st.column_config.TextColumn("Base", width="small", help="Current read-only value from the controlled Model."),
+                "Downside": st.column_config.NumberColumn("Downside Change", format="%.1f", width="small", help="Plausible adverse change; this is not a probability."),
+                "Upside": st.column_config.NumberColumn("Upside Change", format="%.1f", width="small", help="Plausible favorable change; this is not a probability."),
+                "Unit": st.column_config.TextColumn("Unit", width="small"),
+                "Input Method": st.column_config.TextColumn("Input Method", width="medium"),
+                "Range Basis": st.column_config.TextColumn("Range Basis", width="medium", help="Business evidence or rationale supporting the selected range."),
+                "Range Confidence": st.column_config.SelectboxColumn("Range Confidence", options=["High", "Medium", "Low"], width="small", help="Confidence in the selected range, not outcome probability."),
+            },
+        )
+        edited = apply_data_editor_state(edited.copy(), st.session_state.get(editor_key))
+        defaults_by_driver = {str(row["Driver"]): row for row in group_settings}
+        for row in edited.to_dict("records"):
+            default = defaults_by_driver[str(row["Driver"])]
+            updated = deepcopy(default)
+            for field in ("Applicable", "Downside", "Upside", "Range Basis", "Range Confidence"):
+                updated[field] = row.get(field, default.get(field))
+            updated_settings.append(updated)
     all_saved[case_id] = deepcopy(updated_settings)
     st.session_state.investment_sensitivity_inputs = all_saved
 
@@ -12000,7 +12020,9 @@ def render_investment_sensitivity(case: dict[str, object]) -> None:
     scenarios = results["scenarios"]
     scenario_index = scenarios.set_index("Scenario")
     tornado = results["tornado"]
-    largest_driver = str(tornado.iloc[0]["Driver"]) if not tornado.empty else "N/A"
+    outcome_range_column = f"{outcome} Range"
+    sorted_tornado = tornado[tornado[outcome_range_column].ge(0)].sort_values(outcome_range_column, ascending=False).reset_index(drop=True) if not tornado.empty else tornado
+    largest_driver = str(sorted_tornado.iloc[0]["Driver"]) if not sorted_tornado.empty else "N/A"
     with summary_slot:
         st.markdown("<div class='enterprise-section-title'>Management Summary</div>", unsafe_allow_html=True)
         st.caption("Headline outcomes are calculated from the controlled Base Model and the current sensitivity ranges.")
@@ -12009,17 +12031,75 @@ def render_investment_sensitivity(case: dict[str, object]) -> None:
         cards[1].metric("Base IRR", pct(scenario_index.at["Base", "IRR"]))
         cards[2].metric("Downside NPV", money(scenario_index.at["Downside", "NPV"]))
         cards[3].metric("Upside NPV", money(scenario_index.at["Upside", "NPV"]))
-        cards[4].metric("Largest NPV Sensitivity", largest_driver)
+        cards[4].metric(f"Largest {outcome} Sensitivity", largest_driver)
         cards[5].metric("Base Project Payback", investment_payback_label(scenario_index.at["Base", "Payback"]))
 
-    st.markdown("<div class='enterprise-section-title'>One-at-a-Time NPV Sensitivity</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='enterprise-section-title'>One-at-a-Time {outcome} Sensitivity</div>", unsafe_allow_html=True)
     st.caption("Tornado uses plausible downside/upside ranges defined below. Each driver is changed independently while all other assumptions remain at Base Case. Range width reflects business uncertainty and is not a probability estimate.")
-    if tornado.empty:
-        st.info("Select at least one applicable sensitivity driver to calculate the NPV impact.")
+    outcome = st.selectbox(
+        "Sensitivity Outcome",
+        ["NPV", "IRR"],
+        key=outcome_key,
+        help="Outcome used for the one-at-a-time impact table and tornado visualization. Combined scenarios continue to show both.",
+    )
+    outcome_range_column = f"{outcome} Range"
+    sorted_tornado = tornado[tornado[outcome_range_column].ge(0)].sort_values(outcome_range_column, ascending=False).reset_index(drop=True) if not tornado.empty else tornado
+    if sorted_tornado.empty:
+        st.info(f"Select at least one applicable sensitivity driver to calculate the {outcome} impact.")
     else:
-        display_tornado = tornado.drop(columns=["NPV Range"]).copy()
-        for column in ["Downside NPV", "Base NPV", "Upside NPV", "Downside Impact", "Upside Impact"]:
-            display_tornado[column] = display_tornado[column].map(money)
+        value_columns = [f"Downside {outcome}", f"Base {outcome}", f"Upside {outcome}", f"Downside {outcome} Impact", f"Upside {outcome} Impact"]
+        chart_rows = []
+        chart_source = sorted_tornado.head(10)
+        for _, row in chart_source.iterrows():
+            for direction in ("Downside", "Upside"):
+                impact = row.get(f"{direction} {outcome} Impact")
+                if impact is None or pd.isna(impact):
+                    continue
+                numeric_impact = safe_float(impact)
+                if outcome == "NPV":
+                    chart_impact = numeric_impact / 1_000_000
+                    sign = "+" if numeric_impact >= 0 else "-"
+                    absolute = abs(numeric_impact)
+                    impact_label = f"{sign}${absolute / 1_000_000:.1f}m" if absolute >= 1_000_000 else f"{sign}${absolute / 1_000:.0f}k"
+                else:
+                    chart_impact = numeric_impact * 100
+                    impact_label = f"{chart_impact:+.1f}pp"
+                chart_rows.append({"Driver": row["Driver"], "Direction": direction, "Impact": chart_impact, "Zero": 0.0, "Impact Label": impact_label})
+        chart_data = pd.DataFrame(chart_rows)
+        if not chart_data.empty:
+            driver_order = chart_source["Driver"].astype(str).tolist()
+            base_chart = alt.Chart(chart_data).encode(
+                y=alt.Y("Driver:N", sort=driver_order, title=None, axis=alt.Axis(labelLimit=240, labelPadding=8)),
+                yOffset=alt.YOffset("Direction:N", sort=["Downside", "Upside"]),
+            )
+            bars = base_chart.mark_bar(size=11, cornerRadiusEnd=2).encode(
+                x=alt.X("Impact:Q", title="NPV impact from Base ($m)" if outcome == "NPV" else "IRR impact from Base (percentage points)", axis=alt.Axis(grid=True, tickCount=7)),
+                x2=alt.X2("Zero:Q"),
+                color=alt.Color("Direction:N", scale=alt.Scale(domain=["Downside", "Upside"], range=["#a65f5f", "#4f7894"]), legend=None),
+                tooltip=["Driver:N", "Direction:N", alt.Tooltip("Impact Label:N", title=f"{outcome} impact")],
+            )
+            positive_labels = base_chart.transform_filter("datum.Impact >= 0").mark_text(align="left", dx=5, fontSize=11, color="#344054").encode(
+                x=alt.X("Impact:Q"),
+                text=alt.Text("Impact Label:N"),
+            )
+            negative_labels = base_chart.transform_filter("datum.Impact < 0").mark_text(align="right", dx=-5, fontSize=11, color="#344054").encode(
+                x=alt.X("Impact:Q"),
+                text=alt.Text("Impact Label:N"),
+            )
+            zero_line = alt.Chart(pd.DataFrame({"Zero": [0.0]})).mark_rule(color="#344054", strokeWidth=1.4).encode(x="Zero:Q")
+            chart = (
+                (bars + positive_labels + negative_labels + zero_line)
+                .properties(height=max(220, len(driver_order) * 34))
+                .configure_view(stroke=None)
+                .configure_axis(labelColor="#475467", titleColor="#344054", gridColor="#e7ebf0")
+            )
+            st.altair_chart(chart, use_container_width=True)
+            st.caption("Downside and Upside show their actual impact versus the common Base = 0 reference. Bar direction is determined by the calculated outcome, not by the scenario label.")
+
+        display_tornado = sorted_tornado[["Driver", *value_columns]].copy()
+        formatter = money if outcome == "NPV" else (lambda value: "N/A" if value is None or pd.isna(value) else pct(value))
+        for column in value_columns:
+            display_tornado[column] = display_tornado[column].map(formatter)
         render_finance_table(display_tornado, right_align=set(display_tornado.columns) - {"Driver"})
 
     with st.expander("Standardized Sensitivity — Optional", expanded=False):
@@ -12035,11 +12115,20 @@ def render_investment_sensitivity(case: dict[str, object]) -> None:
     st.markdown("<div class='enterprise-section-title'>Combined Scenario Comparison</div>", unsafe_allow_html=True)
     st.caption("Tornado changes one driver at a time. Scenario comparison moves all selected Downside or Upside assumptions together; it does not create a probability-weighted expected value.")
     formatted_scenarios = _format_investment_sensitivity_results(scenarios)
-    render_finance_table(formatted_scenarios, right_align=set(formatted_scenarios.columns) - {"Scenario"}, exception_values={})
+    exception_values: dict[str, str] = {}
+    wacc = safe_float(base_model["returns"].get("WACC"))
+    hurdle = safe_float(base_inputs.get("capital", {}).get("Corporate Hurdle Rate"))
+    for _, raw_row in scenarios.iterrows():
+        if safe_float(raw_row.get("NPV")) < 0:
+            exception_values[money(raw_row.get("NPV"))] = "#fdecec"
+        irr_value = raw_row.get("IRR")
+        if irr_value is not None and not pd.isna(irr_value) and safe_float(irr_value) < max(wacc, hurdle):
+            exception_values[pct(irr_value)] = "#fdecec"
+    render_finance_table(formatted_scenarios, right_align=set(formatted_scenarios.columns) - {"Scenario"}, exception_values=exception_values)
 
     st.markdown("<div class='enterprise-section-title'>AI Sensitivity Interpretation</div>", unsafe_allow_html=True)
     st.caption("Advisory interpretation of current structured sensitivity outputs; it does not recalculate values or make an investment recommendation.")
-    interpretation = investment_sensitivity_interpretation(results, base_inputs)
+    interpretation = investment_sensitivity_interpretation(results, base_inputs, outcome)
     st.markdown(f"<p style='margin:0;color:#344054;font-style:normal;line-height:1.55'>{escape(interpretation)}</p>", unsafe_allow_html=True)
     st.caption("AI-generated interpretation may contain inaccuracies. Review the controlled assumptions and model outputs before management use.")
 

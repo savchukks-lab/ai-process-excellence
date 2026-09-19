@@ -49,6 +49,7 @@ def _driver(
     upside: float,
     basis: str,
     confidence: str = "Medium",
+    group: str = "Business Drivers",
 ) -> dict[str, Any]:
     return {
         "Driver ID": driver_id,
@@ -62,6 +63,7 @@ def _driver(
         "Input Method": method,
         "Range Basis": basis,
         "Range Confidence": confidence,
+        "Group": group,
     }
 
 
@@ -79,49 +81,42 @@ def investment_sensitivity_drivers(inputs: dict[str, Any], base_model: dict[str,
         volume = _number(inputs.get("capacity", {}).get("Scenario Volume", {}).get(terminal))
         price = _number(inputs.get("capacity", {}).get("Baseline Net Revenue per Unit", {}).get(terminal))
         rows.extend([
-            _driver("revenue_volume", "Revenue / Volume", volume, f"{volume:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Demand and utilization range", "Medium"),
+            _driver("revenue_volume", "Scenario Volume", volume, f"{volume:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Demand and utilization range", "Medium"),
             _driver("net_price", "Net Price", price, f"${price:,.1f}", "% change", "Relative % change", -8.0, 5.0, "Commercial price range", "Medium"),
         ])
     else:
         revenue = _pnl_value(model, "Revenue", terminal)
-        rows.append(_driver("revenue_volume", "Revenue / Volume", revenue, f"${revenue:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Commercial forecast range", "Medium"))
+        rows.append(_driver("revenue_volume", "Revenue", revenue, f"${revenue:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Commercial forecast range", "Medium"))
 
     if archetype == CASE_ARCHETYPES[2]:
         margin = _number(inputs.get("acquisition", {}).get("Target Gross Margin %", {}).get(terminal))
-        rows.append(_driver("target_margin", "Gross Margin", margin, f"{margin:.1%}", "percentage points", "Percentage-point change", -5.0, 3.0, "Target margin diligence range", "Medium"))
+        rows.append(_driver("target_margin", "Gross Margin", margin, f"{margin:.1%}", "percentage points", "Percentage-point change", -5.0, 3.0, "Target margin diligence range", "Medium", "Operating Economics"))
     else:
         variable_cost = _pnl_value(model, "COGS", terminal)
-        rows.append(_driver("variable_cost", "Variable Cost", variable_cost, f"${variable_cost:,.0f}", "% change", "Relative % change", 10.0, -7.5, "Supplier and operating-cost range", "Medium"))
+        rows.append(_driver("variable_cost", "Variable Cost", variable_cost, f"${variable_cost:,.0f}", "% change", "Relative % change", 10.0, -7.5, "Supplier and operating-cost range", "Medium", "Operating Economics"))
 
     personnel = _pnl_value(model, "Personnel", terminal)
     fixed_cost = _pnl_value(model, "Other Operating Expenses", terminal)
     initial = _number(model.get("total_initial_investment"))
     sustaining = sum(_number(inputs.get("investment", {}).get("Sustaining CAPEX", {}).get(year)) for year in years)
     rows.extend([
-        _driver("personnel_cost", "Personnel Cost", personnel, f"${personnel:,.0f}", "% change", "Relative % change", 10.0, -5.0, "Workforce and labor-cost range", "Medium"),
-        _driver("fixed_cost", "Fixed Operating Cost", fixed_cost, f"${fixed_cost:,.0f}", "% change", "Relative % change", 10.0, -5.0, "Operating-plan range", "Medium"),
-        _driver("initial_investment", "Initial Investment / CAPEX", initial, f"${initial:,.0f}", "% change", "Relative % change", 15.0, -5.0, "Estimate and contingency range", "Medium"),
-        _driver("sustaining_capex", "Sustaining CAPEX", sustaining, f"${sustaining:,.0f}", "% change", "Relative % change", 15.0, -10.0, "Long-range maintenance range", "Medium"),
+        _driver("personnel_cost", "Personnel Cost", personnel, f"${personnel:,.0f}", "% change", "Relative % change", 10.0, -5.0, "Workforce and labor-cost range", "Medium", "Operating Economics"),
+        _driver("fixed_cost", "Fixed Operating Cost", fixed_cost, f"${fixed_cost:,.0f}", "% change", "Relative % change", 10.0, -5.0, "Operating-plan range", "Medium", "Operating Economics"),
+        _driver("initial_investment", "Initial Investment / CAPEX", initial, f"${initial:,.0f}", "% change", "Relative % change", 15.0, -5.0, "Estimate and contingency range", "Medium", "Investment & Timing"),
+        _driver("sustaining_capex", "Sustaining CAPEX", sustaining, f"${sustaining:,.0f}", "% change", "Relative % change", 15.0, -10.0, "Long-range maintenance range", "Medium", "Investment & Timing"),
+        _driver("operational_timing", "Operational / Commercial Start Timing", 0.0, "Base start date", "months", "Timing shift", 6.0, -3.0, "Implementation schedule range", "Medium", "Investment & Timing"),
     ])
 
     if "Working Capital Improvement" in enabled:
         working_capital = inputs.get("working_capital", {})
         rows.extend([
-            _driver("dso", "Working Capital / DSO", _number(working_capital.get("Relevant DSO")), f"{_number(working_capital.get('Relevant DSO')):.0f}", "days", "Absolute value", _number(working_capital.get("Relevant DSO")) + 10, max(0.0, _number(working_capital.get("Relevant DSO")) - 10), "Collection-cycle range", "Medium"),
-            _driver("dio", "Working Capital / DIO", _number(working_capital.get("Relevant DIO")), f"{_number(working_capital.get('Relevant DIO')):.0f}", "days", "Absolute value", _number(working_capital.get("Relevant DIO")) + 10, max(0.0, _number(working_capital.get("Relevant DIO")) - 10), "Inventory-cycle range", "Medium"),
-            _driver("dpo", "Working Capital / DPO", _number(working_capital.get("Relevant DPO")), f"{_number(working_capital.get('Relevant DPO')):.0f}", "days", "Absolute value", max(0.0, _number(working_capital.get("Relevant DPO")) - 10), _number(working_capital.get("Relevant DPO")) + 10, "Supplier-payment range", "Medium"),
+            _driver("dso", "DSO", _number(working_capital.get("Relevant DSO")), f"{_number(working_capital.get('Relevant DSO')):.0f}", "days", "Absolute value", _number(working_capital.get("Relevant DSO")) + 10, max(0.0, _number(working_capital.get("Relevant DSO")) - 10), "Collection-cycle range", "Medium", "Working Capital — Advanced"),
+            _driver("dio", "DIO", _number(working_capital.get("Relevant DIO")), f"{_number(working_capital.get('Relevant DIO')):.0f}", "days", "Absolute value", _number(working_capital.get("Relevant DIO")) + 10, max(0.0, _number(working_capital.get("Relevant DIO")) - 10), "Inventory-cycle range", "Medium", "Working Capital — Advanced"),
+            _driver("dpo", "DPO", _number(working_capital.get("Relevant DPO")), f"{_number(working_capital.get('Relevant DPO')):.0f}", "days", "Absolute value", max(0.0, _number(working_capital.get("Relevant DPO")) - 10), _number(working_capital.get("Relevant DPO")) + 10, "Supplier-payment range", "Medium", "Working Capital — Advanced"),
         ])
 
     if "Cost Reduction" in enabled:
-        if archetype == CASE_ARCHETYPES[2]:
-            terminal_ramp = _number(inputs.get("acquisition", {}).get("Synergy Ramp %", {}).get(terminal))
-            base_display = f"{terminal_ramp:.1%}"
-            base_value = terminal_ramp
-        else:
-            realizations = [_number(row.get("Realization %")) for row in inputs.get("savings_register", []) if row.get("Applicable", True)]
-            base_value = sum(realizations) / len(realizations) if realizations else 0.0
-            base_display = f"{base_value:.1%}"
-        rows.append(_driver("savings_realization", "Savings / Synergy Realization", base_value, base_display, "% change", "Relative % change", -15.0, 10.0, "Benefit-delivery range", "Medium"))
+        rows.append(_driver("savings_realization", "Savings Realization", 100.0, "100%", "% of modeled savings", "Modeled savings index", 75.0, 110.0, "Benefit-delivery range", "Medium"))
     return rows
 
 
@@ -176,17 +171,19 @@ def apply_sensitivity_driver(base_inputs: dict[str, Any], driver: dict[str, Any]
                 row["Amount"] = _number(row.get("Amount")) * factor
     elif driver_id == "sustaining_capex":
         _scale_series(inputs["investment"]["Sustaining CAPEX"], factor)
+    elif driver_id == "operational_timing":
+        inputs["settings"]["Sensitivity Operational Start Shift Months"] = _number(scenario_value)
     elif driver_id in {"dso", "dio", "dpo"}:
         field = {"dso": "Relevant DSO", "dio": "Relevant DIO", "dpo": "Relevant DPO"}[driver_id]
         inputs["working_capital"][field] = max(0.0, _number(scenario_value))
     elif driver_id == "savings_realization":
+        realization_factor = max(0.0, _number(scenario_value) / 100.0)
         if archetype == CASE_ARCHETYPES[2]:
-            for year in inputs["acquisition"]["Synergy Ramp %"]:
-                inputs["acquisition"]["Synergy Ramp %"][year] = min(1.0, max(0.0, _number(inputs["acquisition"]["Synergy Ramp %"][year]) * factor))
+            _scale_series(inputs["acquisition"]["Cost Synergies"], realization_factor)
         else:
             for row in inputs.get("savings_register", []):
                 if row.get("Applicable", True):
-                    row["Realization %"] = min(1.0, max(0.0, _number(row.get("Realization %")) * factor))
+                    row["Gross Run-rate Saving"] = _number(row.get("Gross Run-rate Saving", row.get("Gross Saving"))) * realization_factor
     return inputs
 
 
@@ -216,14 +213,26 @@ def calculate_investment_sensitivity(base_inputs: dict[str, Any], settings: list
         base_npv = _number(base_model["returns"].get("Project NPV"))
         downside_npv = _number(downside_model["returns"].get("Project NPV"))
         upside_npv = _number(upside_model["returns"].get("Project NPV"))
+        base_irr = base_model["returns"].get("Project IRR")
+        downside_irr = downside_model["returns"].get("Project IRR")
+        upside_irr = upside_model["returns"].get("Project IRR")
+        base_irr_value = _number(base_irr) if base_irr is not None else None
+        downside_irr_value = _number(downside_irr) if downside_irr is not None else None
+        upside_irr_value = _number(upside_irr) if upside_irr is not None else None
         tornado.append({
             "Driver": row["Driver"],
             "Downside NPV": downside_npv,
             "Base NPV": base_npv,
             "Upside NPV": upside_npv,
-            "Downside Impact": downside_npv - base_npv,
-            "Upside Impact": upside_npv - base_npv,
+            "Downside NPV Impact": downside_npv - base_npv,
+            "Upside NPV Impact": upside_npv - base_npv,
             "NPV Range": abs(upside_npv - downside_npv),
+            "Downside IRR": downside_irr_value,
+            "Base IRR": base_irr_value,
+            "Upside IRR": upside_irr_value,
+            "Downside IRR Impact": None if downside_irr_value is None or base_irr_value is None else downside_irr_value - base_irr_value,
+            "Upside IRR Impact": None if upside_irr_value is None or base_irr_value is None else upside_irr_value - base_irr_value,
+            "IRR Range": -1.0 if downside_irr_value is None or upside_irr_value is None else abs(upside_irr_value - downside_irr_value),
         })
 
     downside_inputs = deepcopy(base_inputs)
