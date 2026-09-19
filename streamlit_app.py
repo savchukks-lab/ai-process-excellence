@@ -11876,20 +11876,135 @@ def render_investment_model(case: dict[str, object]) -> None:
 
 
 def render_investment_overview(case: dict[str, object]) -> None:
-    model = calculate_investment_model(investment_case_inputs(case))
+    case_id = str(case.get("Case ID", ""))
+    model_inputs = investment_case_inputs(case)
+    model = calculate_investment_model(model_inputs)
     returns = model["returns"]
     inputs = model["inputs"]
     capital = inputs["capital"]
-    cards = st.columns(4)
-    cards[0].metric("Initial Investment", money(model["total_initial_investment"]))
+    financing = ensure_financing_inputs(model_inputs.get("financing"))
+    selected_financing_id = str(financing.get("selected_scenario_id", "mixed"))
+    selected_financing = calculate_financing_scenario(model, financing, selected_financing_id)
+    funding_metrics = selected_financing["metrics"]
+    selected_scenario = selected_financing["scenario"]
+    funding_mix = selected_scenario["Funding Mix"]
+    saved_sensitivity = dict(st.session_state.get("investment_sensitivity_inputs", {})).get(case_id)
+    sensitivity_settings = normalize_investment_sensitivity_settings(model_inputs, saved_sensitivity)
+    sensitivity = calculate_investment_sensitivity(model_inputs, sensitivity_settings)
+    scenario_results = sensitivity["scenarios"].set_index("Scenario")
+    tornado = sensitivity["tornado"].sort_values("NPV Range", ascending=False).reset_index(drop=True)
+    largest_driver = str(tornado.iloc[0]["Driver"]) if not tornado.empty else "N/A"
+    years = list(model["years"])
+    terminal_year = "Y5" if "Y5" in years else years[-1]
+    incremental = model["incremental"].set_index("Metric")
+    scenario_pnl = model["scenario_pnl"].set_index("Metric")
+    baseline_pnl = model["baseline_pnl"].set_index("Metric")
+    y5_revenue = safe_float(incremental.at["Incremental Revenue", terminal_year])
+    y5_ebitda = safe_float(incremental.at["Incremental EBITDA", terminal_year])
+    y5_margin_uplift = safe_float(scenario_pnl.at["EBITDA Margin %", terminal_year]) - safe_float(baseline_pnl.at["EBITDA Margin %", terminal_year])
+    cumulative_ebitda = sum(safe_float(incremental.at["Incremental EBITDA", year]) for year in years)
+    covenant_breaches = int(safe_float(funding_metrics.get("Covenant Breaches")))
+    covenant_status = "No breaches" if covenant_breaches == 0 else f"{covenant_breaches} breach(es)"
+    financing_name = str(selected_scenario.get("Scenario Name", selected_financing_id))
+
+    st.caption("Provides a concise management view of investment economics, funding and key sensitivities.")
+    cards = st.columns(6)
+    cards[0].metric("Upfront / Initial Investment", money(model["total_initial_investment"]))
     cards[1].metric("Project NPV", money(returns["Project NPV"]))
     cards[2].metric("Project IRR", pct(returns["Project IRR"]))
     cards[3].metric("Payback", investment_payback_label(returns["Payback Period"]))
-    benchmark = st.columns(3)
-    benchmark[0].metric("WACC", pct(returns["WACC"]))
-    benchmark[1].metric("Hurdle Rate", pct(capital["Corporate Hurdle Rate"]))
-    benchmark[2].metric("Marginal Reinvestment Return", pct(capital["Marginal Reinvestment Return"]))
-    st.info("Overview values are sourced directly from the current controlled investment model.")
+    cards[4].metric("Peak Debt", money(funding_metrics["Peak Debt"]))
+    cards[5].metric("Minimum DSCR", _financing_ratio(funding_metrics["Minimum DSCR"]))
+
+    st.markdown("<div class='enterprise-section-title'>Investment Thesis</div>", unsafe_allow_html=True)
+    st.caption("Summarizes the scope, timing and controlled value-creation basis of the case.")
+    primary_drivers = ", ".join(str(value) for value in inputs["settings"].get("Value Creation Drivers", [])) or "No active value-creation driver"
+    st.markdown(
+        f"**{escape(str(inputs['settings'].get('Case Archetype', '')))}** · {escape(str(inputs['settings'].get('Financial Scope', '')))}  \n"
+        f"Operational / Commercial Start: **{escape(str(inputs['settings'].get('Operational Start Date', 'Not set')))}** · Primary Drivers: **{escape(primary_drivers)}**"
+    )
+
+    st.markdown("<div class='enterprise-section-title'>Value Creation</div>", unsafe_allow_html=True)
+    st.caption("Shows the operating value created by the investment versus the controlled baseline.")
+    value_cards = st.columns(4)
+    value_cards[0].metric(f"{terminal_year} Incremental Revenue", money(y5_revenue))
+    value_cards[1].metric(f"{terminal_year} Incremental EBITDA", money(y5_ebitda))
+    value_cards[2].metric(f"{terminal_year} EBITDA Margin Uplift", f"{y5_margin_uplift * 100:+.1f}pp")
+    value_cards[3].metric("Cumulative EBITDA Impact", money(cumulative_ebitda))
+
+    st.markdown("<div class='enterprise-section-title'>Funding & Capital Structure</div>", unsafe_allow_html=True)
+    st.caption(f"Uses the currently selected Financing scenario: {financing_name}.")
+    funding_cards = st.columns(7)
+    funding_cards[0].metric("Debt %", pct(funding_mix.get("Debt %")))
+    funding_cards[1].metric("Internal Cash / Equity %", pct(funding_mix.get("Internal Cash / Equity %")))
+    funding_cards[2].metric("Total Equity Contributions", money(funding_metrics["Total Equity Contributions"]))
+    funding_cards[3].metric("Equity IRR", _financing_percent(funding_metrics["Equity IRR"]))
+    funding_cards[4].metric("Peak Debt", money(funding_metrics["Peak Debt"]))
+    funding_cards[5].metric("Debt Repaid", str(funding_metrics["Debt Fully Repaid Year"]))
+    funding_cards[6].metric("Covenant Status", covenant_status)
+
+    st.markdown("<div class='enterprise-section-title'>Risk & Sensitivity</div>", unsafe_allow_html=True)
+    st.caption("Uses the current saved Sensitivity ranges and controlled combined stress scenarios.")
+    risk_cards = st.columns(5)
+    risk_cards[0].metric("Downside NPV", money(scenario_results.at["Downside", "NPV"]))
+    risk_cards[1].metric("Base NPV", money(scenario_results.at["Base", "NPV"]))
+    risk_cards[2].metric("Upside NPV", money(scenario_results.at["Upside", "NPV"]))
+    risk_cards[3].metric("Largest Sensitivity Driver", largest_driver)
+    risk_cards[4].metric("Base Payback", investment_payback_label(scenario_results.at["Base", "Payback"]))
+    top_driver_rows = []
+    for _, row in tornado.head(3).iterrows():
+        top_driver_rows.append({
+            "OAT Driver": str(row["Driver"]),
+            "Downside NPV Impact": money(row["Downside NPV Impact"]),
+            "Upside NPV Impact": money(row["Upside NPV Impact"]),
+            "Total NPV Range": money(row["NPV Range"]),
+        })
+    render_finance_table(pd.DataFrame(top_driver_rows), right_align={"Downside NPV Impact", "Upside NPV Impact", "Total NPV Range"})
+
+    st.markdown("<div class='enterprise-section-title'>Management Comparison</div>", unsafe_allow_html=True)
+    st.caption("Brings together the principal return, operating, funding and downside references without replacing source-tab detail.")
+    downside_irr = scenario_results.at["Downside", "IRR"]
+    comparison = pd.DataFrame([
+        {
+            "Area": "Project Returns",
+            "Base Case": f"NPV {money(returns['Project NPV'])} · IRR {pct(returns['Project IRR'])} · Payback {investment_payback_label(returns['Payback Period'])}",
+            "Key Reference / Risk": f"WACC {pct(returns['WACC'])} · Hurdle {pct(capital['Corporate Hurdle Rate'])}",
+        },
+        {
+            "Area": "Operating Value Creation",
+            "Base Case": f"{terminal_year} Revenue {money(y5_revenue)} · EBITDA {money(y5_ebitda)} · Margin uplift {y5_margin_uplift * 100:+.1f}pp",
+            "Key Reference / Risk": f"Largest sensitivity: {largest_driver}",
+        },
+        {
+            "Area": "Funding",
+            "Base Case": f"Debt {pct(funding_mix.get('Debt %'))} · Equity contributions {money(funding_metrics['Total Equity Contributions'])} · Equity IRR {_financing_percent(funding_metrics['Equity IRR'])}",
+            "Key Reference / Risk": f"Minimum DSCR {_financing_ratio(funding_metrics['Minimum DSCR'])} · {covenant_status}",
+        },
+        {
+            "Area": "Downside / Risk",
+            "Base Case": f"Downside NPV {money(scenario_results.at['Downside', 'NPV'])} · IRR {_financing_percent(downside_irr)}",
+            "Key Reference / Risk": f"Primary OAT risk driver: {largest_driver}",
+        },
+    ])
+    exception_values = {comparison.iloc[3]["Base Case"]: "#fdecec"} if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else {}
+    render_finance_table(comparison, exception_values=exception_values)
+
+    st.markdown("<div class='enterprise-section-title'>Management Takeaway</div>", unsafe_allow_html=True)
+    st.caption("Advisory synthesis of structured Model, Financing and Sensitivity outputs.")
+    downside_threshold = "falls below zero" if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else "remains positive"
+    funding_tradeoff = (
+        f"uses {pct(funding_mix.get('Debt %'))} debt with a minimum DSCR of {_financing_ratio(funding_metrics['Minimum DSCR'])} and {covenant_status.lower()}"
+        if safe_float(funding_metrics.get("Debt Funding")) > 0 else
+        "uses no debt, avoiding debt-service pressure while placing the funding burden on shareholder capital"
+    )
+    takeaway = (
+        f"Value creation is driven by {primary_drivers}, producing {money(y5_ebitda)} of {terminal_year} incremental EBITDA and a Project NPV of {money(returns['Project NPV'])}. "
+        f"The selected {financing_name} structure {funding_tradeoff}. "
+        f"In the combined downside stress scenario, NPV {downside_threshold} at {money(scenario_results.at['Downside', 'NPV'])}; the most material one-at-a-time exposure is {largest_driver}. "
+        "Management attention should remain on the durability of the principal value driver, the selected funding burden, covenant capacity where applicable, and the confidence supporting the largest sensitivity ranges."
+    )
+    st.markdown(f"<p style='margin:0;color:#344054;font-style:normal;line-height:1.55'>{escape(takeaway)}</p>", unsafe_allow_html=True)
+    st.caption("AI-generated synthesis is advisory and may contain inaccuracies. Review the controlled source tabs before management use.")
 
 
 def _format_investment_sensitivity_results(results: pd.DataFrame) -> pd.DataFrame:
