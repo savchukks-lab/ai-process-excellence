@@ -11630,6 +11630,8 @@ def render_investment_model(case: dict[str, object]) -> None:
     with sustaining_columns[0]:
         sustaining = render_investment_record_editor(case_id, f"sustaining_{len(years)}", sustaining_rows, ["Year"])
     inputs["investment"]["Sustaining CAPEX"].update({str(r.get("Year")):safe_float(r.get("Amount")) for r in sustaining})
+    total_sustaining = sum(safe_float(inputs["investment"]["Sustaining CAPEX"].get(year)) for year in years)
+    st.metric("Total Sustaining CAPEX", money(total_sustaining))
     sustaining_meta = st.columns([1.15, 1.85])
     source_key = f"investment_{case_id}_sustaining_source"
     comment_key = f"investment_{case_id}_sustaining_comment"
@@ -11639,11 +11641,22 @@ def render_investment_model(case: dict[str, object]) -> None:
     sustaining_meta[1].text_input("Comment / Rationale", key=comment_key)
     inputs["investment"]["Sustaining CAPEX Source / Basis"] = st.session_state[source_key]
     inputs["investment"]["Sustaining CAPEX Comment / Rationale"] = st.session_state[comment_key]
-    if "Asset / CAPEX Avoidance" in set(inputs["settings"].get("Value Creation Drivers", [])):
-        st.caption("Capital expenditure that would otherwise be required in the Baseline Case but is avoided or deferred as a direct result of the proposed investment.")
-        st.caption("Example: A new automation platform implemented today avoids a planned $4m legacy-system replacement in Y4.")
-        st.caption("Avoided CAPEX is a benefit in the year the baseline CAPEX would otherwise occur. It does not reduce Initial Investment.")
+    total_avoided_capex = 0.0
+    capex_avoidance_enabled = "Asset / CAPEX Avoidance" in set(inputs["settings"].get("Value Creation Drivers", []))
+    if capex_avoidance_enabled:
+        st.caption("Avoided Future CAPEX is capital expenditure that the Baseline Case would otherwise require; it is modeled as a future benefit and does not reduce Initial Investment.")
         inputs["investment"] = render_investment_driver_editor(case_id,"capex_avoidance","Avoided Future CAPEX",inputs["investment"],["CAPEX Avoidance"],years)
+        total_avoided_capex = sum(safe_float(inputs["investment"]["CAPEX Avoidance"].get(year)) for year in years)
+        st.metric("Total Avoided Future CAPEX", money(total_avoided_capex))
+
+    st.markdown("**Investment Summary**")
+    investment_summary = st.columns(4 if capex_avoidance_enabled else 3)
+    investment_summary[0].metric("Upfront Investment", money(total_initial))
+    investment_summary[1].metric("Forecast Sustaining CAPEX", money(total_sustaining))
+    investment_summary[2].metric("Total Modeled CAPEX", money(total_initial + total_sustaining))
+    if capex_avoidance_enabled:
+        investment_summary[3].metric("Avoided Future CAPEX", money(total_avoided_capex))
+    st.caption("Upfront Investment represents funding required to bring the project to operational readiness. Sustaining CAPEX occurs after operational start and is included in annual project cash flows; it is not automatically part of the initial financing requirement. Avoided CAPEX is modeled as a future benefit.")
 
     st.markdown("<div class='enterprise-section-title'>3. Archetype-Specific Business Drivers</div>", unsafe_allow_html=True)
     st.caption("Translates the selected investment archetype into the operating drivers that create incremental revenue, savings or capacity.")
