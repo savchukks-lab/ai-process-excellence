@@ -11377,6 +11377,7 @@ def handle_investment_archetype_change(case_id: str) -> None:
 
 def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str, object]], disabled: list[str] | None = None) -> list[dict[str, object]]:
     frame = pd.DataFrame(rows)
+    display_labels = {"Realized Saving": "Full-Run-Rate Realized Saving"}
     whole_number_fields = {
         "Amount", "Baseline Cost / Cost Pool", "Gross Saving", "Gross Run-rate Saving", "Realized Saving",
         "Baseline Y1", "Scenario Y1",
@@ -11391,7 +11392,7 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
             display_frame[column] = display_frame[column].map(lambda value: round(safe_float(value), 1))
     column_config = {
         column: st.column_config.NumberColumn(
-            column,
+            display_labels.get(column, column),
             format=("%.0f" if column in whole_number_fields else "%.1f" if column in one_decimal_fields else "%.1f%%"),
             width=investment_editor_column_width(column),
         )
@@ -11717,7 +11718,7 @@ def render_investment_model(case: dict[str, object]) -> None:
 
     if "Cost Reduction" in enabled and archetype != CASE_ARCHETYPES[2]:
         st.markdown("**Savings / Benefits Register**")
-        st.caption("Ramp % represents the share of the fully realizable saving achieved in each year. Realized Saving = Gross Run-rate Saving × Realization % × Ramp %.")
+        st.caption("Full-run-rate realized saving = Gross Run-Rate Saving × Realization %. Ramp Profile determines how much of this amount is recognized in each forecast year.")
         original_savings = deepcopy(inputs["savings_register"])
         rows=[]
         for row in inputs["savings_register"]:
