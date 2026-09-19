@@ -81,38 +81,38 @@ def investment_sensitivity_drivers(inputs: dict[str, Any], base_model: dict[str,
         volume = _number(inputs.get("capacity", {}).get("Scenario Volume", {}).get(terminal))
         price = _number(inputs.get("capacity", {}).get("Baseline Net Revenue per Unit", {}).get(terminal))
         rows.extend([
-            _driver("revenue_volume", "Scenario Volume", volume, f"{volume:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Demand and utilization range", "Medium"),
-            _driver("net_price", "Net Price", price, f"${price:,.1f}", "% change", "Relative % change", -8.0, 5.0, "Commercial price range", "Medium"),
+            _driver("revenue_volume", "Scenario Volume", volume, f"{volume:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Commercial demand and utilization range", "Medium"),
+            _driver("net_price", "Net Price", price, f"${price:,.1f}", "% change", "Relative % change", -8.0, 5.0, "Commercial pricing range", "Medium"),
         ])
     else:
         revenue = _pnl_value(model, "Revenue", terminal)
-        rows.append(_driver("revenue_volume", "Revenue", revenue, f"${revenue:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Commercial forecast range", "Medium"))
+        rows.append(_driver("revenue_volume", "Revenue", revenue, f"${revenue:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Commercial demand and utilization range", "Medium"))
 
     if archetype == CASE_ARCHETYPES[2]:
         margin = _number(inputs.get("acquisition", {}).get("Target Gross Margin %", {}).get(terminal))
         rows.append(_driver("target_margin", "Gross Margin", margin, f"{margin:.1%}", "percentage points", "Percentage-point change", -5.0, 3.0, "Target margin diligence range", "Medium", "Operating Economics"))
     else:
         variable_cost = _pnl_value(model, "COGS", terminal)
-        rows.append(_driver("variable_cost", "Variable Cost", variable_cost, f"${variable_cost:,.0f}", "% change", "Relative % change", 10.0, -7.5, "Supplier and operating-cost range", "Medium", "Operating Economics"))
+        rows.append(_driver("variable_cost", "Variable Cost", variable_cost, f"${variable_cost:,.0f}", "% change", "Relative % change", 10.0, -7.5, "Supplier / unit-cost planning range", "High", "Operating Economics"))
 
     personnel = _pnl_value(model, "Personnel", terminal)
     fixed_cost = _pnl_value(model, "Other Operating Expenses", terminal)
     initial = _number(model.get("total_initial_investment"))
     sustaining = sum(_number(inputs.get("investment", {}).get("Sustaining CAPEX", {}).get(year)) for year in years)
     rows.extend([
-        _driver("personnel_cost", "Personnel Cost", personnel, f"${personnel:,.0f}", "% change", "Relative % change", 10.0, -5.0, "Workforce and labor-cost range", "Medium", "Operating Economics"),
-        _driver("fixed_cost", "Fixed Operating Cost", fixed_cost, f"${fixed_cost:,.0f}", "% change", "Relative % change", 10.0, -5.0, "Operating-plan range", "Medium", "Operating Economics"),
-        _driver("initial_investment", "Initial Investment / CAPEX", initial, f"${initial:,.0f}", "% change", "Relative % change", 15.0, -5.0, "Estimate and contingency range", "Medium", "Investment & Timing"),
+        _driver("personnel_cost", "Personnel Cost", personnel, f"${personnel:,.0f}", "% change", "Relative % change", 10.0, -5.0, "Workforce cost planning range", "High", "Operating Economics"),
+        _driver("fixed_cost", "Fixed Operating Cost", fixed_cost, f"${fixed_cost:,.0f}", "% change", "Relative % change", 10.0, -5.0, "Operating-plan range", "High", "Operating Economics"),
+        _driver("initial_investment", "Initial Investment / CAPEX", initial, f"${initial:,.0f}", "% change", "Relative % change", 15.0, -5.0, "Estimate / contingency range", "Medium", "Investment & Timing"),
         _driver("sustaining_capex", "Sustaining CAPEX", sustaining, f"${sustaining:,.0f}", "% change", "Relative % change", 15.0, -10.0, "Long-range maintenance range", "Medium", "Investment & Timing"),
-        _driver("operational_timing", "Operational / Commercial Start Timing", 0.0, "Base start date", "months", "Timing shift", 6.0, -3.0, "Implementation schedule range", "Medium", "Investment & Timing"),
+        _driver("operational_timing", "Operational / Commercial Start Timing", 0.0, "Base start date", "months", "Timing shift", 6.0, -3.0, "Implementation schedule range", "Low", "Investment & Timing"),
     ])
 
     if "Working Capital Improvement" in enabled:
         working_capital = inputs.get("working_capital", {})
         rows.extend([
-            _driver("dso", "DSO", _number(working_capital.get("Relevant DSO")), f"{_number(working_capital.get('Relevant DSO')):.0f}", "days", "Absolute value", _number(working_capital.get("Relevant DSO")) + 10, max(0.0, _number(working_capital.get("Relevant DSO")) - 10), "Collection-cycle range", "Medium", "Working Capital — Advanced"),
-            _driver("dio", "DIO", _number(working_capital.get("Relevant DIO")), f"{_number(working_capital.get('Relevant DIO')):.0f}", "days", "Absolute value", _number(working_capital.get("Relevant DIO")) + 10, max(0.0, _number(working_capital.get("Relevant DIO")) - 10), "Inventory-cycle range", "Medium", "Working Capital — Advanced"),
-            _driver("dpo", "DPO", _number(working_capital.get("Relevant DPO")), f"{_number(working_capital.get('Relevant DPO')):.0f}", "days", "Absolute value", max(0.0, _number(working_capital.get("Relevant DPO")) - 10), _number(working_capital.get("Relevant DPO")) + 10, "Supplier-payment range", "Medium", "Working Capital — Advanced"),
+            _driver("dso", "DSO", _number(working_capital.get("Relevant DSO")), f"{_number(working_capital.get('Relevant DSO')):.0f}", "days", "Absolute value", _number(working_capital.get("Relevant DSO")) + 10, max(0.0, _number(working_capital.get("Relevant DSO")) - 10), "Collection-cycle range", "High", "Working Capital — Advanced"),
+            _driver("dio", "DIO", _number(working_capital.get("Relevant DIO")), f"{_number(working_capital.get('Relevant DIO')):.0f}", "days", "Absolute value", _number(working_capital.get("Relevant DIO")) + 10, max(0.0, _number(working_capital.get("Relevant DIO")) - 10), "Inventory-cycle range", "High", "Working Capital — Advanced"),
+            _driver("dpo", "DPO", _number(working_capital.get("Relevant DPO")), f"{_number(working_capital.get('Relevant DPO')):.0f}", "days", "Absolute value", max(0.0, _number(working_capital.get("Relevant DPO")) - 10), _number(working_capital.get("Relevant DPO")) + 10, "Supplier-payment range", "High", "Working Capital — Advanced"),
         ])
 
     if "Cost Reduction" in enabled:

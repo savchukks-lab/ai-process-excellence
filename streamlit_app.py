@@ -11941,9 +11941,9 @@ def investment_sensitivity_interpretation(results: dict[str, object], inputs: di
     resilience = "; ".join(threshold_notes) if threshold_notes else "the combined downside remains above the modeled NPV and return thresholds"
     return (
         f"The Base Case NPV is {money(base_npv)}, compared with {money(downside_npv)} in the combined downside and {money(upside_npv)} in the combined upside. "
-        f"The largest one-at-a-time {outcome} sensitivity drivers are {', '.join(largest_drivers) if largest_drivers else 'not yet available'}; the strongest downside is {strongest_downside}, while the largest upside response comes from {strongest_upside}. "
+        f"The strongest one-at-a-time {outcome} driver is {largest_drivers[0] if largest_drivers else 'not yet available'}; the next most material drivers are {', '.join(largest_drivers[1:3]) if len(largest_drivers) > 1 else 'not material at current ranges'}. "
         f"On the current ranges, {resilience}. "
-        "The OAT view isolates individual drivers, whereas the combined scenarios move all selected ranges together. Management attention should focus on wide-impact, low-confidence assumptions; these are analytical ranges rather than probability-weighted outcomes."
+        f"The combined Downside and Upside stress scenarios move all selected ranges together, unlike the isolated OAT tests. Range confidence should be considered alongside impact magnitude, particularly where {strongest_downside} or {strongest_upside} relies on lower-confidence assumptions."
     )
 
 
@@ -12031,7 +12031,7 @@ def render_investment_sensitivity(case: dict[str, object]) -> None:
         cards[1].metric("Base IRR", pct(scenario_index.at["Base", "IRR"]))
         cards[2].metric("Downside NPV", money(scenario_index.at["Downside", "NPV"]))
         cards[3].metric("Upside NPV", money(scenario_index.at["Upside", "NPV"]))
-        cards[4].metric(f"Largest {outcome} Sensitivity", largest_driver)
+        cards[4].metric("Largest Sensitivity Driver", largest_driver, help=f"Largest total sensitivity span for the selected {outcome} outcome.")
         cards[5].metric("Base Project Payback", investment_payback_label(scenario_index.at["Base", "Payback"]))
 
     st.markdown(f"<div class='enterprise-section-title'>One-at-a-Time {outcome} Sensitivity</div>", unsafe_allow_html=True)
@@ -12113,7 +12113,7 @@ def render_investment_sensitivity(case: dict[str, object]) -> None:
             render_finance_table(standardized, right_align=set(standardized.columns) - {"Driver"})
 
     st.markdown("<div class='enterprise-section-title'>Combined Scenario Comparison</div>", unsafe_allow_html=True)
-    st.caption("Tornado changes one driver at a time. Scenario comparison moves all selected Downside or Upside assumptions together; it does not create a probability-weighted expected value.")
+    st.caption("Combined Downside and Upside move all selected ranges simultaneously and are stress scenarios, not probability-weighted forecasts.")
     formatted_scenarios = _format_investment_sensitivity_results(scenarios)
     exception_values: dict[str, str] = {}
     wacc = safe_float(base_model["returns"].get("WACC"))
