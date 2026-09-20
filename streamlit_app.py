@@ -11985,6 +11985,7 @@ def render_investment_overview(case: dict[str, object]) -> None:
         f" · <strong>Primary Drivers:</strong> {escape(primary_drivers)}</div>",
         unsafe_allow_html=True,
     )
+    st.caption(f"Management is evaluating a {str(inputs['settings'].get('Case Archetype', '')).lower()} whose value depends on converting {primary_drivers} into durable operating performance after start-up.")
 
     st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Value Creation</div>", unsafe_allow_html=True)
     value_cards = st.columns(4)
@@ -11992,6 +11993,8 @@ def render_investment_overview(case: dict[str, object]) -> None:
     value_cards[1].metric(f"{terminal_year} Incremental EBITDA", money(y5_ebitda))
     value_cards[2].metric(f"{terminal_year} EBITDA Margin Uplift", f"{y5_margin_uplift * 100:+.1f}pp")
     value_cards[3].metric("Cumulative EBITDA Impact", money(cumulative_ebitda))
+    value_direction = "adds operating earnings and improves margins" if y5_ebitda >= 0 and y5_margin_uplift >= 0 else "requires management attention because the modeled earnings or margin contribution is negative"
+    st.caption(f"At the modeled end state, the investment {value_direction}, with the benefit profile accumulating across the forecast period.")
 
     st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Funding & Capital Structure</div>", unsafe_allow_html=True)
     st.caption(f"Selected Financing scenario: {financing_name}.")
@@ -12003,6 +12006,11 @@ def render_investment_overview(case: dict[str, object]) -> None:
     funding_cards[4].metric("Peak Debt", money(funding_metrics["Peak Debt"]))
     funding_cards[5].metric("Debt Repaid", str(funding_metrics["Debt Fully Repaid Year"]))
     funding_cards[6].metric("Covenant Status", covenant_status)
+    if safe_float(funding_metrics.get("Debt Funding")) > 0:
+        funding_message = "The selected structure balances debt and shareholder funding; debt-service resilience is the principal financing consideration." if covenant_breaches == 0 else "The selected structure reduces upfront shareholder funding but introduces covenant pressure that requires active management."
+    else:
+        funding_message = "The selected structure avoids debt-service pressure but places the full capital requirement on internal cash or shareholder funding."
+    st.caption(funding_message)
 
     st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Risk & Sensitivity</div>", unsafe_allow_html=True)
     risk_cards = st.columns(5)
@@ -12011,6 +12019,8 @@ def render_investment_overview(case: dict[str, object]) -> None:
     risk_cards[2].metric("Upside NPV", money(scenario_results.at["Upside", "NPV"]))
     risk_cards[3].metric("Largest Sensitivity Driver", largest_driver)
     risk_cards[4].metric("Base Payback", investment_payback_label(scenario_results.at["Base", "Payback"]))
+    risk_message = "The combined downside moves project value below zero" if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else "The combined downside retains positive project value"
+    st.caption(f"{risk_message}, with {largest_driver} representing the largest isolated exposure for management challenge.")
     st.markdown("<div style='height:0.45rem'></div><div class='investment-overview-title'>One-at-a-Time (OAT) Sensitivity Drivers</div>", unsafe_allow_html=True)
     st.caption("Each driver is tested independently while all other assumptions remain at Base.")
     top_driver_rows = []
@@ -12213,7 +12223,15 @@ def render_investment_decision_case(case: dict[str, object]) -> None:
             render_finance_table(uses, right_align={"Amount"})
         with bridge_columns[1]:
             render_finance_table(sources, right_align={"Amount"})
-        st.caption(f"Total Sources {money(financing_metrics.get('Total Sources'))} · Total Uses {money(financing_metrics.get('Total Uses'))} · Difference {money(financing_metrics.get('Funding Gap / Excess Funding'))}")
+        reconciliation_line = (
+            f"Total Sources: {money(financing_metrics.get('Total Sources'))} · "
+            f"Total Uses: {money(financing_metrics.get('Total Uses'))} · "
+            f"Difference: {money(financing_metrics.get('Funding Gap / Excess Funding'))}"
+        )
+        st.markdown(
+            f"<div style='color:#667085;font-size:0.875rem;line-height:1.45;font-style:normal;font-family:inherit'>{escape(reconciliation_line)}</div>",
+            unsafe_allow_html=True,
+        )
     with st.expander("Source / Traceability", expanded=False):
         st.caption(f"Financing → {financing_name}: Sources & Uses, Debt Terms, Equity Returns and Covenants. Project NPV and Project IRR are sourced unchanged from the standalone Model.")
 
@@ -12225,33 +12243,7 @@ def render_investment_decision_case(case: dict[str, object]) -> None:
     sensitivity_cards[2].metric("Upside NPV", money(sensitivity_scenarios.at["Upside", "NPV"]))
     sensitivity_cards[3].metric("Largest Sensitivity Driver", largest_driver)
     sensitivity_cards[4].metric("Base Payback", investment_payback_label(sensitivity_scenarios.at["Base", "Payback"]))
-    chart_source = tornado.head(10)
-    chart_rows: list[dict[str, object]] = []
-    for _, row in chart_source.iterrows():
-        for direction in ("Downside", "Upside"):
-            impact = safe_float(row.get(f"{direction} NPV Impact"))
-            absolute = abs(impact)
-            sign = "+" if impact >= 0 else "-"
-            label = f"{sign}${absolute / 1_000_000:.1f}m" if absolute >= 1_000_000 else f"{sign}${absolute / 1_000:.0f}k"
-            chart_rows.append({"Driver": row["Driver"], "Direction": direction, "Impact": impact / 1_000_000, "Zero": 0.0, "Impact Label": label})
-    chart_data = pd.DataFrame(chart_rows)
-    if not chart_data.empty:
-        order = chart_source["Driver"].astype(str).tolist()
-        base_chart = alt.Chart(chart_data).encode(
-            y=alt.Y("Driver:N", sort=order, title=None, axis=alt.Axis(labelLimit=230, labelPadding=8)),
-            yOffset=alt.YOffset("Direction:N", sort=["Downside", "Upside"]),
-        )
-        bars = base_chart.mark_bar(size=11, cornerRadiusEnd=2).encode(
-            x=alt.X("Impact:Q", title="NPV impact from Base ($m)", axis=alt.Axis(grid=True, tickCount=7)),
-            x2=alt.X2("Zero:Q"),
-            color=alt.Color("Direction:N", scale=alt.Scale(domain=["Downside", "Upside"], range=["#a65f5f", "#4f7894"]), legend=None),
-            tooltip=["Driver:N", "Direction:N", alt.Tooltip("Impact Label:N", title="NPV impact")],
-        )
-        positive = base_chart.transform_filter("datum.Impact >= 0").mark_text(align="left", dx=5, fontSize=11, color="#344054").encode(x="Impact:Q", text="Impact Label:N")
-        negative = base_chart.transform_filter("datum.Impact < 0").mark_text(align="right", dx=-5, fontSize=11, color="#344054").encode(x="Impact:Q", text="Impact Label:N")
-        zero = alt.Chart(pd.DataFrame({"Zero": [0.0]})).mark_rule(color="#344054", strokeWidth=1.4).encode(x="Zero:Q")
-        chart = (bars + positive + negative + zero).properties(height=max(220, len(order) * 34)).configure_view(stroke=None).configure_axis(labelColor="#475467", titleColor="#344054", gridColor="#e7ebf0")
-        st.altair_chart(chart, use_container_width=True)
+    render_investment_tornado_chart(tornado, "NPV")
     compact_scenarios = _format_investment_sensitivity_results(sensitivity["scenarios"])
     render_finance_table(compact_scenarios, right_align=set(compact_scenarios.columns) - {"Scenario"})
     top_risks = []
@@ -12493,6 +12485,85 @@ def _format_investment_sensitivity_results(results: pd.DataFrame) -> pd.DataFram
     return formatted
 
 
+def render_investment_tornado_chart(
+    sorted_tornado: pd.DataFrame,
+    outcome: str,
+    max_drivers: int = 10,
+) -> None:
+    """Render the shared management tornado without changing sensitivity values or order."""
+    chart_source = sorted_tornado.head(max_drivers)
+    chart_rows: list[dict[str, object]] = []
+    for _, row in chart_source.iterrows():
+        for direction in ("Downside", "Upside"):
+            impact = row.get(f"{direction} {outcome} Impact")
+            if impact is None or pd.isna(impact):
+                continue
+            numeric_impact = safe_float(impact)
+            if outcome == "NPV":
+                chart_impact = numeric_impact / 1_000_000
+                sign = "+" if numeric_impact >= 0 else "-"
+                absolute = abs(numeric_impact)
+                impact_label = f"{sign}${absolute / 1_000_000:.1f}m" if absolute >= 1_000_000 else f"{sign}${absolute / 1_000:.0f}k"
+            else:
+                chart_impact = numeric_impact * 100
+                impact_label = f"{chart_impact:+.1f}pp"
+            chart_rows.append({
+                "Driver": str(row["Driver"]),
+                "Direction": direction,
+                "Impact": chart_impact,
+                "Zero": 0.0,
+                "Impact Label": impact_label,
+            })
+    chart_data = pd.DataFrame(chart_rows)
+    if chart_data.empty:
+        return
+
+    driver_order = chart_source["Driver"].astype(str).tolist()
+    max_impact = max(abs(safe_float(value)) for value in chart_data["Impact"])
+    domain_limit = max(1.0, max_impact * 1.22)
+    impact_scale = alt.Scale(domain=[-domain_limit, domain_limit], nice=False)
+    base_chart = alt.Chart(chart_data).encode(
+        y=alt.Y(
+            "Driver:N",
+            sort=driver_order,
+            title=None,
+            axis=alt.Axis(labelLimit=280, labelPadding=14),
+        ),
+        yOffset=alt.YOffset("Direction:N", sort=["Downside", "Upside"]),
+    )
+    bars = base_chart.mark_bar(size=10, cornerRadiusEnd=2).encode(
+        x=alt.X(
+            "Impact:Q",
+            title="NPV impact from Base ($m)" if outcome == "NPV" else "IRR impact from Base (percentage points)",
+            axis=alt.Axis(grid=True, tickCount=7),
+            scale=impact_scale,
+        ),
+        x2=alt.X2("Zero:Q"),
+        color=alt.Color(
+            "Direction:N",
+            scale=alt.Scale(domain=["Downside", "Upside"], range=["#B3261E", "#2E7D32"]),
+            legend=None,
+        ),
+        tooltip=["Driver:N", "Direction:N", alt.Tooltip("Impact Label:N", title=f"{outcome} impact")],
+    )
+    positive_labels = base_chart.transform_filter("datum.Impact >= 0").mark_text(
+        align="left", dx=4, fontSize=9, color="#344054"
+    ).encode(x=alt.X("Impact:Q", scale=impact_scale), text=alt.Text("Impact Label:N"))
+    negative_labels = base_chart.transform_filter("datum.Impact < 0").mark_text(
+        align="right", dx=-4, fontSize=9, color="#344054"
+    ).encode(x=alt.X("Impact:Q", scale=impact_scale), text=alt.Text("Impact Label:N"))
+    zero_line = alt.Chart(pd.DataFrame({"Zero": [0.0]})).mark_rule(
+        color="#344054", strokeWidth=1.4
+    ).encode(x=alt.X("Zero:Q", scale=impact_scale))
+    chart = (
+        (bars + positive_labels + negative_labels + zero_line)
+        .properties(height=max(190, len(driver_order) * 30), padding={"left": 8, "right": 18, "top": 4, "bottom": 4})
+        .configure_view(stroke=None)
+        .configure_axis(labelColor="#475467", titleColor="#344054", gridColor="#e7ebf0")
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
 def investment_sensitivity_interpretation(results: dict[str, object], inputs: dict[str, object], outcome: str) -> str:
     tornado = results.get("tornado", pd.DataFrame())
     scenarios = results.get("scenarios", pd.DataFrame())
@@ -12636,53 +12707,8 @@ def render_investment_sensitivity(case: dict[str, object]) -> None:
         st.info(f"Select at least one applicable sensitivity driver to calculate the {outcome} impact.")
     else:
         value_columns = [f"Downside {outcome}", f"Base {outcome}", f"Upside {outcome}", f"Downside {outcome} Impact", f"Upside {outcome} Impact"]
-        chart_rows = []
-        chart_source = sorted_tornado.head(10)
-        for _, row in chart_source.iterrows():
-            for direction in ("Downside", "Upside"):
-                impact = row.get(f"{direction} {outcome} Impact")
-                if impact is None or pd.isna(impact):
-                    continue
-                numeric_impact = safe_float(impact)
-                if outcome == "NPV":
-                    chart_impact = numeric_impact / 1_000_000
-                    sign = "+" if numeric_impact >= 0 else "-"
-                    absolute = abs(numeric_impact)
-                    impact_label = f"{sign}${absolute / 1_000_000:.1f}m" if absolute >= 1_000_000 else f"{sign}${absolute / 1_000:.0f}k"
-                else:
-                    chart_impact = numeric_impact * 100
-                    impact_label = f"{chart_impact:+.1f}pp"
-                chart_rows.append({"Driver": row["Driver"], "Direction": direction, "Impact": chart_impact, "Zero": 0.0, "Impact Label": impact_label})
-        chart_data = pd.DataFrame(chart_rows)
-        if not chart_data.empty:
-            driver_order = chart_source["Driver"].astype(str).tolist()
-            base_chart = alt.Chart(chart_data).encode(
-                y=alt.Y("Driver:N", sort=driver_order, title=None, axis=alt.Axis(labelLimit=240, labelPadding=8)),
-                yOffset=alt.YOffset("Direction:N", sort=["Downside", "Upside"]),
-            )
-            bars = base_chart.mark_bar(size=11, cornerRadiusEnd=2).encode(
-                x=alt.X("Impact:Q", title="NPV impact from Base ($m)" if outcome == "NPV" else "IRR impact from Base (percentage points)", axis=alt.Axis(grid=True, tickCount=7)),
-                x2=alt.X2("Zero:Q"),
-                color=alt.Color("Direction:N", scale=alt.Scale(domain=["Downside", "Upside"], range=["#a65f5f", "#4f7894"]), legend=None),
-                tooltip=["Driver:N", "Direction:N", alt.Tooltip("Impact Label:N", title=f"{outcome} impact")],
-            )
-            positive_labels = base_chart.transform_filter("datum.Impact >= 0").mark_text(align="left", dx=5, fontSize=11, color="#344054").encode(
-                x=alt.X("Impact:Q"),
-                text=alt.Text("Impact Label:N"),
-            )
-            negative_labels = base_chart.transform_filter("datum.Impact < 0").mark_text(align="right", dx=-5, fontSize=11, color="#344054").encode(
-                x=alt.X("Impact:Q"),
-                text=alt.Text("Impact Label:N"),
-            )
-            zero_line = alt.Chart(pd.DataFrame({"Zero": [0.0]})).mark_rule(color="#344054", strokeWidth=1.4).encode(x="Zero:Q")
-            chart = (
-                (bars + positive_labels + negative_labels + zero_line)
-                .properties(height=max(220, len(driver_order) * 34))
-                .configure_view(stroke=None)
-                .configure_axis(labelColor="#475467", titleColor="#344054", gridColor="#e7ebf0")
-            )
-            st.altair_chart(chart, use_container_width=True)
-            st.caption("Downside and Upside show their actual impact versus the common Base = 0 reference. Bar direction is determined by the calculated outcome, not by the scenario label.")
+        render_investment_tornado_chart(sorted_tornado, outcome)
+        st.caption("Downside and Upside show their actual impact versus the common Base = 0 reference. Bar direction is determined by the calculated outcome, not by the scenario label.")
 
         display_tornado = sorted_tornado[["Driver", *value_columns]].copy()
         formatter = money if outcome == "NPV" else (lambda value: "N/A" if value is None or pd.isna(value) else pct(value))
