@@ -707,6 +707,35 @@ def inject_css() -> None:
             font-weight: 720;
             margin: 0.75rem 0 0.35rem;
         }
+        .investment-overview-section-spacer {
+            height: 1.15rem;
+        }
+        .investment-overview-title {
+            color: #0f172a;
+            font-size: 1.04rem;
+            font-weight: 740;
+            line-height: 1.3;
+            margin: 0 0 0.55rem;
+        }
+        .investment-overview-info-strip {
+            background: #f8fafc;
+            border: 1px solid #d8dee8;
+            border-left: 3px solid #718096;
+            border-radius: 6px;
+            color: #344054;
+            font-size: 0.88rem;
+            line-height: 1.45;
+            padding: 0.7rem 0.85rem;
+        }
+        .investment-overview-takeaway {
+            background: #f7f9fc;
+            border: 1px solid #d8dee8;
+            border-radius: 7px;
+            color: #263448;
+            font-size: 0.9rem;
+            line-height: 1.55;
+            padding: 0.85rem 1rem;
+        }
         div[data-testid="stHorizontalBlock"]:has(.nav-marker) {
             align-items: flex-end;
             margin-bottom: 0.6rem;
@@ -11378,6 +11407,8 @@ def handle_investment_archetype_change(case_id: str) -> None:
     fresh["settings"]["Value Creation Drivers"] = archetype_default_drivers(archetype)
     all_inputs[case_id] = fresh
     st.session_state.investment_case_inputs = all_inputs
+    revision_key = f"investment_{case_id}_sustaining_editor_revision"
+    st.session_state[revision_key] = int(st.session_state.get(revision_key, 0)) + 1
     st.session_state[f"investment_{case_id}_drivers"] = fresh["settings"]["Value Creation Drivers"]
     selected = set(fresh["settings"]["Value Creation Drivers"])
     for driver in VALUE_CREATION_DRIVERS:
@@ -11441,6 +11472,35 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
             if safe_float(edited_row[column]) == safe_float(displayed_rows[index][column]):
                 edited_row[column] = original_rows[index].get(column)
     return edited_rows
+
+
+def render_sustaining_capex_editor(
+    case_id: str,
+    rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Render the fixed annual CAPEX schedule without synchronizing editor deltas twice."""
+    revision_key = f"investment_{case_id}_sustaining_editor_revision"
+    investment_seed_widget(revision_key, 0)
+    editor_key = f"investment_sustaining_{case_id}_{len(rows)}_{int(st.session_state[revision_key])}"
+    source = pd.DataFrame(rows, columns=["Year", "Amount"]).copy(deep=True)
+    source["Year"] = source["Year"].astype(str)
+    source["Amount"] = pd.to_numeric(source["Amount"], errors="coerce").fillna(0.0)
+    edited = st.data_editor(
+        source,
+        key=editor_key,
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        disabled=["Year"],
+        column_config={
+            "Year": st.column_config.TextColumn("Year", width="small"),
+            "Amount": st.column_config.NumberColumn("Amount", format="%.0f", width="small"),
+        },
+    )
+    result = edited.loc[:, ["Year", "Amount"]].copy(deep=True)
+    result["Year"] = result["Year"].astype(str)
+    result["Amount"] = pd.to_numeric(result["Amount"], errors="coerce").fillna(0.0)
+    return result.to_dict("records")
 
 
 def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[str, object]:
@@ -11639,7 +11699,7 @@ def render_investment_model(case: dict[str, object]) -> None:
     st.caption("Recurring capital expenditure required to maintain the operating capability created by the project after operational start, excluding future expansion projects.")
     sustaining_columns = st.columns([1.05, 1.95])
     with sustaining_columns[0]:
-        sustaining = render_investment_record_editor(case_id, f"sustaining_{len(years)}", sustaining_rows, ["Year"])
+        sustaining = render_sustaining_capex_editor(case_id, sustaining_rows)
     inputs["investment"]["Sustaining CAPEX"].update({str(r.get("Year")):safe_float(r.get("Amount")) for r in sustaining})
     total_sustaining = sum(safe_float(inputs["investment"]["Sustaining CAPEX"].get(year)) for year in years)
     st.metric("Total Sustaining CAPEX", money(total_sustaining))
@@ -11916,24 +11976,25 @@ def render_investment_overview(case: dict[str, object]) -> None:
     cards[4].metric("Peak Debt", money(funding_metrics["Peak Debt"]))
     cards[5].metric("Minimum DSCR", _financing_ratio(funding_metrics["Minimum DSCR"]))
 
-    st.markdown("<div class='enterprise-section-title'>Investment Thesis</div>", unsafe_allow_html=True)
-    st.caption("Summarizes the scope, timing and controlled value-creation basis of the case.")
+    st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Investment Thesis</div>", unsafe_allow_html=True)
     primary_drivers = ", ".join(str(value) for value in inputs["settings"].get("Value Creation Drivers", [])) or "No active value-creation driver"
     st.markdown(
-        f"**{escape(str(inputs['settings'].get('Case Archetype', '')))}** · {escape(str(inputs['settings'].get('Financial Scope', '')))}  \n"
-        f"Operational / Commercial Start: **{escape(str(inputs['settings'].get('Operational Start Date', 'Not set')))}** · Primary Drivers: **{escape(primary_drivers)}**"
+        f"<div class='investment-overview-info-strip'><strong>{escape(str(inputs['settings'].get('Case Archetype', '')))}</strong>"
+        f" · {escape(str(inputs['settings'].get('Financial Scope', '')))}"
+        f" · <strong>Operational / Commercial Start:</strong> {escape(str(inputs['settings'].get('Operational Start Date', 'Not set')))}"
+        f" · <strong>Primary Drivers:</strong> {escape(primary_drivers)}</div>",
+        unsafe_allow_html=True,
     )
 
-    st.markdown("<div class='enterprise-section-title'>Value Creation</div>", unsafe_allow_html=True)
-    st.caption("Shows the operating value created by the investment versus the controlled baseline.")
+    st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Value Creation</div>", unsafe_allow_html=True)
     value_cards = st.columns(4)
     value_cards[0].metric(f"{terminal_year} Incremental Revenue", money(y5_revenue))
     value_cards[1].metric(f"{terminal_year} Incremental EBITDA", money(y5_ebitda))
     value_cards[2].metric(f"{terminal_year} EBITDA Margin Uplift", f"{y5_margin_uplift * 100:+.1f}pp")
     value_cards[3].metric("Cumulative EBITDA Impact", money(cumulative_ebitda))
 
-    st.markdown("<div class='enterprise-section-title'>Funding & Capital Structure</div>", unsafe_allow_html=True)
-    st.caption(f"Uses the currently selected Financing scenario: {financing_name}.")
+    st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Funding & Capital Structure</div>", unsafe_allow_html=True)
+    st.caption(f"Selected Financing scenario: {financing_name}.")
     funding_cards = st.columns(7)
     funding_cards[0].metric("Debt %", pct(funding_mix.get("Debt %")))
     funding_cards[1].metric("Internal Cash / Equity %", pct(funding_mix.get("Internal Cash / Equity %")))
@@ -11943,54 +12004,53 @@ def render_investment_overview(case: dict[str, object]) -> None:
     funding_cards[5].metric("Debt Repaid", str(funding_metrics["Debt Fully Repaid Year"]))
     funding_cards[6].metric("Covenant Status", covenant_status)
 
-    st.markdown("<div class='enterprise-section-title'>Risk & Sensitivity</div>", unsafe_allow_html=True)
-    st.caption("Uses the current saved Sensitivity ranges and controlled combined stress scenarios.")
+    st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Risk & Sensitivity</div>", unsafe_allow_html=True)
     risk_cards = st.columns(5)
     risk_cards[0].metric("Downside NPV", money(scenario_results.at["Downside", "NPV"]))
     risk_cards[1].metric("Base NPV", money(scenario_results.at["Base", "NPV"]))
     risk_cards[2].metric("Upside NPV", money(scenario_results.at["Upside", "NPV"]))
     risk_cards[3].metric("Largest Sensitivity Driver", largest_driver)
     risk_cards[4].metric("Base Payback", investment_payback_label(scenario_results.at["Base", "Payback"]))
+    st.markdown("<div style='height:0.45rem'></div><div class='investment-overview-title'>One-at-a-Time (OAT) Sensitivity Drivers</div>", unsafe_allow_html=True)
+    st.caption("Each driver is tested independently while all other assumptions remain at Base.")
     top_driver_rows = []
     for _, row in tornado.head(3).iterrows():
         top_driver_rows.append({
-            "OAT Driver": str(row["Driver"]),
-            "Downside NPV Impact": money(row["Downside NPV Impact"]),
-            "Upside NPV Impact": money(row["Upside NPV Impact"]),
-            "Total NPV Range": money(row["NPV Range"]),
+            "Driver": str(row["Driver"]),
+            "Downside Impact": money(row["Downside NPV Impact"]),
+            "Upside Impact": money(row["Upside NPV Impact"]),
+            "Total Range": money(row["NPV Range"]),
         })
-    render_finance_table(pd.DataFrame(top_driver_rows), right_align={"Downside NPV Impact", "Upside NPV Impact", "Total NPV Range"})
+    render_finance_table(pd.DataFrame(top_driver_rows), right_align={"Downside Impact", "Upside Impact", "Total Range"})
 
-    st.markdown("<div class='enterprise-section-title'>Management Comparison</div>", unsafe_allow_html=True)
-    st.caption("Brings together the principal return, operating, funding and downside references without replacing source-tab detail.")
+    st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Management Comparison</div>", unsafe_allow_html=True)
     downside_irr = scenario_results.at["Downside", "IRR"]
     comparison = pd.DataFrame([
         {
-            "Area": "Project Returns",
-            "Base Case": f"NPV {money(returns['Project NPV'])} · IRR {pct(returns['Project IRR'])} · Payback {investment_payback_label(returns['Payback Period'])}",
-            "Key Reference / Risk": f"WACC {pct(returns['WACC'])} · Hurdle {pct(capital['Corporate Hurdle Rate'])}",
+            "Management Area": "Project Returns",
+            "Current Case": f"NPV {money(returns['Project NPV'])} · IRR {pct(returns['Project IRR'])} · Payback {investment_payback_label(returns['Payback Period'])}",
+            "Reference / Risk": f"WACC {pct(returns['WACC'])} · Hurdle {pct(capital['Corporate Hurdle Rate'])}",
         },
         {
-            "Area": "Operating Value Creation",
-            "Base Case": f"{terminal_year} Revenue {money(y5_revenue)} · EBITDA {money(y5_ebitda)} · Margin uplift {y5_margin_uplift * 100:+.1f}pp",
-            "Key Reference / Risk": f"Largest sensitivity: {largest_driver}",
+            "Management Area": "Operating Value Creation",
+            "Current Case": f"{terminal_year} Revenue {money(y5_revenue)} · EBITDA {money(y5_ebitda)} · Margin uplift {y5_margin_uplift * 100:+.1f}pp",
+            "Reference / Risk": f"Largest sensitivity: {largest_driver}",
         },
         {
-            "Area": "Funding",
-            "Base Case": f"Debt {pct(funding_mix.get('Debt %'))} · Equity contributions {money(funding_metrics['Total Equity Contributions'])} · Equity IRR {_financing_percent(funding_metrics['Equity IRR'])}",
-            "Key Reference / Risk": f"Minimum DSCR {_financing_ratio(funding_metrics['Minimum DSCR'])} · {covenant_status}",
+            "Management Area": "Funding",
+            "Current Case": f"Debt {pct(funding_mix.get('Debt %'))} · Equity contributions {money(funding_metrics['Total Equity Contributions'])} · Equity IRR {_financing_percent(funding_metrics['Equity IRR'])}",
+            "Reference / Risk": f"Minimum DSCR {_financing_ratio(funding_metrics['Minimum DSCR'])} · {covenant_status}",
         },
         {
-            "Area": "Downside / Risk",
-            "Base Case": f"Downside NPV {money(scenario_results.at['Downside', 'NPV'])} · IRR {_financing_percent(downside_irr)}",
-            "Key Reference / Risk": f"Primary OAT risk driver: {largest_driver}",
+            "Management Area": "Downside / Risk",
+            "Current Case": f"Downside NPV {money(scenario_results.at['Downside', 'NPV'])} · IRR {_financing_percent(downside_irr)}",
+            "Reference / Risk": f"Primary OAT risk driver: {largest_driver}",
         },
     ])
-    exception_values = {comparison.iloc[3]["Base Case"]: "#fdecec"} if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else {}
+    exception_values = {comparison.iloc[3]["Current Case"]: "#fdecec"} if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else {}
     render_finance_table(comparison, exception_values=exception_values)
 
-    st.markdown("<div class='enterprise-section-title'>Management Takeaway</div>", unsafe_allow_html=True)
-    st.caption("Advisory synthesis of structured Model, Financing and Sensitivity outputs.")
+    st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Management Takeaway</div>", unsafe_allow_html=True)
     downside_threshold = "falls below zero" if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else "remains positive"
     funding_tradeoff = (
         f"uses {pct(funding_mix.get('Debt %'))} debt with a minimum DSCR of {_financing_ratio(funding_metrics['Minimum DSCR'])} and {covenant_status.lower()}"
@@ -12000,10 +12060,9 @@ def render_investment_overview(case: dict[str, object]) -> None:
     takeaway = (
         f"Value creation is driven by {primary_drivers}, producing {money(y5_ebitda)} of {terminal_year} incremental EBITDA and a Project NPV of {money(returns['Project NPV'])}. "
         f"The selected {financing_name} structure {funding_tradeoff}. "
-        f"In the combined downside stress scenario, NPV {downside_threshold} at {money(scenario_results.at['Downside', 'NPV'])}; the most material one-at-a-time exposure is {largest_driver}. "
-        "Management attention should remain on the durability of the principal value driver, the selected funding burden, covenant capacity where applicable, and the confidence supporting the largest sensitivity ranges."
+        f"In the combined downside stress scenario, NPV {downside_threshold} at {money(scenario_results.at['Downside', 'NPV'])}; management attention should remain on {largest_driver}, funding capacity, and confidence in the principal value drivers."
     )
-    st.markdown(f"<p style='margin:0;color:#344054;font-style:normal;line-height:1.55'>{escape(takeaway)}</p>", unsafe_allow_html=True)
+    st.markdown(f"<div class='investment-overview-takeaway'>{escape(takeaway)}</div>", unsafe_allow_html=True)
     st.caption("AI-generated synthesis is advisory and may contain inaccuracies. Review the controlled source tabs before management use.")
 
 
@@ -12244,27 +12303,69 @@ def render_investment_decision_case(case: dict[str, object]) -> None:
         settings_table = pd.DataFrame([{"Model Setting": key, "Value": value} for key, value in settings.items() if key != "Value Creation Drivers"])
         settings_table = pd.concat([settings_table, pd.DataFrame([{"Model Setting": "Value Creation Drivers", "Value": driver_text}])], ignore_index=True)
         render_finance_table(settings_table)
-        render_finance_table(pd.DataFrame(inputs["investment"].get("uses", [])))
+        assumption_uses = pd.DataFrame(inputs["investment"].get("uses", [])).astype(object)
+        if "Amount" in assumption_uses:
+            assumption_uses["Amount"] = assumption_uses["Amount"].map(money)
+        render_finance_table(assumption_uses, right_align={"Amount"})
         capex_table = pd.DataFrame([
             {"CAPEX Schedule": "Sustaining CAPEX", **{year: money(inputs["investment"].get("Sustaining CAPEX", {}).get(year)) for year in years}},
             {"CAPEX Schedule": "Avoided Future CAPEX", **{year: money(inputs["investment"].get("CAPEX Avoidance", {}).get(year)) for year in years}},
         ])
         render_finance_table(capex_table, right_align=set(years))
+        archetype = str(settings.get("Case Archetype", ""))
+        if archetype == CASE_ARCHETYPES[2]:
+            active_driver_groups = ("acquisition",)
+        elif archetype == CASE_ARCHETYPES[0] and str(settings.get("Revenue Modeling Mode", "Unit-based")) == "Unit-based":
+            active_driver_groups = ("capacity",)
+        else:
+            active_driver_groups = ("revenue_based",)
         operating_driver_rows = []
-        for group_name in ("capacity", "revenue_based", "acquisition"):
+        for group_name in active_driver_groups:
             for name, value in inputs.get(group_name, {}).items():
                 if isinstance(value, dict) and any(year in value for year in years):
                     operating_driver_rows.append({"Driver Group": group_name.replace("_", " ").title(), "Driver": name, **{year: value.get(year, "") for year in years}})
         if operating_driver_rows:
-            operating_drivers = pd.DataFrame(operating_driver_rows)
-            for year in years:
-                operating_drivers[year] = operating_drivers[year].map(lambda value: f"{safe_float(value):,.2f}" if value != "" else "")
+            operating_drivers = pd.DataFrame(operating_driver_rows).astype(object)
+            for row_index, row in operating_drivers.iterrows():
+                driver_name = str(row["Driver"])
+                for year in years:
+                    value = row[year]
+                    if value == "":
+                        display = ""
+                    elif "%" in driver_name or "Ramp" in driver_name:
+                        display = pct(value)
+                    elif any(token in driver_name for token in ("Revenue", "EBITDA", "EBIT", "Working Capital", "Synergies", "Costs", "Net Revenue per Unit")):
+                        display = money(value)
+                    else:
+                        display = f"{safe_float(value):,.0f}"
+                    operating_drivers.at[row_index, year] = display
             render_finance_table(operating_drivers, right_align=set(years))
         for cost_group, rows in inputs.get("operating_costs", {}).items():
             if rows:
                 st.markdown(f"**{str(cost_group).replace('_', ' ').title()}**")
-                render_finance_table(pd.DataFrame(rows))
-        capital_table = pd.DataFrame([{"Cost of Capital / Benchmark": key, "Value": pct(value) if isinstance(value, (int, float)) else value} for key, value in capital.items()])
+                cost_table = pd.DataFrame(rows).astype(object)
+                for column in cost_table.columns:
+                    if column in {"Baseline Y1", "Scenario Y1", "Baseline Unit Cost", "Scenario Unit Cost"}:
+                        cost_table[column] = cost_table[column].map(money)
+                    elif column == "Annual Growth %":
+                        cost_table[column] = cost_table[column].map(pct)
+                render_finance_table(cost_table, right_align={"Baseline Y1", "Scenario Y1", "Baseline Unit Cost", "Scenario Unit Cost", "Annual Growth %"})
+        percent_capital_fields = {
+            "Risk-Free Rate", "Equity Risk Premium", "Country Risk Premium", "Corporate Cost of Equity",
+            "Manual Cost of Equity", "Pre-tax Cost of Debt", "Target Debt %", "Target Equity %",
+            "Corporate Hurdle Rate", "Existing Business ROIC", "Marginal Reinvestment Return", "Treasury / Cash Yield",
+        }
+        beta_fields = {"Beta", "Unlevered Beta", "Relevered Beta"}
+        capital_rows = []
+        for key, value in capital.items():
+            if key in percent_capital_fields:
+                display = pct(value)
+            elif key in beta_fields:
+                display = f"{safe_float(value):.2f}x"
+            else:
+                display = value
+            capital_rows.append({"Cost of Capital / Benchmark": key, "Value": display})
+        capital_table = pd.DataFrame(capital_rows)
         render_finance_table(capital_table)
 
     with st.expander("Annex B — Financial Model", expanded=False):

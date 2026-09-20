@@ -134,6 +134,23 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
     app.session_state[f"investment_case_section_{case['Case ID']}"] = "Model"
     app.run()
     assert_clean(app, f"{archetype} Model")
+    sustaining_value = 300_000 + index * 10_000
+    sustaining_key = f"investment_sustaining_{case['Case ID']}_10_0"
+    app.session_state[sustaining_key] = {
+        "edited_rows": {0: {"Amount": sustaining_value}},
+        "added_rows": [],
+        "deleted_rows": [],
+    }
+    app.run()
+    assert_clean(app, f"{archetype} Sustaining CAPEX edit")
+    assert app.session_state["investment_case_inputs"][case["Case ID"]]["investment"]["Sustaining CAPEX"]["Y1"] == sustaining_value
+    app.session_state[f"investment_case_section_{case['Case ID']}"] = "Financing"
+    app.run()
+    assert_clean(app, f"{archetype} Financing navigation")
+    app.session_state[f"investment_case_section_{case['Case ID']}"] = "Model"
+    app.run()
+    assert_clean(app, f"{archetype} Model return")
+    assert app.session_state["investment_case_inputs"][case["Case ID"]]["investment"]["Sustaining CAPEX"]["Y1"] == sustaining_value
 
 # Model editors must persist Streamlit's latest delta before recalculation.
 case = cases[0]
@@ -157,7 +174,7 @@ assert_clean(app, "Investment Uses first edit")
 assert app.session_state["investment_case_inputs"][case_id]["investment"]["uses"][0]["Amount"] == 23_000_000
 assert calculate_investment_model(app.session_state["investment_case_inputs"][case_id])["returns"]["Project NPV"] != npv_before_edit
 
-sustaining_key = f"investment_records_{case_id}_sustaining_10"
+sustaining_key = f"investment_sustaining_{case_id}_10_0"
 app.session_state[sustaining_key] = {"edited_rows": {0: {"Amount": 360_000}}, "added_rows": [], "deleted_rows": []}
 app.run()
 assert_clean(app, "Sustaining CAPEX first edit")
