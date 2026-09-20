@@ -9,7 +9,7 @@ APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
 os.chdir(APP_PATH.parent)
 sys.path.insert(0, str(APP_PATH.parent))
 
-from investment_model import CASE_ARCHETYPES, default_investment_inputs
+from investment_model import CASE_ARCHETYPES, calculate_investment_model, default_investment_inputs
 
 
 for index, archetype in enumerate(CASE_ARCHETYPES):
@@ -52,5 +52,24 @@ for index, archetype in enumerate(CASE_ARCHETYPES):
             assert "Management Takeaway" in section_text
         else:
             assert "One-at-a-Time" in section_text
+
+    default_app = AppTest.from_file(str(APP_PATH), default_timeout=90)
+    default_app.session_state["current_module"] = "investment"
+    default_app.session_state["investment_page"] = "Investment Case"
+    default_app.session_state["selected_investment_case_id"] = case_id
+    default_app.session_state["investment_runtime_cases"] = [case]
+    default_app.session_state["investment_case_inputs"] = {case_id: deepcopy(source_inputs)}
+    expected_model = calculate_investment_model(source_inputs)
+    default_app.run()
+    assert not list(default_app.exception), default_app.exception[0].message if list(default_app.exception) else ""
+    assert default_app.session_state[f"investment_case_section_{case_id}"] == "Model"
+    for section in ("Financing", "Sensitivity", "Overview", "Decision Case", "Model"):
+        default_app.session_state[f"investment_case_section_{case_id}"] = section
+        default_app.run()
+        assert not list(default_app.exception), default_app.exception[0].message if list(default_app.exception) else ""
+        current_model = calculate_investment_model(default_app.session_state["investment_case_inputs"][case_id])
+        assert current_model["returns"]["Project NPV"] == expected_model["returns"]["Project NPV"]
+        assert current_model["returns"]["Project IRR"] == expected_model["returns"]["Project IRR"]
+        assert current_model["total_initial_investment"] == expected_model["total_initial_investment"]
 
 print("Investment Decision Case rendered cleanly for all three archetypes")

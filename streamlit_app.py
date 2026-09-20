@@ -708,7 +708,13 @@ def inject_css() -> None:
             margin: 0.75rem 0 0.35rem;
         }
         .investment-overview-section-spacer {
-            height: 1.15rem;
+            height: 1.75rem;
+        }
+        .investment-overview-subsection-spacer {
+            height: 1.5rem;
+        }
+        .investment-overview-takeaway-spacer {
+            height: 1.3rem;
         }
         .investment-overview-title {
             color: #0f172a;
@@ -744,6 +750,38 @@ def inject_css() -> None:
             font-size: 0.9rem;
             line-height: 1.55;
             padding: 0.85rem 1rem;
+        }
+        div[role="radiogroup"][aria-label="Investment case section"] {
+            border-bottom: 1px solid #d8dee8;
+            gap: 1.4rem;
+            margin: 0.25rem 0 1.1rem;
+        }
+        div[role="radiogroup"][aria-label="Investment case section"] label {
+            background: transparent;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            border-radius: 0;
+            color: #667085;
+            margin: 0;
+            padding: 0.5rem 0.1rem 0.65rem;
+        }
+        div[role="radiogroup"][aria-label="Investment case section"] label:has(input:checked) {
+            border-bottom-color: #17866b;
+            color: #0f513f;
+        }
+        div[role="radiogroup"][aria-label="Investment case section"] label > div:first-child {
+            display: none;
+        }
+        div[role="radiogroup"][aria-label="Investment case section"] label p {
+            color: inherit;
+            font-size: 0.9rem;
+            font-weight: 600;
+            line-height: 1.25;
+            margin: 0;
+        }
+        div[role="radiogroup"][aria-label="Investment case section"] label:hover {
+            border-bottom-color: #9fcfc1;
+            color: #344054;
         }
         div[data-testid="stHorizontalBlock"]:has(.nav-marker) {
             align-items: flex-end;
@@ -12033,7 +12071,7 @@ def render_investment_overview(case: dict[str, object]) -> None:
     risk_message = "The combined downside moves project value below zero" if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else "The combined downside retains positive project value"
     risk_narrative = f"{risk_message}, with {largest_driver} representing the largest isolated exposure for management challenge."
     st.markdown(f"<div class='investment-overview-narrative'>{escape(risk_narrative)}</div>", unsafe_allow_html=True)
-    st.markdown("<div style='height:0.45rem'></div><div class='investment-overview-title'>One-at-a-Time (OAT) Sensitivity Drivers</div>", unsafe_allow_html=True)
+    st.markdown("<div class='investment-overview-subsection-spacer'></div><div class='investment-overview-title'>One-at-a-Time (OAT) Sensitivity Drivers</div>", unsafe_allow_html=True)
     st.caption("Each driver is tested independently while all other assumptions remain at Base.")
     top_driver_rows = []
     for _, row in tornado.head(3).iterrows():
@@ -12072,7 +12110,7 @@ def render_investment_overview(case: dict[str, object]) -> None:
     exception_values = {comparison.iloc[3]["Current Case"]: "#fdecec"} if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else {}
     render_finance_table(comparison, exception_values=exception_values)
 
-    st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Management Takeaway</div>", unsafe_allow_html=True)
+    st.markdown("<div class='investment-overview-takeaway-spacer'></div><div class='investment-overview-title'>Management Takeaway</div>", unsafe_allow_html=True)
     downside_threshold = "falls below zero" if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else "remains positive"
     funding_tradeoff = (
         f"uses {pct(funding_mix.get('Debt %'))} debt with a minimum DSCR of {_financing_ratio(funding_metrics['Minimum DSCR'])} and {covenant_status.lower()}"
@@ -13295,7 +13333,7 @@ def page_investment_case() -> None:
         unsafe_allow_html=True,
     )
     st.caption(f"Owner: {case.get('Owner', '')} · Last updated: {case.get('Last Updated', '')}")
-    sections = ["Overview", "Model", "Financing", "Sensitivity", "Decision Case"]
+    sections = ["Model", "Financing", "Sensitivity", "Overview", "Decision Case"]
     section = st.radio("Investment case section", sections, horizontal=True, key=f"investment_case_section_{selected_id}", label_visibility="collapsed")
     if section == "Overview":
         render_investment_overview(case)
