@@ -11186,8 +11186,31 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
             saving.setdefault("Custom Y1 Ramp %", 1 / 3)
             saving.setdefault("Custom Y2 Ramp %", 2 / 3)
             saving.setdefault("Custom Y3+ Ramp %", 1.0)
+            if "Cost Line Mapping" not in saving:
+                category = str(saving.get("Category", ""))
+                if category in {"Manufacturing", "Procurement"}:
+                    saving["Cost Line Mapping"] = "Manufacturing COGS · Direct Materials"
+                elif category == "Personnel":
+                    saving["Cost Line Mapping"] = "Non-Manufacturing Personnel · Operations"
+                else:
+                    saving["Cost Line Mapping"] = "Non-Manufacturing OPEX · Other Fixed Overhead"
+        operating_costs = current.setdefault("operating_costs", {})
+        if "manufacturing_cogs" not in operating_costs:
+            operating_costs["manufacturing_cogs"] = deepcopy(defaults["operating_costs"]["manufacturing_cogs"])
+        if "non_manufacturing_personnel" not in operating_costs:
+            operating_costs["non_manufacturing_personnel"] = deepcopy(operating_costs.get("personnel", defaults["operating_costs"]["non_manufacturing_personnel"]))
+        if "non_manufacturing_opex" not in operating_costs:
+            operating_costs["non_manufacturing_opex"] = deepcopy(operating_costs.get("fixed", defaults["operating_costs"]["non_manufacturing_opex"]))
+        for legacy_group in ("personnel", "variable", "fixed"):
+            operating_costs.pop(legacy_group, None)
         current.setdefault("operating_cost_input_methods", deepcopy(defaults["operating_cost_input_methods"]))
         current.setdefault("operating_cost_schedules", deepcopy(defaults["operating_cost_schedules"]))
+        for group in ("manufacturing_cogs", "non_manufacturing_personnel", "non_manufacturing_opex"):
+            current["operating_cost_input_methods"].setdefault(group, defaults["operating_cost_input_methods"][group])
+            current["operating_cost_schedules"].setdefault(group, deepcopy(defaults["operating_cost_schedules"][group]))
+        working_capital = current.setdefault("working_capital", {})
+        working_capital.setdefault("AP Cost Basis", "Direct Materials")
+        working_capital.setdefault("Selected Operating Cost Base %", 1.0)
         debt_weight = min(1.0, max(0.0, safe_float(current.setdefault("capital", {}).get("Target Debt %", .35))))
         current["capital"]["Target Equity %"] = 1.0 - debt_weight
         if current != all_inputs[case_id]:
@@ -11494,6 +11517,19 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
             column_config[column] = st.column_config.CheckboxColumn(column, width="small")
         elif column == "Ramp Profile":
             column_config[column] = st.column_config.SelectboxColumn(column, options=["Immediate", "1-year ramp", "2-year ramp", "Custom"], width="medium")
+        elif column == "Cost Line Mapping":
+            column_config[column] = st.column_config.SelectboxColumn(column, options=[
+                "Manufacturing COGS · Direct Materials",
+                "Manufacturing COGS · Direct Labor",
+                "Manufacturing COGS · Variable Manufacturing Overhead",
+                "Manufacturing COGS · Fixed Manufacturing Overhead",
+                "Non-Manufacturing Personnel · Operations",
+                "Non-Manufacturing OPEX · Maintenance Contracts",
+                "Non-Manufacturing OPEX · Software Licenses",
+                "Non-Manufacturing OPEX · Other Fixed Overhead",
+            ], width="large")
+        elif column == "Cost Behavior":
+            column_config[column] = st.column_config.SelectboxColumn(column, options=["Unit-based", "Y1 + Growth"], width="medium")
         else:
             column_config[column] = st.column_config.TextColumn(column, width=investment_editor_column_width(column))
     editor_key = f"investment_records_{case_id}_{key}"
@@ -11693,6 +11729,20 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     strip[1].metric("Hurdle Rate", pct(capital["Corporate Hurdle Rate"]))
     strip[2].metric("Existing ROIC", pct(capital["Existing Business ROIC"]))
     strip[3].metric("Marginal Return", pct(capital["Marginal Reinvestment Return"]))
+    wacc_bridge = returns.get("WACC")
+    st.markdown("**WACC calculation bridge**")
+    wacc_columns = st.columns(6)
+    for column, (label, value) in zip(wacc_columns, [
+        ("Cost of Equity", returns.get("Cost of Equity")),
+        ("Equity Weight", returns.get("Target Equity Weight")),
+        ("Pre-tax Cost of Debt", returns.get("Pre-tax Cost of Debt")),
+        ("After-tax Cost of Debt", returns.get("After-tax Cost of Debt")),
+        ("Debt Weight", returns.get("Target Debt Weight")),
+        ("WACC", wacc_bridge),
+    ]):
+        column.metric(label, pct(value))
+    if method.startswith("CAPM"):
+        st.caption("Cost of Equity = Risk-Free Rate + Beta × Equity Risk Premium + Country Risk Premium. WACC applies the target capital structure, which remains separate from the project-specific funding mix in Financing.")
     with st.expander("Assumption source, methodology and rationale", expanded=False):
         for field in ["Source / Methodology", "Effective Date", "Rationale"]:
             key=f"investment_{case_id}_capital_meta_{field}";investment_seed_widget(key,str(capital.get(field,"")));st.text_input(field,key=key);capital[field]=st.session_state[key]
@@ -11863,9 +11913,9 @@ def render_investment_model(case: dict[str, object]) -> None:
     st.markdown("<div class='enterprise-section-title'>4. Operating Cost Structure</div>", unsafe_allow_html=True)
     st.caption("Defines how baseline and investment operating costs evolve and determines the project’s incremental profitability.")
     definitions={
-        "personnel": ("Personnel Costs", "Shown separately because headcount is often step-fixed rather than purely variable or fixed."),
-        "variable": ("Non-Personnel Variable Costs", "Changes with the primary activity driver or volume."),
-        "fixed": ("Non-Personnel Fixed Costs", "Remains broadly unchanged within the relevant operating range."),
+        "manufacturing_cogs": ("A. Manufacturing COGS", "Direct Materials, Direct Labor, Variable Manufacturing Overhead and Fixed Manufacturing Overhead drive reported COGS. Unit-based rows scale with activity; other rows use Y1 plus growth or an annual schedule."),
+        "non_manufacturing_personnel": ("B. Non-Manufacturing Personnel", "Relevant commercial, administrative and operating personnel outside manufacturing COGS."),
+        "non_manufacturing_opex": ("C. Non-Manufacturing OPEX", "Recurring non-manufacturing operating expenses outside personnel and manufacturing COGS."),
     }
     for group, (title, definition) in definitions.items():
         current_rows = inputs["operating_costs"].get(group, [])
@@ -11908,8 +11958,21 @@ def render_investment_model(case: dict[str, object]) -> None:
     render_investment_pnl("6. Baseline Operating P&L", "Shows the expected economics of the relevant business scope without the proposed investment.", model["baseline_pnl"], years)
     render_investment_pnl("7. Investment Scenario Operating P&L", "Shows the same business scope after incorporating the modeled investment effects.", model["scenario_pnl"], years)
 
+    with st.expander("Manufacturing COGS bridge", expanded=False):
+        st.caption("Manufacturing COGS reconciles Direct Materials, Direct Labor, Variable Manufacturing Overhead and Fixed Manufacturing Overhead to the reported COGS line.")
+        cogs_bridge = model["cogs_bridge"].astype(object).copy()
+        for column in years:
+            cogs_bridge[column] = cogs_bridge[column].map(money)
+        render_finance_table(cogs_bridge, right_align=set(years))
+    with st.expander("Depreciation & Amortization bridge", expanded=False):
+        st.caption("Manufacturing D&A is intentionally shown separately below EBITDA for management-model transparency.")
+        da_bridge = model["depreciation_bridge"].astype(object).copy()
+        for column in years:
+            da_bridge[column] = da_bridge[column].map(money)
+        render_finance_table(da_bridge, right_align=set(years))
+
     st.markdown("<div class='enterprise-section-title'>8. Incremental Impact</div>", unsafe_allow_html=True)
-    st.caption("Isolates the financial effect attributable to the investment by comparing the Investment Scenario with the Baseline.")
+    st.caption("Shows undiscounted operating deltas between the Investment Scenario and Baseline. Y5 cards are a representative operating-year snapshot; the table retains the full annual bridge.")
     y5 = "Y5" if "Y5" in years else years[-1]
     incremental = model["incremental"].set_index("Metric")
     baseline = model["baseline_pnl"].set_index("Metric")
@@ -11925,13 +11988,22 @@ def render_investment_model(case: dict[str, object]) -> None:
     if "Working Capital Improvement" in enabled:
         st.markdown("<div class='enterprise-section-title'>9. Working Capital</div>", unsafe_allow_html=True)
         st.caption("Quantifies the incremental cash tied up in receivables, inventory and payables as the project scales.")
-        wc_cols=st.columns(3)
+        wc_cols=st.columns(4)
         for col,field in zip(wc_cols,["Relevant DSO","Relevant DIO","Relevant DPO"]):
             key=f"investment_{case_id}_{field.lower().replace(' ','_')}";investment_seed_widget(key,safe_float(inputs["working_capital"].get(field)));col.number_input(f"{field} (days)",min_value=0.0,step=1.0,key=key);inputs["working_capital"][field]=safe_float(st.session_state[key])
+        ap_basis_key=f"investment_{case_id}_ap_cost_basis"
+        investment_seed_widget(ap_basis_key,str(inputs["working_capital"].get("AP Cost Basis","Direct Materials")))
+        wc_cols[3].selectbox("AP Cost Basis",["Direct Materials","COGS","Selected Operating Cost Base"],key=ap_basis_key)
+        inputs["working_capital"]["AP Cost Basis"]=st.session_state[ap_basis_key]
+        if st.session_state[ap_basis_key]=="Selected Operating Cost Base":
+            selected_base_key=f"investment_{case_id}_selected_ap_cost_base"
+            investment_seed_widget(selected_base_key,safe_float(inputs["working_capital"].get("Selected Operating Cost Base %",1))*100)
+            st.number_input("Payable-bearing share of COGS %",min_value=0.0,max_value=100.0,step=5.0,key=selected_base_key)
+            inputs["working_capital"]["Selected Operating Cost Base %"]=safe_float(st.session_state[selected_base_key])/100
         save_investment_case_inputs(case_id,inputs);model=calculate_investment_model(inputs);wc_table=model["working_capital"].astype(object).copy()
         for column in wc_table.columns[1:]: wc_table[column]=wc_table[column].map(money)
         render_finance_table(wc_table,right_align=set(wc_table.columns[1:]))
-        st.caption("AR = relevant Revenue × DSO / 365; Inventory = relevant COGS × DIO / 365; AP = relevant COGS × DPO / 365. Values reflect the project-relevant scope, not consolidated company working capital.")
+        st.caption("Incremental AR = incremental revenue × DSO / 365; Incremental Inventory = incremental COGS × DIO / 365; Incremental AP = selected payable-bearing cost base × DPO / 365. Change in NWC reflects only the investment-attributable movement, not the full Scenario balance.")
 
     st.markdown("<div class='enterprise-section-title'>10. Unlevered Free Cash Flow</div>", unsafe_allow_html=True)
     st.caption("Converts incremental operating profit into project cash flow before financing effects and forms the basis for project valuation.")
@@ -11939,8 +12011,15 @@ def render_investment_model(case: dict[str, object]) -> None:
     for column in cash_flow.columns[1:]:
         cash_flow[column] = cash_flow[column].map(lambda value: f"{safe_float(value):.3f}" if column == "Discount Factor" else money(value))
     render_finance_table(cash_flow, right_align=set(cash_flow.columns[1:]))
+    st.caption("UFCF = Incremental EBIT – Cash Taxes + D&A – CAPEX – Change in NWC + Avoided CAPEX. Sustaining CAPEX remains annual CAPEX; Avoided Future CAPEX is shown separately as a positive project cash-flow benefit.")
+    st.caption("Cumulative FCF is cumulative undiscounted UFCF. Present Value of FCF = UFCF × Discount Factor. Cumulative Discounted FCF is cumulative present value, discounted at the calculated WACC.")
     st.caption("Unlevered Free Cash Flow excludes financing effects, including debt drawdowns, principal repayments and interest expense. Financing structure and levered equity returns are modeled separately in the Financing tab.")
-    st.caption("Cash taxes are modeled on positive incremental EBIT in each period; no tax benefit or tax-loss carryforward is assumed for loss periods.")
+    with st.expander("Tax-loss carryforward bridge", expanded=False):
+        tax_bridge=model["tax_bridge"].astype(object).copy()
+        for column in tax_bridge.columns[1:]: tax_bridge[column]=tax_bridge[column].map(money)
+        render_finance_table(tax_bridge,right_align=set(tax_bridge.columns[1:]))
+        st.caption("Negative taxable incremental EBIT creates a tax-loss balance. Future positive incremental EBIT uses accumulated losses before cash tax is paid; no immediate cash tax benefit is recognized for a loss period.")
+    st.caption("Project IRR = IRR of the standalone unlevered project cash-flow series from Y0 through the selected forecast horizon (Y10 for the standard case). No separate IRR calculation is used.")
 
     st.markdown("<div class='enterprise-section-title'>11. Investment Returns</div>", unsafe_allow_html=True)
     st.caption("Summarizes project value creation and compares returns with WACC, hurdle rate and alternative uses of capital.")

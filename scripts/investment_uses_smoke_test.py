@@ -91,7 +91,8 @@ avoidance_initial = enabled_initial_uses(avoidance_inputs)
 avoidance_model = calculate_investment_model(avoidance_inputs)
 assert enabled_initial_uses(avoidance_inputs) == avoidance_initial
 assert avoidance_model["cash_flow"].set_index("Year").at["Y0", "Unlevered Free Cash Flow"] == -avoidance_initial
-assert avoidance_model["cash_flow"].set_index("Year").at["Y4", "CAPEX"] == 0
+assert avoidance_model["cash_flow"].set_index("Year").at["Y4", "CAPEX"] == avoidance_inputs["investment"]["Sustaining CAPEX"]["Y4"]
+assert avoidance_model["cash_flow"].set_index("Year").at["Y4", "Avoided CAPEX"] == 4_000_000
 
 avoidance_app = AppTest.from_file(str(APP_PATH), default_timeout=90)
 avoidance_app.session_state["current_module"] = "investment"

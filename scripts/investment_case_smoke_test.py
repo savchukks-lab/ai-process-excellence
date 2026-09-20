@@ -79,8 +79,8 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
         scenario_pnl = annual_result["scenario_pnl"].set_index("Metric")
         assert scenario_pnl.at["COGS", "Y1"] > 0
         assert 0 < scenario_pnl.at["Gross Margin %", "Y1"] < 1
-        assert (annual_result["working_capital"]["Inventory"] > 0).all()
-        assert (annual_result["working_capital"]["Accounts Payable"] > 0).all()
+        assert (annual_result["working_capital"]["Incremental Inventory"] > 0).all()
+        assert (annual_result["working_capital"]["Incremental Accounts Payable"] > 0).all()
 
         revenue_inputs = deepcopy(inputs)
         revenue_inputs["settings"]["Revenue Modeling Mode"] = "Revenue-based"
@@ -197,9 +197,9 @@ assert_clean(app, "Savings register first edit")
 assert app.session_state["investment_case_inputs"][case_id]["savings_register"][0]["Gross Run-rate Saving"] == 700_000
 
 for group, field, value in (
-    ("personnel", "Scenario Y1", 5_000_000),
-    ("variable", "Scenario Unit Cost", 30.0),
-    ("fixed", "Scenario Y1", 1_700_000),
+    ("non_manufacturing_personnel", "Scenario Y1", 5_000_000),
+    ("manufacturing_cogs", "Scenario Unit Cost", 30.0),
+    ("non_manufacturing_opex", "Scenario Y1", 1_700_000),
 ):
     editor_key = f"investment_records_{case_id}_cost_{group}"
     app.session_state[editor_key] = {"edited_rows": {0: {field: value}}, "added_rows": [], "deleted_rows": []}
@@ -207,14 +207,14 @@ for group, field, value in (
     assert_clean(app, f"{group} cost first edit")
     assert app.session_state["investment_case_inputs"][case_id]["operating_costs"][group][0][field] == value
 
-personnel_method_key = f"investment_{case_id}_cost_method_personnel"
+personnel_method_key = f"investment_{case_id}_cost_method_non_manufacturing_personnel"
 next(widget for widget in app.radio if widget.key == personnel_method_key).set_value("Annual Schedule").run()
 assert_clean(app, "Personnel annual schedule mode")
-personnel_schedule_key = f"investment_driver_{case_id}_cost_schedule_personnel_monetary_value_10"
+personnel_schedule_key = f"investment_driver_{case_id}_cost_schedule_non_manufacturing_personnel_monetary_value_10"
 app.session_state[personnel_schedule_key] = {"edited_rows": {1: {"Y1": 5_250_000}}, "added_rows": [], "deleted_rows": []}
 app.run()
 assert_clean(app, "Personnel annual schedule first edit")
-assert app.session_state["investment_case_inputs"][case_id]["operating_cost_schedules"]["personnel"]["Scenario Cost"]["Y1"] == 5_250_000
+assert app.session_state["investment_case_inputs"][case_id]["operating_cost_schedules"]["non_manufacturing_personnel"]["Scenario Cost"]["Y1"] == 5_250_000
 
 capex_driver_key = f"investment_{case_id}_driver_asset_capex_avoidance"
 next(widget for widget in app.checkbox if widget.key == capex_driver_key).set_value(True).run()

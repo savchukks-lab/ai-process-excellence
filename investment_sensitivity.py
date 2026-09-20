@@ -24,7 +24,7 @@ def _scale_series(values: dict[str, Any], factor: float) -> None:
 def _scale_cost_group(inputs: dict[str, Any], group: str, factor: float) -> None:
     for row in inputs.get("operating_costs", {}).get(group, []):
         row["Scenario Y1"] = _number(row.get("Scenario Y1")) * factor
-        if group == "variable":
+        if group == "manufacturing_cogs":
             row["Scenario Unit Cost"] = _number(row.get("Scenario Unit Cost")) * factor
     for value_type in ("Scenario Cost",):
         _scale_series(inputs.get("operating_cost_schedules", {}).get(group, {}).get(value_type, {}), factor)
@@ -95,8 +95,8 @@ def investment_sensitivity_drivers(inputs: dict[str, Any], base_model: dict[str,
         variable_cost = _pnl_value(model, "COGS", terminal)
         rows.append(_driver("variable_cost", "Variable Cost", variable_cost, f"${variable_cost:,.0f}", "% change", "Relative % change", 10.0, -7.5, "Supplier / unit-cost planning range", "High", "Operating Economics"))
 
-    personnel = _pnl_value(model, "Personnel", terminal)
-    fixed_cost = _pnl_value(model, "Other Operating Expenses", terminal)
+    personnel = _pnl_value(model, "Non-Manufacturing Personnel", terminal)
+    fixed_cost = _pnl_value(model, "Non-Manufacturing OPEX", terminal)
     initial = _number(model.get("total_initial_investment"))
     sustaining = sum(_number(inputs.get("investment", {}).get("Sustaining CAPEX", {}).get(year)) for year in years)
     rows.extend([
@@ -156,15 +156,15 @@ def apply_sensitivity_driver(base_inputs: dict[str, Any], driver: dict[str, Any]
     elif driver_id == "net_price":
         _scale_series(inputs["capacity"]["Baseline Net Revenue per Unit"], factor)
     elif driver_id == "variable_cost":
-        _scale_cost_group(inputs, "variable", factor)
+        _scale_cost_group(inputs, "manufacturing_cogs", factor)
     elif driver_id == "target_margin":
         delta = _number(scenario_value) / 100.0
         for year in inputs["acquisition"]["Target Gross Margin %"]:
             inputs["acquisition"]["Target Gross Margin %"][year] = min(1.0, max(0.0, _number(inputs["acquisition"]["Target Gross Margin %"][year]) + delta))
     elif driver_id == "personnel_cost":
-        _scale_cost_group(inputs, "personnel", factor)
+        _scale_cost_group(inputs, "non_manufacturing_personnel", factor)
     elif driver_id == "fixed_cost":
-        _scale_cost_group(inputs, "fixed", factor)
+        _scale_cost_group(inputs, "non_manufacturing_opex", factor)
     elif driver_id == "initial_investment":
         for row in inputs["investment"]["uses"]:
             if row.get("Applicable", True):
