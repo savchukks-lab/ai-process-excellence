@@ -727,6 +727,15 @@ def inject_css() -> None:
             line-height: 1.45;
             padding: 0.7rem 0.85rem;
         }
+        .investment-overview-narrative {
+            color: #475467;
+            font-size: 0.92rem;
+            font-style: normal;
+            font-weight: 400;
+            line-height: 1.48;
+            margin: 0.65rem 0 0.3rem;
+            max-width: 1080px;
+        }
         .investment-overview-takeaway {
             background: #f7f9fc;
             border: 1px solid #d8dee8;
@@ -11985,7 +11994,8 @@ def render_investment_overview(case: dict[str, object]) -> None:
         f" · <strong>Primary Drivers:</strong> {escape(primary_drivers)}</div>",
         unsafe_allow_html=True,
     )
-    st.caption(f"Management is evaluating a {str(inputs['settings'].get('Case Archetype', '')).lower()} whose value depends on converting {primary_drivers} into durable operating performance after start-up.")
+    thesis_narrative = f"Management is evaluating a {str(inputs['settings'].get('Case Archetype', '')).lower()} whose value depends on converting {primary_drivers} into durable operating performance after start-up."
+    st.markdown(f"<div class='investment-overview-narrative'>{escape(thesis_narrative)}</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Value Creation</div>", unsafe_allow_html=True)
     value_cards = st.columns(4)
@@ -11994,7 +12004,8 @@ def render_investment_overview(case: dict[str, object]) -> None:
     value_cards[2].metric(f"{terminal_year} EBITDA Margin Uplift", f"{y5_margin_uplift * 100:+.1f}pp")
     value_cards[3].metric("Cumulative EBITDA Impact", money(cumulative_ebitda))
     value_direction = "adds operating earnings and improves margins" if y5_ebitda >= 0 and y5_margin_uplift >= 0 else "requires management attention because the modeled earnings or margin contribution is negative"
-    st.caption(f"At the modeled end state, the investment {value_direction}, with the benefit profile accumulating across the forecast period.")
+    value_narrative = f"At the modeled end state, the investment {value_direction}, with the benefit profile accumulating across the forecast period."
+    st.markdown(f"<div class='investment-overview-narrative'>{escape(value_narrative)}</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Funding & Capital Structure</div>", unsafe_allow_html=True)
     st.caption(f"Selected Financing scenario: {financing_name}.")
@@ -12010,7 +12021,7 @@ def render_investment_overview(case: dict[str, object]) -> None:
         funding_message = "The selected structure balances debt and shareholder funding; debt-service resilience is the principal financing consideration." if covenant_breaches == 0 else "The selected structure reduces upfront shareholder funding but introduces covenant pressure that requires active management."
     else:
         funding_message = "The selected structure avoids debt-service pressure but places the full capital requirement on internal cash or shareholder funding."
-    st.caption(funding_message)
+    st.markdown(f"<div class='investment-overview-narrative'>{escape(funding_message)}</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='investment-overview-section-spacer'></div><div class='investment-overview-title'>Risk & Sensitivity</div>", unsafe_allow_html=True)
     risk_cards = st.columns(5)
@@ -12020,7 +12031,8 @@ def render_investment_overview(case: dict[str, object]) -> None:
     risk_cards[3].metric("Largest Sensitivity Driver", largest_driver)
     risk_cards[4].metric("Base Payback", investment_payback_label(scenario_results.at["Base", "Payback"]))
     risk_message = "The combined downside moves project value below zero" if safe_float(scenario_results.at["Downside", "NPV"]) < 0 else "The combined downside retains positive project value"
-    st.caption(f"{risk_message}, with {largest_driver} representing the largest isolated exposure for management challenge.")
+    risk_narrative = f"{risk_message}, with {largest_driver} representing the largest isolated exposure for management challenge."
+    st.markdown(f"<div class='investment-overview-narrative'>{escape(risk_narrative)}</div>", unsafe_allow_html=True)
     st.markdown("<div style='height:0.45rem'></div><div class='investment-overview-title'>One-at-a-Time (OAT) Sensitivity Drivers</div>", unsafe_allow_html=True)
     st.caption("Each driver is tested independently while all other assumptions remain at Base.")
     top_driver_rows = []
@@ -12528,6 +12540,7 @@ def render_investment_tornado_chart(
             sort=driver_order,
             title=None,
             axis=alt.Axis(labelLimit=280, labelPadding=14),
+            scale=alt.Scale(paddingInner=0.45, paddingOuter=0.25),
         ),
         yOffset=alt.YOffset("Direction:N", sort=["Downside", "Upside"]),
     )
@@ -12557,7 +12570,7 @@ def render_investment_tornado_chart(
     ).encode(x=alt.X("Zero:Q", scale=impact_scale))
     chart = (
         (bars + positive_labels + negative_labels + zero_line)
-        .properties(height=max(190, len(driver_order) * 30), padding={"left": 8, "right": 18, "top": 4, "bottom": 4})
+        .properties(height=max(220, len(driver_order) * 42), padding={"left": 8, "right": 18, "top": 4, "bottom": 4})
         .configure_view(stroke=None)
         .configure_axis(labelColor="#475467", titleColor="#344054", gridColor="#e7ebf0")
     )
