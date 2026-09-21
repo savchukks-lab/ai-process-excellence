@@ -84,14 +84,23 @@ def _savings(archetype: str) -> list[dict[str, Any]]:
 def _costs(archetype: str) -> dict[str, list[dict[str, Any]]]:
     digital, acquisition = archetype == CASE_ARCHETYPES[1], archetype == CASE_ARCHETYPES[2]
     baseline_volume = 720_000.0
+    if digital:
+        manufacturing_cogs = [
+            {"Applicable": True, "Cost Line": "Variable Manufacturing Overhead", "Cost Behavior": "Fixed / step-fixed — annual", "Baseline Input": 1_100_000, "Scenario Input": 1_650_000, "Annual Growth %": .02, "Source / Basis": "Operations estimate", "Comment": "Usage-based cloud and processing cost"},
+        ]
+    elif acquisition:
+        manufacturing_cogs = [
+            {"Applicable": True, "Cost Line": "Direct Materials", "Cost Behavior": "Fixed / step-fixed — annual", "Baseline Input": 18_432_000, "Scenario Input": 18_432_000, "Annual Growth %": .02, "Source / Basis": "Target diligence", "Comment": "Payable-bearing material and product cost"},
+        ]
+    else:
+        manufacturing_cogs = [
+            {"Applicable": True, "Cost Line": "Direct Materials", "Cost Behavior": "Variable — per unit", "Baseline Input": 14_000_000 / baseline_volume, "Scenario Input": 14_000_000 / baseline_volume, "Annual Growth %": .02, "Source / Basis": "Operations estimate", "Comment": "Payable-bearing material and product cost"},
+            {"Applicable": True, "Cost Line": "Direct Labor", "Cost Behavior": "Fixed / step-fixed — annual", "Baseline Input": 3_200_000, "Scenario Input": 3_350_000, "Annual Growth %": .025, "Source / Basis": "Manufacturing plan", "Comment": "Production labor; step-fixed within planned capacity"},
+            {"Applicable": True, "Cost Line": "Variable Manufacturing Overhead", "Cost Behavior": "Variable — per unit", "Baseline Input": 1_800_000 / baseline_volume, "Scenario Input": 1_800_000 / baseline_volume, "Annual Growth %": .02, "Source / Basis": "Manufacturing plan", "Comment": "Utilities and other activity-linked manufacturing overhead"},
+            {"Applicable": True, "Cost Line": "Fixed Manufacturing Overhead", "Cost Behavior": "Fixed / step-fixed — annual", "Baseline Input": 1_880_000, "Scenario Input": 2_000_000, "Annual Growth %": .025, "Source / Basis": "Manufacturing plan", "Comment": "Fixed factory overhead within the relevant range"},
+        ]
     return {
-        "manufacturing_cogs": [
-            {"Applicable": not digital, "Cost Line": "Direct Materials", "Cost Behavior": "Unit-based" if not acquisition else "Y1 + Growth", "Baseline Unit Cost": 14_000_000 / baseline_volume if not acquisition else 0.0, "Scenario Unit Cost": 14_000_000 / baseline_volume if not acquisition else 0.0, "Baseline Y1": 18_432_000 if acquisition else 0.0, "Scenario Y1": 18_432_000 if acquisition else 0.0, "Annual Growth %": .02, "Source / Basis": "Operations estimate" if not acquisition else "Target diligence", "Comment": "Payable-bearing material and product cost"},
-            {"Applicable": not digital and not acquisition, "Cost Line": "Direct Labor", "Cost Behavior": "Y1 + Growth", "Baseline Unit Cost": 0.0, "Scenario Unit Cost": 0.0, "Baseline Y1": 3_200_000, "Scenario Y1": 3_350_000, "Annual Growth %": .025, "Source / Basis": "Manufacturing plan", "Comment": "Production labor; step-fixed within planned capacity"},
-            {"Applicable": not digital and not acquisition, "Cost Line": "Variable Manufacturing Overhead", "Cost Behavior": "Unit-based", "Baseline Unit Cost": 1_800_000 / baseline_volume, "Scenario Unit Cost": 1_800_000 / baseline_volume, "Baseline Y1": 0.0, "Scenario Y1": 0.0, "Annual Growth %": .02, "Source / Basis": "Manufacturing plan", "Comment": "Utilities and other activity-linked manufacturing overhead"},
-            {"Applicable": not digital and not acquisition, "Cost Line": "Fixed Manufacturing Overhead", "Cost Behavior": "Y1 + Growth", "Baseline Unit Cost": 0.0, "Scenario Unit Cost": 0.0, "Baseline Y1": 1_880_000, "Scenario Y1": 2_000_000, "Annual Growth %": .025, "Source / Basis": "Manufacturing plan", "Comment": "Fixed factory overhead within the relevant range"},
-            {"Applicable": digital, "Cost Line": "Variable Manufacturing Overhead", "Cost Behavior": "Y1 + Growth", "Baseline Unit Cost": 0.0, "Scenario Unit Cost": 0.0, "Baseline Y1": 1_100_000, "Scenario Y1": 1_650_000, "Annual Growth %": .02, "Source / Basis": "Operations estimate", "Comment": "Usage-based cloud and processing cost"},
-        ],
+        "manufacturing_cogs": manufacturing_cogs,
         "non_manufacturing_personnel": [
             {"Applicable": True, "Cost Line": "Operations", "Baseline Y1": 6_200_000 if digital else 4_400_000, "Scenario Y1": 6_000_000 if digital else 4_900_000, "Annual Growth %": .025, "Source / Basis": "Operating plan", "Comment": "Relevant-scope personnel"},
             {"Applicable": acquisition, "Cost Line": "Other Personnel", "Baseline Y1": 1_500_000, "Scenario Y1": 5_200_000, "Annual Growth %": .025, "Source / Basis": "Target diligence", "Comment": "Target organization"}],
@@ -101,13 +110,28 @@ def _costs(archetype: str) -> dict[str, list[dict[str, Any]]]:
             {"Applicable": True, "Cost Line": "Other Fixed Overhead", "Baseline Y1": 2_800_000, "Scenario Y1": 3_000_000, "Annual Growth %": .025, "Source / Basis": "Operating plan", "Comment": "Relevant fixed overhead"}]}
 
 
-def _cost_schedules(costs: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, dict[str, float]]]:
+def _cost_schedules(
+    costs: dict[str, list[dict[str, Any]]],
+    baseline_volumes: dict[str, float] | None = None,
+    scenario_volumes: dict[str, float] | None = None,
+) -> dict[str, dict[str, dict[str, float]]]:
     schedules: dict[str, dict[str, dict[str, float]]] = {}
     for group, rows in costs.items():
+        def annual_value(row: dict[str, Any], input_name: str, year: str, index: int) -> float:
+            growth = (1 + float(row.get("Annual Growth %", 0.0))) ** index
+            if group != "manufacturing_cogs":
+                return float(row.get(input_name.replace(" Input", " Y1"), 0.0)) * growth
+            value = float(row.get(input_name, 0.0)) * growth
+            behavior = str(row.get("Cost Behavior", "Fixed / step-fixed — annual"))
+            if behavior in {"Variable — per unit", "Unit-based"}:
+                volumes = baseline_volumes if input_name == "Baseline Input" else scenario_volumes
+                return value * float((volumes or {}).get(year, 0.0))
+            return value
+
         schedules[group] = {
             "Baseline Cost": {
                 year: sum(
-                    float(row.get("Baseline Y1", 0.0)) * (1 + float(row.get("Annual Growth %", 0.0))) ** index
+                    annual_value(row, "Baseline Input", year, index)
                     for row in rows
                     if bool(row.get("Applicable", True))
                 )
@@ -115,7 +139,7 @@ def _cost_schedules(costs: dict[str, list[dict[str, Any]]]) -> dict[str, dict[st
             },
             "Scenario Cost": {
                 year: sum(
-                    float(row.get("Scenario Y1", 0.0)) * (1 + float(row.get("Annual Growth %", 0.0))) ** index
+                    annual_value(row, "Scenario Input", year, index)
                     for row in rows
                     if bool(row.get("Applicable", True))
                 )
@@ -130,11 +154,12 @@ def default_investment_inputs(case: dict[str, Any]) -> dict[str, Any]:
     if archetype not in CASE_ARCHETYPES: archetype = CASE_ARCHETYPES[0]
     digital = archetype == CASE_ARCHETYPES[1]
     operating_costs = _costs(archetype)
+    capacity = {"Baseline Capacity": _series(900_000,.01), "Added Capacity from Investment": _series(360_000), "Baseline Volume": _series(720_000,.025), "Scenario Volume": _annual([792000,890000,970000,1045000,1085000,1105000,1120000,1130000,1140000,1150000]), "Baseline Net Revenue per Unit": _series(64,.02)}
     return {
         "schema_version": SCHEMA_VERSION,
         "settings": {"Case Name": str(case.get("Investment Case Name", "New Investment Case")), "Case Archetype": archetype, "Value Creation Drivers": archetype_default_drivers(archetype), "Financial Scope": str(case.get("Business Unit / Market", "Region A Operations")), "Currency": "USD", "Base Year": 2026, "Forecast Horizon": 10, "Investment Start Date": date(2026,10,1), "Operational Start Date": date(2027,7,1), "Applicable Tax Rate": .24, "Planning Inflation": .025, "Model Basis": "Nominal", "Model Version": "1.0", "As Of Date": date(2026,9,15), "Revenue Modeling Mode": "Unit-based"},
         "investment": {"uses": _uses(archetype), "Sustaining CAPEX": _series(220_000 if digital else 350_000, .02), "Sustaining CAPEX Source / Basis": "Long-range plan", "Sustaining CAPEX Comment / Rationale": "Maintenance capital", "CAPEX Avoidance": _series(0), "Useful Life": 10},
-        "capacity": {"Baseline Capacity": _series(900_000,.01), "Added Capacity from Investment": _series(360_000), "Baseline Volume": _series(720_000,.025), "Scenario Volume": _annual([792000,890000,970000,1045000,1085000,1105000,1120000,1130000,1140000,1150000]), "Baseline Net Revenue per Unit": _series(64,.02)},
+        "capacity": capacity,
         "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Baseline Volume": "Y1 + Growth", "Baseline Net Revenue per Unit": "Y1 + Growth"},
         "capacity_growth_rates": {"Baseline Capacity": .01, "Baseline Volume": .025, "Baseline Net Revenue per Unit": .02},
         "revenue_based": {"Baseline Revenue": _series(60_000_000 if digital else 46_080_000,.035), "Incremental Revenue / Revenue Uplift": _annual([0,1e6,2.5e6,4e6,5.5e6,6e6,6.5e6,7e6,7.5e6,8e6])},
@@ -143,7 +168,7 @@ def default_investment_inputs(case: dict[str, Any]) -> dict[str, Any]:
         "acquisition": {"Target Revenue": _series(34e6,.04), "Target Gross Margin %": _annual([.62] * 10), "Target EBITDA": _series(5.8e6,.05), "Target D&A": _series(1.1e6,.02), "Target EBIT": _series(4.7e6,.05), "Opening / Transaction Working Capital Reference": _series(4.8e6,.03), "Revenue Synergies": _series(3.5e6,.03), "Cost Synergies": _series(4e6,.025), "Synergy Ramp %": _annual([.25,.55,.8,1,1,1,1,1,1,1]), "One-off Integration Costs": _annual([4e6,2e6,.5e6,0,0,0,0,0,0,0])},
         "savings_register": _savings(archetype), "operating_costs": operating_costs,
         "operating_cost_input_methods": {group: "Y1 + Growth" for group in operating_costs},
-        "operating_cost_schedules": _cost_schedules(operating_costs),
+        "operating_cost_schedules": _cost_schedules(operating_costs, capacity["Baseline Volume"], capacity["Scenario Volume"]),
         "working_capital": {"Relevant DSO": 52.0, "Relevant DIO": 64.0, "Relevant DPO": 48.0, "AP Cost Basis": "Direct Materials", "Selected Operating Cost Base %": 1.0},
         "capital": {"Cost of Equity Method": "CAPM – Own Beta", "Risk-Free Rate": .042, "Beta": .95, "Equity Risk Premium": .055, "Country Risk Premium": .01, "Peer Beta Source": "Selected listed peer group", "Unlevered Beta": .72, "Relevered Beta": .95, "Corporate Cost of Equity": .105, "Manual Cost of Equity": .105, "Pre-tax Cost of Debt": .062, "Target Debt %": .35, "Target Equity %": .65, "Corporate Hurdle Rate": .10, "Existing Business ROIC": .145, "Marginal Reinvestment Return": .118, "Treasury / Cash Yield": .04, "Source / Methodology": "FY27 corporate planning assumptions", "Effective Date": "2026-07-01", "Rationale": "Management capital-allocation screening rates."}}
 
@@ -185,12 +210,17 @@ def _manufacturing_costs(x: dict[str, Any], year: str, index: int, baseline_volu
         if line not in baseline:
             line = "Variable Manufacturing Overhead"
         growth = (1 + _n(row.get("Annual Growth %"))) ** index
-        if str(row.get("Cost Behavior", "Y1 + Growth")) == "Unit-based":
-            baseline[line] += _n(row.get("Baseline Unit Cost")) * growth * baseline_volume
-            scenario[line] += _n(row.get("Scenario Unit Cost")) * growth * scenario_volume
+        behavior = str(row.get("Cost Behavior", "Fixed / step-fixed — annual"))
+        if behavior in {"Variable — per unit", "Unit-based"}:
+            baseline_input = row.get("Baseline Input", row.get("Baseline Unit Cost", 0.0))
+            scenario_input = row.get("Scenario Input", row.get("Scenario Unit Cost", 0.0))
+            baseline[line] += _n(baseline_input) * growth * baseline_volume
+            scenario[line] += _n(scenario_input) * growth * scenario_volume
         else:
-            baseline[line] += _n(row.get("Baseline Y1")) * growth
-            scenario[line] += _n(row.get("Scenario Y1")) * growth
+            baseline_input = row.get("Baseline Input", row.get("Baseline Y1", 0.0))
+            scenario_input = row.get("Scenario Input", row.get("Scenario Y1", 0.0))
+            baseline[line] += _n(baseline_input) * growth
+            scenario[line] += _n(scenario_input) * growth
     return baseline, scenario
 
 
@@ -373,6 +403,11 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     cogs_rows=[]
     for component,values in cogs_components.items(): cogs_rows.extend([{"COGS Component":component,"Case":"Baseline",**values["Baseline"]},{"COGS Component":component,"Case":"Investment Scenario",**values["Scenario"]}])
     cogs_rows.extend([{"COGS Component":"Total Manufacturing COGS","Case":"Baseline",**base["COGS"]},{"COGS Component":"Total Manufacturing COGS","Case":"Investment Scenario",**scenario["COGS"]}])
+    if archetype==CASE_ARCHETYPES[0] and str(s.get("Revenue Modeling Mode","Unit-based"))=="Unit-based":
+        cogs_rows.extend([
+            {"COGS Component":"Baseline COGS per Unit","Case":"Unit Economics",**{y:_r(base["COGS"][y],capacity_bridge["Baseline Volume"][y]) for y in years}},
+            {"COGS Component":"Investment Scenario COGS per Unit","Case":"Unit Economics",**{y:_r(scenario["COGS"][y],capacity_bridge["Scenario Volume"][y]) for y in years}},
+        ])
     da_bridge=pd.DataFrame([{"D&A Component":"Baseline D&A (2.5% of baseline revenue)",**baseline_da},{"D&A Component":f"Initial Investment D&A (straight-line, {life} years)",**initial_da},{"D&A Component":f"Sustaining CAPEX D&A (straight-line by vintage, {life} years)",**sustaining_da},{"D&A Component":"Acquisition / Target D&A",**target_da},{"D&A Component":"Total Scenario D&A",**scenario["Depreciation & Amortization"]}])
     wacc_bridge=pd.DataFrame([{"Component":"Cost of Equity","Rate / Weight":ke},{"Component":"Equity Weight","Rate / Weight":equity},{"Component":"Pre-tax Cost of Debt","Rate / Weight":pre_tax_debt},{"Component":"After-tax Cost of Debt","Rate / Weight":kd},{"Component":"Debt Weight","Rate / Weight":debt},{"Component":"WACC","Rate / Weight":wacc}])
     return {"inputs":x,"years":years,"drivers":drivers,"capacity_bridge":bridge_frame,"cogs_bridge":pd.DataFrame(cogs_rows),"depreciation_bridge":da_bridge,"baseline_pnl":baseline,"scenario_pnl":scenario_pnl,"incremental":incremental,"working_capital":pd.DataFrame(wc_rows),"tax_bridge":pd.DataFrame(tax_rows),"cash_flow":pd.DataFrame(rows),"wacc_bridge":wacc_bridge,"returns":returns,"total_initial_investment":initial,"working_capital_enabled":wc_on,"capital_structure_valid":True}

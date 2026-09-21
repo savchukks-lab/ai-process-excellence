@@ -23,9 +23,14 @@ def _scale_series(values: dict[str, Any], factor: float) -> None:
 
 def _scale_cost_group(inputs: dict[str, Any], group: str, factor: float) -> None:
     for row in inputs.get("operating_costs", {}).get(group, []):
-        row["Scenario Y1"] = _number(row.get("Scenario Y1")) * factor
         if group == "manufacturing_cogs":
-            row["Scenario Unit Cost"] = _number(row.get("Scenario Unit Cost")) * factor
+            current = row.get("Scenario Input")
+            if current is None:
+                behavior = str(row.get("Cost Behavior", "Fixed / step-fixed — annual"))
+                current = row.get("Scenario Unit Cost") if behavior in {"Variable — per unit", "Unit-based"} else row.get("Scenario Y1")
+            row["Scenario Input"] = _number(current) * factor
+        else:
+            row["Scenario Y1"] = _number(row.get("Scenario Y1")) * factor
     for value_type in ("Scenario Cost",):
         _scale_series(inputs.get("operating_cost_schedules", {}).get(group, {}).get(value_type, {}), factor)
 

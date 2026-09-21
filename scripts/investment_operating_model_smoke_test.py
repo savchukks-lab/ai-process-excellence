@@ -33,8 +33,9 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
             assert close(pnl.at["EBIT", year], pnl.at["EBITDA", year] - pnl.at["Depreciation & Amortization", year])
 
     cogs = model["cogs_bridge"]
+    component_names = {"Direct Materials", "Direct Labor", "Variable Manufacturing Overhead", "Fixed Manufacturing Overhead"}
     for case_name, pnl in (("Baseline", baseline), ("Investment Scenario", scenario)):
-        components = cogs[(cogs["Case"] == case_name) & (cogs["COGS Component"] != "Total Manufacturing COGS")]
+        components = cogs[(cogs["Case"] == case_name) & (cogs["COGS Component"].isin(component_names))]
         for year in years:
             assert close(components[year].sum(), pnl.at["COGS", year])
 
@@ -71,6 +72,12 @@ capacity_inputs = default_investment_inputs({"Case Archetype": CASE_ARCHETYPES[0
 capacity_model = calculate_investment_model(capacity_inputs)
 capacity_pnl = capacity_model["baseline_pnl"].set_index("Metric")
 assert close(capacity_pnl.at["COGS", "Y1"], 20_880_000)
+capacity_cogs = capacity_model["cogs_bridge"].set_index("COGS Component")
+assert close(capacity_cogs.at["Baseline COGS per Unit", "Y1"], capacity_pnl.at["COGS", "Y1"] / 720_000)
+assert len(capacity_inputs["operating_costs"]["manufacturing_cogs"]) == 4
+assert {row["Cost Behavior"] for row in capacity_inputs["operating_costs"]["manufacturing_cogs"]} == {"Variable — per unit", "Fixed / step-fixed — annual"}
+assert all("Baseline Input" in row and "Scenario Input" in row for row in capacity_inputs["operating_costs"]["manufacturing_cogs"])
+assert all("Baseline Unit Cost" not in row and "Baseline Y1" not in row for row in capacity_inputs["operating_costs"]["manufacturing_cogs"])
 
 tax_bridge = capacity_model["tax_bridge"].set_index("Year")
 assert tax_bridge.at["Y1", "Incremental EBIT"] < 0

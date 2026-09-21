@@ -11197,6 +11197,22 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         operating_costs = current.setdefault("operating_costs", {})
         if "manufacturing_cogs" not in operating_costs:
             operating_costs["manufacturing_cogs"] = deepcopy(defaults["operating_costs"]["manufacturing_cogs"])
+        migrated_manufacturing_rows = []
+        for row in operating_costs["manufacturing_cogs"]:
+            migrated = dict(row)
+            if not bool(migrated.get("Applicable", True)) and "cloud" in str(migrated.get("Comment", "")).lower():
+                continue
+            legacy_behavior = str(migrated.get("Cost Behavior", "Fixed / step-fixed — annual"))
+            is_variable = legacy_behavior in {"Unit-based", "Variable — per unit"}
+            migrated["Cost Behavior"] = "Variable — per unit" if is_variable else "Fixed / step-fixed — annual"
+            if "Baseline Input" not in migrated:
+                migrated["Baseline Input"] = safe_float(migrated.get("Baseline Unit Cost" if is_variable else "Baseline Y1", 0.0))
+            if "Scenario Input" not in migrated:
+                migrated["Scenario Input"] = safe_float(migrated.get("Scenario Unit Cost" if is_variable else "Scenario Y1", 0.0))
+            for legacy_field in ("Baseline Unit Cost", "Scenario Unit Cost", "Baseline Y1", "Scenario Y1"):
+                migrated.pop(legacy_field, None)
+            migrated_manufacturing_rows.append(migrated)
+        operating_costs["manufacturing_cogs"] = migrated_manufacturing_rows
         if "non_manufacturing_personnel" not in operating_costs:
             operating_costs["non_manufacturing_personnel"] = deepcopy(operating_costs.get("personnel", defaults["operating_costs"]["non_manufacturing_personnel"]))
         if "non_manufacturing_opex" not in operating_costs:
@@ -11331,7 +11347,7 @@ def investment_editor_column_width(column: str) -> str:
         return "small"
     if column in {
         "Amount", "Baseline Cost / Cost Pool", "Gross Saving", "Gross Run-rate Saving", "Realized Saving",
-        "Baseline Unit Cost", "Scenario Unit Cost", "Baseline Y1", "Scenario Y1",
+        "Baseline Unit Cost", "Scenario Unit Cost", "Baseline Y1", "Scenario Y1", "Baseline Input", "Scenario Input",
         "Realization %", "Annual Growth %", "Custom Y1 Ramp %", "Custom Y2 Ramp %", "Custom Y3+ Ramp %",
     }:
         return "small"
@@ -11493,7 +11509,7 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
         "Amount", "Baseline Cost / Cost Pool", "Gross Saving", "Gross Run-rate Saving", "Realized Saving",
         "Baseline Y1", "Scenario Y1",
     }
-    one_decimal_fields = {"Baseline Unit Cost", "Scenario Unit Cost"}
+    one_decimal_fields = {"Baseline Unit Cost", "Scenario Unit Cost", "Baseline Input", "Scenario Input"}
     percent_fields = {"Realization %", "Annual Growth %", "Custom Y1 Ramp %", "Custom Y2 Ramp %", "Custom Y3+ Ramp %"}
     display_frame = frame.copy(deep=True)
     for column in display_frame.columns:
@@ -11529,10 +11545,11 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
                 "Non-Manufacturing OPEX · Other Fixed Overhead",
             ], width="large")
         elif column == "Cost Behavior":
-            column_config[column] = st.column_config.SelectboxColumn(column, options=["Unit-based", "Y1 + Growth"], width="medium")
+            column_config[column] = st.column_config.SelectboxColumn(column, options=["Variable — per unit", "Fixed / step-fixed — annual"], width="medium")
         else:
             column_config[column] = st.column_config.TextColumn(column, width=investment_editor_column_width(column))
-    editor_key = f"investment_records_{case_id}_{key}"
+    schema_suffix = "_generic_input_v2" if key == "cost_manufacturing_cogs" else ""
+    editor_key = f"investment_records_{case_id}_{key}{schema_suffix}"
     editor_source = apply_data_editor_state(display_frame, st.session_state.get(editor_key))
     edited = st.data_editor(
         editor_source,
@@ -11913,7 +11930,7 @@ def render_investment_model(case: dict[str, object]) -> None:
     st.markdown("<div class='enterprise-section-title'>4. Operating Cost Structure</div>", unsafe_allow_html=True)
     st.caption("Defines how baseline and investment operating costs evolve and determines the project’s incremental profitability.")
     definitions={
-        "manufacturing_cogs": ("A. Manufacturing COGS", "Direct Materials, Direct Labor, Variable Manufacturing Overhead and Fixed Manufacturing Overhead drive reported COGS. Unit-based rows scale with activity; other rows use Y1 plus growth or an annual schedule."),
+        "manufacturing_cogs": ("A. Manufacturing COGS", "Direct Materials, Direct Labor, Variable Manufacturing Overhead and Fixed Manufacturing Overhead drive reported COGS. Variable inputs are expressed per unit; fixed and step-fixed inputs are annual amounts."),
         "non_manufacturing_personnel": ("B. Non-Manufacturing Personnel", "Relevant commercial, administrative and operating personnel outside manufacturing COGS."),
         "non_manufacturing_opex": ("C. Non-Manufacturing OPEX", "Recurring non-manufacturing operating expenses outside personnel and manufacturing COGS."),
     }
@@ -11932,7 +11949,10 @@ def render_investment_model(case: dict[str, object]) -> None:
                 schedules = inputs.setdefault("operating_cost_schedules", {}).setdefault(group, {"Baseline Cost": {year: 0.0 for year in INVESTMENT_YEARS}, "Scenario Cost": {year: 0.0 for year in INVESTMENT_YEARS}})
                 inputs["operating_cost_schedules"][group] = render_investment_driver_editor(case_id, f"cost_schedule_{group}", "Annual Cost Schedule", schedules, ["Baseline Cost", "Scenario Cost"], years)
             else:
-                st.caption("Baseline Y1 / Scenario Y1 plus Annual Growth % determines future-year values.")
+                if group == "manufacturing_cogs":
+                    st.caption("Baseline Input and Scenario Input use the basis shown in Cost Behavior: $/unit for variable rows and annual $ for fixed / step-fixed rows. Annual Growth % determines future-year values.")
+                else:
+                    st.caption("Baseline Y1 / Scenario Y1 plus Annual Growth % determines future-year values.")
                 rows=[]
                 for row in current_rows: item=dict(row);item["Annual Growth %"]=safe_float(item.get("Annual Growth %"))*100;rows.append(item)
                 rows=render_investment_record_editor(case_id,f"cost_{group}",rows)
@@ -12466,11 +12486,11 @@ def render_investment_decision_case(case: dict[str, object]) -> None:
                 st.markdown(f"**{str(cost_group).replace('_', ' ').title()}**")
                 cost_table = pd.DataFrame(rows).astype(object)
                 for column in cost_table.columns:
-                    if column in {"Baseline Y1", "Scenario Y1", "Baseline Unit Cost", "Scenario Unit Cost"}:
+                    if column in {"Baseline Y1", "Scenario Y1", "Baseline Unit Cost", "Scenario Unit Cost", "Baseline Input", "Scenario Input"}:
                         cost_table[column] = cost_table[column].map(money)
                     elif column == "Annual Growth %":
                         cost_table[column] = cost_table[column].map(pct)
-                render_finance_table(cost_table, right_align={"Baseline Y1", "Scenario Y1", "Baseline Unit Cost", "Scenario Unit Cost", "Annual Growth %"})
+                render_finance_table(cost_table, right_align={"Baseline Y1", "Scenario Y1", "Baseline Unit Cost", "Scenario Unit Cost", "Baseline Input", "Scenario Input", "Annual Growth %"})
         percent_capital_fields = {
             "Risk-Free Rate", "Equity Risk Premium", "Country Risk Premium", "Corporate Cost of Equity",
             "Manual Cost of Equity", "Pre-tax Cost of Debt", "Target Debt %", "Target Equity %",

@@ -198,10 +198,11 @@ assert app.session_state["investment_case_inputs"][case_id]["savings_register"][
 
 for group, field, value in (
     ("non_manufacturing_personnel", "Scenario Y1", 5_000_000),
-    ("manufacturing_cogs", "Scenario Unit Cost", 30.0),
+    ("manufacturing_cogs", "Scenario Input", 30.0),
     ("non_manufacturing_opex", "Scenario Y1", 1_700_000),
 ):
-    editor_key = f"investment_records_{case_id}_cost_{group}"
+    schema_suffix = "_generic_input_v2" if group == "manufacturing_cogs" else ""
+    editor_key = f"investment_records_{case_id}_cost_{group}{schema_suffix}"
     app.session_state[editor_key] = {"edited_rows": {0: {field: value}}, "added_rows": [], "deleted_rows": []}
     app.run()
     assert_clean(app, f"{group} cost first edit")
