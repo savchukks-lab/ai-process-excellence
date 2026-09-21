@@ -11186,12 +11186,15 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         new_price_name = "Baseline Net Price per Unit"
         if old_price_name in capacity and new_price_name not in capacity:
             capacity[new_price_name] = capacity.pop(old_price_name)
+        scenario_price_name = "Scenario Net Price per Unit"
+        capacity.setdefault(scenario_price_name, deepcopy(capacity.get(new_price_name, defaults["capacity"][scenario_price_name])))
         capacity.pop("Net Price Escalation %", None)
         current.setdefault("capacity_input_methods", deepcopy(defaults["capacity_input_methods"]))
         current.setdefault("capacity_growth_rates", deepcopy(defaults["capacity_growth_rates"]))
         for settings_name in ("capacity_input_methods", "capacity_growth_rates"):
             if old_price_name in current[settings_name] and new_price_name not in current[settings_name]:
                 current[settings_name][new_price_name] = current[settings_name].pop(old_price_name)
+            current[settings_name].setdefault(scenario_price_name, current[settings_name].get(new_price_name, defaults[settings_name][scenario_price_name]))
         current.setdefault("revenue_input_method", defaults["revenue_input_method"])
         current.setdefault("revenue_growth_rate", defaults["revenue_growth_rate"])
         current.setdefault("revenue_based", {}).pop("Revenue Growth %", None)
@@ -11244,6 +11247,7 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         working_capital.setdefault("AP Cost Basis", "Direct Materials")
         working_capital.setdefault("Selected Operating Cost Base %", 1.0)
         debt_weight = min(1.0, max(0.0, safe_float(current.setdefault("capital", {}).get("Target Debt %", .35))))
+        current["capital"].pop("Treasury / Cash Yield", None)
         current["capital"]["Target Equity %"] = 1.0 - debt_weight
         if current != all_inputs[case_id]:
             all_inputs[case_id] = current
@@ -11713,7 +11717,7 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     investment_seed_widget(f"investment_{case_id}_coe_method", capital.get("Cost of Equity Method", methods[0]))
     method = st.selectbox("Cost of Equity Method", methods, key=f"investment_{case_id}_coe_method")
     capital["Cost of Equity Method"] = method
-    percent_fields = ["Risk-Free Rate","Equity Risk Premium","Country Risk Premium","Corporate Cost of Equity","Manual Cost of Equity","Pre-tax Cost of Debt","Target Debt %","Corporate Hurdle Rate","Existing Business ROIC","Marginal Reinvestment Return","Treasury / Cash Yield"]
+    percent_fields = ["Risk-Free Rate","Equity Risk Premium","Country Risk Premium","Corporate Cost of Equity","Manual Cost of Equity","Pre-tax Cost of Debt","Target Debt %","Corporate Hurdle Rate","Existing Business ROIC","Marginal Reinvestment Return"]
     for field in percent_fields: investment_seed_widget(f"investment_{case_id}_capital_{field}", safe_float(capital.get(field,0))*100)
     for field in ["Beta","Unlevered Beta","Relevered Beta"]: investment_seed_widget(f"investment_{case_id}_capital_{field}", safe_float(capital.get(field,0)))
     if method.startswith("CAPM"):
@@ -11770,12 +11774,13 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     live_tax_rate = min(1.0, max(0.0, safe_float(inputs["settings"].get("Applicable Tax Rate", 0.0))))
     live_after_tax_debt = live_capital["Pre-tax Cost of Debt"] * (1.0 - live_tax_rate)
     live_wacc = live_equity_weight * live_cost_of_equity + live_debt_weight * live_after_tax_debt
-    st.markdown("**WACC calculation**")
+    st.markdown("**After-tax Cost of Debt calculation**")
     st.caption("After-tax Cost of Debt = Pre-tax Cost of Debt × (1 − Tax Rate)")
     st.markdown(
         f"{live_capital['Pre-tax Cost of Debt'] * 100:.2f}% × (1 − {live_tax_rate * 100:.1f}%) "
         f"= **{live_after_tax_debt * 100:.2f}%**"
     )
+    st.markdown("**WACC calculation**")
     st.caption("WACC = Equity Weight × Cost of Equity + Debt Weight × After-tax Cost of Debt")
     st.markdown(
         f"{live_equity_weight * 100:.1f}% × {live_cost_of_equity * 100:.1f}% + "
@@ -11784,9 +11789,10 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     )
     st.caption("Target capital structure is used for WACC and represents the company’s long-term financing mix. It is not necessarily the funding mix of this specific project; project funding is modeled separately in Financing.")
     st.markdown("**Management Benchmarks**")
-    benchmark = st.columns([1, 1.15, 1, 1.5])
-    for column, field in zip(benchmark, ["Existing Business ROIC", "Marginal Reinvestment Return", "Treasury / Cash Yield"]):
+    benchmark = st.columns([1, 1.15, 1.85])
+    for column, field in zip(benchmark, ["Existing Business ROIC", "Marginal Reinvestment Return"]):
         column.number_input(f"{field} %", step=0.1, key=f"investment_{case_id}_capital_{field}")
+    st.caption("Existing Business ROIC = return generated by the existing operating business. Marginal Reinvestment Return = expected return on the next incremental unit of capital deployed. Corporate Hurdle Rate = management screening threshold for investment returns. These are analytical references only.")
     for field in percent_fields: capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])/100
     capital["Target Equity %"] = 1.0 - capital["Target Debt %"]
     for field in ["Beta","Unlevered Beta","Relevered Beta"]: capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])
@@ -11801,7 +11807,6 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     with st.expander("Assumption source, methodology and rationale", expanded=False):
         for field in ["Source / Methodology", "Effective Date", "Rationale"]:
             key=f"investment_{case_id}_capital_meta_{field}";investment_seed_widget(key,str(capital.get(field,"")));st.text_input(field,key=key);capital[field]=st.session_state[key]
-        st.caption("Cost of Equity = Risk-Free Rate + Beta × Equity Risk Premium + Country Risk Premium. After-tax Cost of Debt = Pre-tax Cost of Debt × (1 - Tax Rate).")
     return inputs
 
 
@@ -11907,7 +11912,7 @@ def render_investment_model(case: dict[str, object]) -> None:
         mode=st.radio("Revenue Modeling Mode",["Unit-based","Revenue-based"],horizontal=True,key=mode_key)
         inputs["settings"]["Revenue Modeling Mode"]=mode
         if mode == "Unit-based":
-            for metric in ["Baseline Capacity", "Baseline Volume", "Baseline Net Price per Unit"]:
+            for metric in ["Baseline Capacity", "Baseline Volume", "Baseline Net Price per Unit", "Scenario Net Price per Unit"]:
                 source, method, growth = render_investment_series_method(
                     case_id,
                     "capacity",
@@ -12513,7 +12518,7 @@ def render_investment_decision_case(case: dict[str, object]) -> None:
                         display = ""
                     elif "%" in driver_name or "Ramp" in driver_name:
                         display = pct(value)
-                    elif any(token in driver_name for token in ("Revenue", "EBITDA", "EBIT", "Working Capital", "Synergies", "Costs", "Net Revenue per Unit")):
+                    elif any(token in driver_name for token in ("Revenue", "EBITDA", "EBIT", "Working Capital", "Synergies", "Costs", "Net Price per Unit")):
                         display = money(value)
                     else:
                         display = f"{safe_float(value):,.0f}"
@@ -12532,7 +12537,7 @@ def render_investment_decision_case(case: dict[str, object]) -> None:
         percent_capital_fields = {
             "Risk-Free Rate", "Equity Risk Premium", "Country Risk Premium", "Corporate Cost of Equity",
             "Manual Cost of Equity", "Pre-tax Cost of Debt", "Target Debt %", "Target Equity %",
-            "Corporate Hurdle Rate", "Existing Business ROIC", "Marginal Reinvestment Return", "Treasury / Cash Yield",
+            "Corporate Hurdle Rate", "Existing Business ROIC", "Marginal Reinvestment Return",
         }
         beta_fields = {"Beta", "Unlevered Beta", "Relevered Beta"}
         capital_rows = []

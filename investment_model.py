@@ -154,14 +154,14 @@ def default_investment_inputs(case: dict[str, Any]) -> dict[str, Any]:
     if archetype not in CASE_ARCHETYPES: archetype = CASE_ARCHETYPES[0]
     digital = archetype == CASE_ARCHETYPES[1]
     operating_costs = _costs(archetype)
-    capacity = {"Baseline Capacity": _series(900_000,.01), "Added Capacity from Investment": _series(360_000), "Baseline Volume": _series(720_000,.025), "Scenario Volume": _annual([792000,890000,970000,1045000,1085000,1105000,1120000,1130000,1140000,1150000]), "Baseline Net Price per Unit": _series(64,.02)}
+    capacity = {"Baseline Capacity": _series(900_000,.01), "Added Capacity from Investment": _series(360_000), "Baseline Volume": _series(720_000,.025), "Scenario Volume": _annual([792000,890000,970000,1045000,1085000,1105000,1120000,1130000,1140000,1150000]), "Baseline Net Price per Unit": _series(64,.02), "Scenario Net Price per Unit": _series(64,.02)}
     return {
         "schema_version": SCHEMA_VERSION,
         "settings": {"Case Name": str(case.get("Investment Case Name", "New Investment Case")), "Case Archetype": archetype, "Value Creation Drivers": archetype_default_drivers(archetype), "Financial Scope": str(case.get("Business Unit / Market", "Region A Operations")), "Currency": "USD", "Base Year": 2026, "Forecast Horizon": 10, "Investment Start Date": date(2026,10,1), "Operational Start Date": date(2027,7,1), "Applicable Tax Rate": .24, "Planning Inflation": .025, "Model Basis": "Nominal", "Model Version": "1.0", "As Of Date": date(2026,9,15), "Revenue Modeling Mode": "Unit-based"},
         "investment": {"uses": _uses(archetype), "Sustaining CAPEX": _series(220_000 if digital else 350_000, .02), "Sustaining CAPEX Source / Basis": "Long-range plan", "Sustaining CAPEX Comment / Rationale": "Maintenance capital", "CAPEX Avoidance": _series(0), "Useful Life": 10},
         "capacity": capacity,
-        "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Baseline Volume": "Y1 + Growth", "Baseline Net Price per Unit": "Y1 + Growth"},
-        "capacity_growth_rates": {"Baseline Capacity": .01, "Baseline Volume": .025, "Baseline Net Price per Unit": .02},
+        "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Baseline Volume": "Y1 + Growth", "Baseline Net Price per Unit": "Y1 + Growth", "Scenario Net Price per Unit": "Y1 + Growth"},
+        "capacity_growth_rates": {"Baseline Capacity": .01, "Baseline Volume": .025, "Baseline Net Price per Unit": .02, "Scenario Net Price per Unit": .02},
         "revenue_based": {"Baseline Revenue": _series(60_000_000 if digital else 46_080_000,.035), "Incremental Revenue / Revenue Uplift": _annual([0,1e6,2.5e6,4e6,5.5e6,6e6,6.5e6,7e6,7.5e6,8e6])},
         "revenue_input_method": "Y1 + Growth",
         "revenue_growth_rate": .035,
@@ -170,7 +170,7 @@ def default_investment_inputs(case: dict[str, Any]) -> dict[str, Any]:
         "operating_cost_input_methods": {group: "Y1 + Growth" for group in operating_costs},
         "operating_cost_schedules": _cost_schedules(operating_costs, capacity["Baseline Volume"], capacity["Scenario Volume"]),
         "working_capital": {"Relevant DSO": 52.0, "Relevant DIO": 64.0, "Relevant DPO": 48.0, "AP Cost Basis": "Direct Materials", "Selected Operating Cost Base %": 1.0},
-        "capital": {"Cost of Equity Method": "CAPM – Own Beta", "Risk-Free Rate": .042, "Beta": .95, "Equity Risk Premium": .055, "Country Risk Premium": .01, "Peer Beta Source": "Selected listed peer group", "Unlevered Beta": .72, "Relevered Beta": .95, "Corporate Cost of Equity": .105, "Manual Cost of Equity": .105, "Pre-tax Cost of Debt": .062, "Target Debt %": .35, "Target Equity %": .65, "Corporate Hurdle Rate": .10, "Existing Business ROIC": .145, "Marginal Reinvestment Return": .118, "Treasury / Cash Yield": .04, "Source / Methodology": "FY27 corporate planning assumptions", "Effective Date": "2026-07-01", "Rationale": "Management capital-allocation screening rates."}}
+        "capital": {"Cost of Equity Method": "CAPM – Own Beta", "Risk-Free Rate": .042, "Beta": .95, "Equity Risk Premium": .055, "Country Risk Premium": .01, "Peer Beta Source": "Selected listed peer group", "Unlevered Beta": .72, "Relevered Beta": .95, "Corporate Cost of Equity": .105, "Manual Cost of Equity": .105, "Pre-tax Cost of Debt": .062, "Target Debt %": .35, "Target Equity %": .65, "Corporate Hurdle Rate": .10, "Existing Business ROIC": .145, "Marginal Reinvestment Return": .118, "Source / Methodology": "FY27 corporate planning assumptions", "Effective Date": "2026-07-01", "Rationale": "Management capital-allocation screening rates."}}
 
 
 def _n(v: Any) -> float:
@@ -323,10 +323,10 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     sustaining_da={}; initial_da={}; baseline_da={}; target_da={}; baseline_materials={}; scenario_materials={}
     cumulative_sustaining=0.0
     for i,y in enumerate(years):
-        bv=_modeled_input_value(x,"capacity","Baseline Volume",y,i); sv=_v(x["capacity"]["Scenario Volume"],y); bp=_modeled_input_value(x,"capacity","Baseline Net Price per Unit",y,i); mode=str(s.get("Revenue Modeling Mode","Unit-based"))
+        bv=_modeled_input_value(x,"capacity","Baseline Volume",y,i); sv=_v(x["capacity"]["Scenario Volume"],y); bp=_modeled_input_value(x,"capacity","Baseline Net Price per Unit",y,i); sp=_modeled_input_value(x,"capacity","Scenario Net Price per Unit",y,i); mode=str(s.get("Revenue Modeling Mode","Unit-based"))
         if archetype==CASE_ARCHETYPES[0] and mode=="Unit-based":
             baseline_capacity=_modeled_input_value(x,"capacity","Baseline Capacity",y,i); added_capacity=_v(x["capacity"]["Added Capacity from Investment"],y); cap=baseline_capacity+added_capacity
-            br=bv*bp; sr=sv*bp if rev else br; util=_r(sv,cap)
+            br=bv*bp; sr=sv*sp; util=_r(sv,cap)
             bridge_values={"Baseline Capacity":baseline_capacity,"Baseline Volume":bv,"Baseline Idle Capacity":baseline_capacity-bv,"Baseline Utilization %":_r(bv,baseline_capacity),"Added Capacity":added_capacity,"Total Scenario Capacity":cap,"Scenario Volume":sv,"Scenario Idle Capacity":cap-sv,"Scenario Utilization %":util,"Baseline Revenue":br,"Scenario Revenue":sr,"Incremental Revenue":sr-br}
             for metric,value in bridge_values.items(): capacity_bridge[metric][y]=value
         else:
