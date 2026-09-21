@@ -14,7 +14,7 @@ os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 
 from investment_financing import calculate_all_financing_scenarios, calculate_financing_scenario, default_financing_inputs
-from investment_model import calculate_investment_model, default_investment_inputs, investment_demo_cases
+from investment_model import CASE_ARCHETYPES, calculate_investment_model, default_investment_inputs, investment_demo_cases
 
 
 def widget_by_key(widgets, key: str):
@@ -141,6 +141,34 @@ covenants = results["mixed"]["covenants"]
 for _, row in covenants[covenants["Metric Value"].notna()].iterrows():
     expected = row["Covenant Limit"] - row["Metric Value"] if row["Covenant"] == "Net Debt / EBITDA" else row["Metric Value"] - row["Covenant Limit"]
     assert abs(row["Headroom"] - expected) < 1e-9
+
+# Financing architecture regression across all archetypes and representative debt mixes.
+for archetype_index, archetype in enumerate(CASE_ARCHETYPES, start=1):
+    archetype_case = {"Case ID": f"INV-FIN-{archetype_index}", "Investment Case Name": archetype, "Case Archetype": archetype}
+    archetype_model = calculate_investment_model(default_investment_inputs(archetype_case))
+    project_reference = (archetype_model["returns"]["Project NPV"], archetype_model["returns"]["Project IRR"])
+    for debt_percent, scenario_id in ((0.0, "internal"), (0.60, "mixed"), (0.80, "high_debt")):
+        variant = default_financing_inputs()
+        variant["scenarios"][scenario_id]["Funding Mix"]["Debt %"] = debt_percent
+        result = calculate_financing_scenario(archetype_model, variant, scenario_id)
+        metrics = result["metrics"]
+        assert metrics["Project NPV"] == project_reference[0]
+        assert metrics["Project IRR"] == project_reference[1]
+        assert abs(metrics["Total Sources"] - metrics["Total Uses"]) < 0.01
+        assert abs(metrics["Total Equity Contributions"] - metrics["Initial Equity Contribution"] - metrics["Additional Equity Support"]) < 0.01
+        expected_fee = metrics["Debt Funding"] * variant["scenarios"][scenario_id]["Debt Terms"]["Arrangement Fee"] if debt_percent else 0.0
+        assert abs(metrics["Upfront Debt Arrangement Fee"] - expected_fee) < 0.01
+        assert result["debt_schedule"]["Commitment Fee"].sum() == 0
+        contractual_service = result["debt_schedule"]["Principal Repayment"].sum() + result["debt_schedule"]["Cash Interest Expense"].sum()
+        assert abs(metrics["Total Contractual Debt Service"] - contractual_service) < 0.01
+        if scenario_id == "high_debt":
+            repayments = result["debt_schedule"].set_index("Period")["Principal Repayment"]
+            assert repayments["Y4"] > 0 and repayments.drop("Y4").sum() == 0
+        project_tax = archetype_model["cash_flow"].set_index("Year")["Cash Taxes"]
+        for _, equity_row in result["equity_cash_flow"].iterrows():
+            period = str(equity_row["Period"])
+            if period in project_tax.index:
+                assert equity_row["Interest Tax Shield"] <= project_tax.at[period] + 0.01
 
 app = AppTest.from_file(str(APP_PATH), default_timeout=90)
 app.session_state["current_module"] = "investment"

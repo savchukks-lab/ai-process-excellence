@@ -170,8 +170,8 @@ def _investment_uses(model_inputs: dict[str, Any]) -> dict[str, float]:
     working_capital_tokens = ("working capital",)
     other_tokens = ("contingency", "other use")
     result = {
-        "Initial Investment / CAPEX": 0.0,
-        "Implementation Costs": 0.0,
+        "Initial CAPEX / Asset Purchase": 0.0,
+        "Implementation / Integration": 0.0,
         "Transaction Costs": 0.0,
         "Initial Working Capital": 0.0,
         "Contingency / Other Uses": 0.0,
@@ -181,16 +181,19 @@ def _investment_uses(model_inputs: dict[str, Any]) -> dict[str, float]:
             continue
         name = str(line.get("Investment Component", "")).lower()
         amount = _number(line.get("Amount"))
-        if any(token in name for token in transaction_tokens):
+        controlled_type = str(line.get("Funding Use Type", "")).strip()
+        if controlled_type in result:
+            result[controlled_type] += amount
+        elif any(token in name for token in transaction_tokens):
             result["Transaction Costs"] += amount
         elif any(token in name for token in working_capital_tokens):
             result["Initial Working Capital"] += amount
         elif any(token in name for token in other_tokens):
             result["Contingency / Other Uses"] += amount
         elif any(token in name for token in implementation_tokens):
-            result["Implementation Costs"] += amount
+            result["Implementation / Integration"] += amount
         else:
-            result["Initial Investment / CAPEX"] += amount
+            result["Initial CAPEX / Asset Purchase"] += amount
     return result
 
 
@@ -258,6 +261,8 @@ def _build_debt_schedule(facility: float, terms: dict[str, Any], custom: list[di
             "Closing Debt": closing,
             "Average Debt": average,
             "Cash Interest Expense": interest,
+            "Arrangement Fee": arrangement_fee,
+            "Commitment Fee": commitment_fee,
             "Financing Fees": financing_fees,
             "Total Debt Service": principal_repayment + interest,
             "Validation": "; ".join(validation),
@@ -308,11 +313,11 @@ def calculate_financing_scenario(
     }
 
     uses = pd.DataFrame([
-        {"Use": "Initial Investment / CAPEX", "Amount": use_components["Initial Investment / CAPEX"], "Type": "Model"},
-        {"Use": "Implementation Costs", "Amount": use_components["Implementation Costs"], "Type": "Model"},
-        {"Use": "Transaction Costs", "Amount": use_components["Transaction Costs"], "Type": "Model"},
-        {"Use": "Initial Working Capital", "Amount": use_components["Initial Working Capital"], "Type": "Model"},
-        {"Use": "Contingency / Other Uses", "Amount": use_components["Contingency / Other Uses"], "Type": "Model"},
+        {"Use": "Initial CAPEX / Asset Purchase", "Amount": use_components["Initial CAPEX / Asset Purchase"], "Type": "Model → Investment Uses"},
+        {"Use": "Implementation / Integration", "Amount": use_components["Implementation / Integration"], "Type": "Model → Investment Uses"},
+        {"Use": "Transaction Costs", "Amount": use_components["Transaction Costs"], "Type": "Model → Investment Uses"},
+        {"Use": "Initial Working Capital", "Amount": use_components["Initial Working Capital"], "Type": "Model → Investment Uses"},
+        {"Use": "Contingency / Other Uses", "Amount": use_components["Contingency / Other Uses"], "Type": "Model → Investment Uses"},
         {"Use": "Upfront Debt Arrangement Fee", "Amount": arrangement_fee, "Type": "Financing"},
     ])
     source_rows = [
@@ -371,7 +376,7 @@ def calculate_financing_scenario(
         elif shield_method == "Immediate / Group taxable income available":
             tax_shield = total_interest * tax_rate
         else:
-            tax_shield = max(0.0, unlevered_tax_by_period.get(period, 0.0) - levered_tax)
+            tax_shield = min(total_interest * tax_rate, max(0.0, unlevered_tax_by_period.get(period, 0.0)))
         extra_initial_uses = 0.0
         equity_cash_flow = (
             ufcf
@@ -428,6 +433,8 @@ def calculate_financing_scenario(
             direction = str(covenant.get("Direction", "Minimum"))
             if debt_source <= 0 and repayable_alt <= 0 and covenant_name != "Minimum Cash":
                 status, headroom = "N/A", None
+            elif covenant_name == "DSCR" and debt_service <= 1e-12:
+                status, headroom = "N/A", None
             elif metric_value is None:
                 status, headroom = "Not Available", None
             else:
@@ -461,6 +468,18 @@ def calculate_financing_scenario(
     additional_equity_support = sum(max(0.0, -value) for value in equity_cash_flows[1:])
     total_equity_contributions = initial_equity_contribution + additional_equity_support
     sustaining_capex = sum(_number(model["inputs"].get("investment", {}).get("Sustaining CAPEX", {}).get(year)) for year in years)
+    avoided_capex = sum(_number(model["inputs"].get("investment", {}).get("CAPEX Avoidance", {}).get(year)) for year in years)
+    operating_cash_available = sum(
+        _number(row.get("Incremental EBIT"))
+        - _number(row.get("Cash Taxes"))
+        + _number(row.get("D&A"))
+        - _number(row.get("Change in NWC"))
+        for _, row in model["cash_flow"].iterrows()
+        if str(row.get("Year")) != "Y0"
+    )
+    cumulative_interest = float(debt_schedule["Cash Interest Expense"].sum()) + alternative_annual_cost * maturity
+    cumulative_principal = float(debt_schedule["Principal Repayment"].sum()) + repayable_alt
+    total_contractual_debt_service = cumulative_principal + cumulative_interest
 
     metrics = {
         "Project NPV": _number(model["returns"].get("Project NPV")),
@@ -476,7 +495,10 @@ def calculate_financing_scenario(
         "Equity NPV": _npv(equity_discount_rate, equity_cash_flows),
         "Equity Payback": _payback(equity_cash_flows),
         "Equity Discount Rate": equity_discount_rate,
-        "Interest Cost": float(debt_schedule["Cash Interest Expense"].sum()) + alternative_annual_cost * maturity,
+        "Interest Cost": cumulative_interest,
+        "Total Contractual Debt Service": total_contractual_debt_service,
+        "Upfront Debt Arrangement Fee": arrangement_fee,
+        "Cumulative Commitment Fees": float(debt_schedule["Commitment Fee"].sum()),
         "Peak Debt": float(debt_schedule["Closing Debt"].max()) + repayable_alt,
         "Minimum DSCR": min(dscr_values) if dscr_values else None,
         "Peak Net Debt / EBITDA": max(leverage_values) if leverage_values else None,
@@ -490,6 +512,8 @@ def calculate_financing_scenario(
         "Funding Gap / Excess Funding": funding_gap,
         "Funding Inputs Valid": not impossible_sources,
         "Sustaining CAPEX Over Forecast": sustaining_capex,
+        "Avoided Future CAPEX Benefit Over Forecast": avoided_capex,
+        "Project Operating Cash Flow Available": operating_cash_available,
         "All-in Interest Rate": _number(terms.get("Fixed Interest Rate")) if str(terms.get("Interest Rate Type")) == "Fixed" else _number(terms.get("Reference / Base Rate")) + _number(terms.get("Credit Spread")),
     }
     return {
