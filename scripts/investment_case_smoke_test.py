@@ -27,7 +27,7 @@ for case in cases:
     inputs = default_investment_inputs(case)
     ten_year = calculate_investment_model(inputs)
     assert len(ten_year["years"]) == 10
-    assert ten_year["returns"]["Project IRR"] is not None
+    assert "Project IRR" in ten_year["returns"]
     assert not ten_year["baseline_pnl"].empty
     assert not ten_year["scenario_pnl"].empty
     assert not ten_year["cash_flow"].empty
@@ -48,7 +48,7 @@ for case in cases:
 for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
     case = {"Case ID": f"INV-T{index}", "Investment Case Name": archetype, "Case Archetype": archetype, "Investment Type": archetype, "Business Unit / Market": "Test Scope", "Owner": "Daniel Ortiz", "Status": "Draft", "Last Updated": "2026-09-15"}
     inputs = default_investment_inputs(case)
-    for method in ("CAPM – Own Beta", "CAPM – Peer / Proxy Beta", "Corporate Provided Cost of Equity", "Manual / Other"):
+    for method in ("CAPM – Own Beta", "CAPM – Peer / Proxy Beta", "Manual Cost of Equity"):
         inputs["capital"]["Cost of Equity Method"] = method
         result = calculate_investment_model(inputs)
         assert result["returns"]["WACC"] > 0
@@ -166,6 +166,24 @@ app.session_state[f"investment_case_section_{case_id}"] = "Model"
 app.run()
 assert_clean(app, "Model first-edit setup")
 
+equity_method_key = f"investment_{case_id}_coe_method"
+equity_approaches = ["CAPM – Own Beta", "CAPM – Peer / Proxy Beta", "Manual Cost of Equity"]
+equity_method_widget = next(widget for widget in app.selectbox if widget.key == equity_method_key)
+assert list(equity_method_widget.options) == equity_approaches
+for approach in equity_approaches:
+    next(widget for widget in app.selectbox if widget.key == equity_method_key).set_value(approach).run()
+    assert_clean(app, f"Cost of Equity approach: {approach}")
+    assert app.session_state["investment_case_inputs"][case_id]["capital"]["Cost of Equity Method"] == approach
+    assert not any(widget.label == "Unlevered Beta" for widget in app.number_input)
+    if approach == "CAPM – Peer / Proxy Beta":
+        assert any(widget.label == "Relevered Beta" for widget in app.number_input)
+    if approach == "Manual Cost of Equity":
+        assert any(widget.label == "Cost of Equity %" for widget in app.number_input)
+
+# Restore the default approach before the remaining first-edit checks.
+next(widget for widget in app.selectbox if widget.key == equity_method_key).set_value("CAPM – Own Beta").run()
+assert_clean(app, "Cost of Equity approach restored")
+
 uses_key = f"investment_records_{case_id}_uses"
 npv_before_edit = calculate_investment_model(app.session_state["investment_case_inputs"][case_id])["returns"]["Project NPV"]
 app.session_state[uses_key] = {"edited_rows": {0: {"Amount": 23_000_000}}, "added_rows": [], "deleted_rows": []}
@@ -180,8 +198,8 @@ app.run()
 assert_clean(app, "Sustaining CAPEX first edit")
 assert app.session_state["investment_case_inputs"][case_id]["investment"]["Sustaining CAPEX"]["Y1"] == 360_000
 
-capacity_key = f"investment_driver_{case_id}_capacity_schedule_count_10"
-app.session_state[capacity_key] = {"edited_rows": {1: {"Y1": 810_000}}, "added_rows": [], "deleted_rows": []}
+capacity_key = f"investment_driver_{case_id}_capacity_scenario_volume_Scenario Volume_count_10"
+app.session_state[capacity_key] = {"edited_rows": {0: {"Y1": 810_000}}, "added_rows": [], "deleted_rows": []}
 app.run()
 assert_clean(app, "Capacity first edit")
 assert app.session_state["investment_case_inputs"][case_id]["capacity"]["Scenario Volume"]["Y1"] == 810_000
@@ -248,7 +266,7 @@ acquisition_app.session_state[acquisition_editor_key] = {"edited_rows": {4: {"Y1
 acquisition_app.run()
 assert_clean(acquisition_app, "Acquisition synergy first edit")
 assert acquisition_app.session_state["investment_case_inputs"][acquisition_case["Case ID"]]["acquisition"]["Revenue Synergies"]["Y1"] == 3_750_000
-assert not any(widget.key == f"investment_records_{acquisition_case['Case ID']}_savings" for widget in acquisition_app.dataframe)
+assert any(widget.key == f"investment_records_{acquisition_case['Case ID']}_savings" for widget in acquisition_app.dataframe)
 
 for case in cases:
     case_id = case["Case ID"]

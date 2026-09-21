@@ -11191,6 +11191,10 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         capacity.pop("Net Price Escalation %", None)
         current.setdefault("capacity_input_methods", deepcopy(defaults["capacity_input_methods"]))
         current.setdefault("capacity_growth_rates", deepcopy(defaults["capacity_growth_rates"]))
+        for metric, default_method in defaults["capacity_input_methods"].items():
+            current["capacity_input_methods"].setdefault(metric, default_method)
+        for metric, default_growth in defaults["capacity_growth_rates"].items():
+            current["capacity_growth_rates"].setdefault(metric, default_growth)
         for settings_name in ("capacity_input_methods", "capacity_growth_rates"):
             if old_price_name in current[settings_name] and new_price_name not in current[settings_name]:
                 current[settings_name][new_price_name] = current[settings_name].pop(old_price_name)
@@ -11246,7 +11250,16 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         working_capital = current.setdefault("working_capital", {})
         working_capital.setdefault("AP Cost Basis", "Direct Materials")
         working_capital.setdefault("Selected Operating Cost Base %", 1.0)
-        debt_weight = min(1.0, max(0.0, safe_float(current.setdefault("capital", {}).get("Target Debt %", .35))))
+        capital = current.setdefault("capital", {})
+        legacy_equity_method = str(capital.get("Cost of Equity Method", "CAPM – Own Beta"))
+        if legacy_equity_method == "Corporate Provided Cost of Equity":
+            capital["Manual Cost of Equity"] = safe_float(capital.get("Corporate Cost of Equity", capital.get("Manual Cost of Equity", .105)))
+            capital["Cost of Equity Method"] = "Manual Cost of Equity"
+        elif legacy_equity_method == "Manual / Other":
+            capital["Cost of Equity Method"] = "Manual Cost of Equity"
+        elif legacy_equity_method not in {"CAPM – Own Beta", "CAPM – Peer / Proxy Beta", "Manual Cost of Equity"}:
+            capital["Cost of Equity Method"] = "CAPM – Own Beta"
+        debt_weight = min(1.0, max(0.0, safe_float(capital.get("Target Debt %", .35))))
         current["capital"].pop("Treasury / Cash Yield", None)
         current["capital"]["Target Equity %"] = 1.0 - debt_weight
         if current != all_inputs[case_id]:
@@ -11441,8 +11454,10 @@ def render_investment_series_method(
     method: str,
     growth: float,
     years: list[str],
+    display_label: str | None = None,
 ) -> tuple[dict[str, dict[str, float]], str, float]:
-    st.markdown(f"**{metric}**")
+    visible_label = display_label or metric
+    st.markdown(f"**{visible_label}**")
     method_key = f"investment_{case_id}_{section_key}_{re.sub(r'[^a-z0-9]+', '_', metric.lower()).strip('_')}_method"
     investment_seed_widget(method_key, method if method in {"Y1 + Growth", "Annual Schedule"} else "Y1 + Growth")
     selected_method = st.radio("Input Method", ["Y1 + Growth", "Annual Schedule"], horizontal=True, key=method_key)
@@ -11456,7 +11471,7 @@ def render_investment_series_method(
     investment_seed_widget(growth_key, safe_float(growth) * 100)
     controls = st.columns([1, 1, 2])
     step = .1 if "per Unit" in metric else 1.0
-    controls[0].number_input(f"{metric} Y1", min_value=0.0, step=step, key=y1_key)
+    controls[0].number_input(f"{visible_label} Y1", min_value=0.0, step=step, key=y1_key)
     controls[1].number_input("Annual Growth / Escalation %", min_value=-100.0, step=.1, key=growth_key)
     updated.setdefault(metric, {})["Y1"] = safe_float(st.session_state[y1_key])
     return updated, selected_method, safe_float(st.session_state[growth_key]) / 100
@@ -11555,14 +11570,20 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
             column_config[column] = st.column_config.SelectboxColumn(column, options=["Immediate", "1-year ramp", "2-year ramp", "Custom"], width="medium")
         elif column == "Cost Line Mapping":
             column_config[column] = st.column_config.SelectboxColumn(column, options=[
+                "Manufacturing COGS",
                 "Manufacturing COGS · Direct Materials",
                 "Manufacturing COGS · Direct Labor",
                 "Manufacturing COGS · Variable Manufacturing Overhead",
                 "Manufacturing COGS · Fixed Manufacturing Overhead",
+                "Non-Manufacturing Personnel",
                 "Non-Manufacturing Personnel · Operations",
+                "Non-Manufacturing OPEX",
                 "Non-Manufacturing OPEX · Maintenance Contracts",
                 "Non-Manufacturing OPEX · Software Licenses",
                 "Non-Manufacturing OPEX · Other Fixed Overhead",
+                "Working Capital",
+                "CAPEX Avoidance",
+                "Other relevant controlled line",
             ], width="large")
         elif column == "Cost Behavior":
             column_config[column] = st.column_config.SelectboxColumn(column, options=["Variable — per unit", "Fixed / step-fixed — annual"], width="medium")
@@ -11713,30 +11734,48 @@ def render_investment_settings(case_id: str, inputs: dict[str, object]) -> dict[
 
 def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[str, object]:
     capital = deepcopy(inputs["capital"])
-    methods = ["CAPM – Own Beta", "CAPM – Peer / Proxy Beta", "Corporate Provided Cost of Equity", "Manual / Other"]
-    investment_seed_widget(f"investment_{case_id}_coe_method", capital.get("Cost of Equity Method", methods[0]))
-    method = st.selectbox("Cost of Equity Method", methods, key=f"investment_{case_id}_coe_method")
+    methods = ["CAPM – Own Beta", "CAPM – Peer / Proxy Beta", "Manual Cost of Equity"]
+    stored_method = str(capital.get("Cost of Equity Method", methods[0]))
+    if stored_method == "Corporate Provided Cost of Equity":
+        capital["Manual Cost of Equity"] = safe_float(capital.get("Corporate Cost of Equity", capital.get("Manual Cost of Equity", .105)))
+        stored_method = "Manual Cost of Equity"
+    elif stored_method == "Manual / Other":
+        stored_method = "Manual Cost of Equity"
+    elif stored_method not in methods:
+        stored_method = methods[0]
+    method_key = f"investment_{case_id}_coe_method"
+    if st.session_state.get(method_key) in {"Corporate Provided Cost of Equity", "Manual / Other"}:
+        st.session_state[method_key] = "Manual Cost of Equity"
+    investment_seed_widget(method_key, stored_method)
+    method = st.selectbox("Cost of Equity Approach", methods, key=method_key)
     capital["Cost of Equity Method"] = method
     percent_fields = ["Risk-Free Rate","Equity Risk Premium","Country Risk Premium","Corporate Cost of Equity","Manual Cost of Equity","Pre-tax Cost of Debt","Target Debt %","Corporate Hurdle Rate","Existing Business ROIC","Marginal Reinvestment Return"]
     for field in percent_fields: investment_seed_widget(f"investment_{case_id}_capital_{field}", safe_float(capital.get(field,0))*100)
-    for field in ["Beta","Unlevered Beta","Relevered Beta"]: investment_seed_widget(f"investment_{case_id}_capital_{field}", safe_float(capital.get(field,0)))
+    for field in ["Beta","Relevered Beta"]: investment_seed_widget(f"investment_{case_id}_capital_{field}", safe_float(capital.get(field,0)))
     if method.startswith("CAPM"):
         equity = st.columns(4)
         helps = {"Risk-Free Rate":"Default-free reference rate appropriate to model currency and duration. This does not have to be US Treasury.","Equity Risk Premium":"Expected equity market return above the risk-free rate.","Country Risk Premium":"Additional compensation for country-specific sovereign/economic risk where applicable."}
         for column, field in zip(equity[:3],["Risk-Free Rate","Equity Risk Premium","Country Risk Premium"]): column.number_input(f"{field} %", step=.1, key=f"investment_{case_id}_capital_{field}", help=helps[field])
         if method == "CAPM – Peer / Proxy Beta":
-            peer = st.columns(3)
+            peer = st.columns([1.5, 1.0, 1.5])
             investment_seed_widget(f"investment_{case_id}_peer_source", capital.get("Peer Beta Source",""))
             peer[0].text_input("Peer Beta Source", key=f"investment_{case_id}_peer_source")
-            peer[1].number_input("Unlevered Beta", min_value=0.0, step=.05, key=f"investment_{case_id}_capital_Unlevered Beta")
-            peer[2].number_input("Relevered Beta", min_value=0.0, step=.05, key=f"investment_{case_id}_capital_Relevered Beta")
+            peer[1].number_input("Relevered Beta", min_value=0.0, step=.05, key=f"investment_{case_id}_capital_Relevered Beta", help="Relevered Beta reflects the peer/business risk adjusted to the target capital structure and is used in the CAPM calculation.")
             capital["Peer Beta Source"] = st.session_state[f"investment_{case_id}_peer_source"]
         else:
             equity[3].number_input("Beta", min_value=0.0, step=.05, key=f"investment_{case_id}_capital_Beta", help="Measure of equity sensitivity to systematic market risk.")
-    elif method == "Corporate Provided Cost of Equity":
-        st.number_input("Corporate Cost of Equity %", step=.1, key=f"investment_{case_id}_capital_Corporate Cost of Equity")
     else:
-        st.number_input("Manual Cost of Equity %", step=.1, key=f"investment_{case_id}_capital_Manual Cost of Equity")
+        manual = st.columns([1.0, 1.35, 1.0, 1.65])
+        manual[0].number_input("Cost of Equity %", step=.1, key=f"investment_{case_id}_capital_Manual Cost of Equity")
+        for column, field, label in zip(
+            manual[1:],
+            ["Source / Methodology", "Effective Date", "Rationale"],
+            ["Source / Basis", "Effective Date / Version", "Rationale"],
+        ):
+            key = f"investment_{case_id}_capital_meta_{field}"
+            investment_seed_widget(key, str(capital.get(field, "")))
+            column.text_input(label, key=key)
+            capital[field] = st.session_state[key]
     if method.startswith("CAPM"):
         for field in ["Risk-Free Rate", "Equity Risk Premium", "Country Risk Premium"]:
             capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"]) / 100
@@ -11766,7 +11805,7 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     live_capital = deepcopy(capital)
     for field in percent_fields:
         live_capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"]) / 100
-    for field in ["Beta", "Unlevered Beta", "Relevered Beta"]:
+    for field in ["Beta", "Relevered Beta"]:
         live_capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])
     live_cost_of_equity = calculate_cost_of_equity(live_capital)
     live_debt_weight = min(1.0, max(0.0, live_capital["Target Debt %"]))
@@ -11795,7 +11834,7 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     st.caption("Existing Business ROIC = return generated by the existing operating business. Marginal Reinvestment Return = expected return on the next incremental unit of capital deployed. Corporate Hurdle Rate = management screening threshold for investment returns. These are analytical references only.")
     for field in percent_fields: capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])/100
     capital["Target Equity %"] = 1.0 - capital["Target Debt %"]
-    for field in ["Beta","Unlevered Beta","Relevered Beta"]: capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])
+    for field in ["Beta","Relevered Beta"]: capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])
     inputs["capital"] = capital
     preview = calculate_investment_model(inputs)
     returns = preview["returns"]
@@ -11804,9 +11843,10 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     strip[1].metric("Hurdle Rate", pct(capital["Corporate Hurdle Rate"]))
     strip[2].metric("Existing ROIC", pct(capital["Existing Business ROIC"]))
     strip[3].metric("Marginal Return", pct(capital["Marginal Reinvestment Return"]))
-    with st.expander("Assumption source, methodology and rationale", expanded=False):
-        for field in ["Source / Methodology", "Effective Date", "Rationale"]:
-            key=f"investment_{case_id}_capital_meta_{field}";investment_seed_widget(key,str(capital.get(field,"")));st.text_input(field,key=key);capital[field]=st.session_state[key]
+    if method != "Manual Cost of Equity":
+        with st.expander("Assumption source, methodology and rationale", expanded=False):
+            for field in ["Source / Methodology", "Effective Date", "Rationale"]:
+                key=f"investment_{case_id}_capital_meta_{field}";investment_seed_widget(key,str(capital.get(field,"")));st.text_input(field,key=key);capital[field]=st.session_state[key]
     return inputs
 
 
@@ -11912,24 +11952,72 @@ def render_investment_model(case: dict[str, object]) -> None:
         mode=st.radio("Revenue Modeling Mode",["Unit-based","Revenue-based"],horizontal=True,key=mode_key)
         inputs["settings"]["Revenue Modeling Mode"]=mode
         if mode == "Unit-based":
-            for metric in ["Baseline Capacity", "Baseline Volume", "Baseline Net Price per Unit", "Scenario Net Price per Unit"]:
+            def render_capacity_metric(metric: str, label: str, section_key: str) -> None:
                 source, method, growth = render_investment_series_method(
                     case_id,
-                    "capacity",
+                    section_key,
                     metric,
                     inputs["capacity"],
                     str(inputs.get("capacity_input_methods", {}).get(metric, "Y1 + Growth")),
                     safe_float(inputs.get("capacity_growth_rates", {}).get(metric, 0.0)),
                     years,
+                    display_label=label,
                 )
                 inputs["capacity"] = source
                 inputs.setdefault("capacity_input_methods", {})[metric] = method
                 inputs.setdefault("capacity_growth_rates", {})[metric] = growth
-            inputs["capacity"] = render_investment_driver_editor(case_id,"capacity_schedule","Phased Capacity and Scenario Volume",inputs["capacity"],["Added Capacity from Investment","Scenario Volume"],years)
+
+            st.markdown("**A. Volume**")
+            volume_columns = st.columns(2)
+            with volume_columns[0]:
+                render_capacity_metric("Baseline Volume", "Baseline Volume", "capacity_baseline_volume")
+            with volume_columns[1]:
+                render_capacity_metric("Scenario Volume", "Investment Scenario Volume", "capacity_scenario_volume")
+            volume_bridge = calculate_investment_model(inputs)["capacity_bridge"]
+            render_finance_table(
+                format_investment_driver_table(volume_bridge[volume_bridge["Metric"] == "Incremental Volume"], years),
+                right_align=set(years),
+            )
+
+            st.markdown("**B. Net Price**")
+            price_columns = st.columns(2)
+            with price_columns[0]:
+                render_capacity_metric("Baseline Net Price per Unit", "Baseline Net Price", "capacity_baseline_price")
+            with price_columns[1]:
+                render_capacity_metric("Scenario Net Price per Unit", "Investment Scenario Net Price", "capacity_scenario_price")
+            price_bridge = calculate_investment_model(inputs)["capacity_bridge"]
+            price_rows = price_bridge[price_bridge["Metric"].isin(["Net Price Delta", "Net Price Change %"])]
+            render_finance_table(
+                format_investment_driver_table(price_rows, years),
+                right_align=set(years),
+                secondary_rows={"Net Price Change %"},
+            )
+
+            st.markdown("**C. Capacity**")
+            capacity_columns = st.columns(2)
+            with capacity_columns[0]:
+                render_capacity_metric("Baseline Capacity", "Baseline Capacity", "capacity_baseline_capacity")
+            with capacity_columns[1]:
+                render_capacity_metric("Added Capacity from Investment", "Added Capacity from Investment", "capacity_added_capacity")
+            capacity_bridge = calculate_investment_model(inputs)["capacity_bridge"]
+            capacity_rows = capacity_bridge[capacity_bridge["Metric"].isin([
+                "Total Scenario Capacity", "Baseline Utilization %", "Scenario Utilization %",
+                "Baseline Idle Capacity", "Scenario Idle Capacity",
+            ])]
+            render_finance_table(
+                format_investment_driver_table(capacity_rows, years),
+                right_align=set(years),
+                secondary_rows={"Baseline Utilization %", "Scenario Utilization %"},
+            )
+
             bridge = calculate_investment_model(inputs)["capacity_bridge"]
-            st.markdown("**Capacity Operating Bridge**")
-            st.caption("Idle Capacity equals available capacity less volume; Utilization equals volume divided by available capacity.")
-            render_finance_table(format_investment_driver_table(bridge, years), right_align=set(years), secondary_rows={"Baseline Utilization %", "Scenario Utilization %"})
+            st.markdown("**Operating Driver Bridge**")
+            st.caption("Controlled reconciliation of capacity, volume, utilization, net price and revenue from Baseline to Investment Scenario.")
+            render_finance_table(
+                format_investment_driver_table(bridge, years),
+                right_align=set(years),
+                secondary_rows={"Baseline Utilization %", "Scenario Utilization %", "Net Price Change %"},
+            )
         else:
             inputs = render_investment_revenue_inputs(case_id, "capacity_revenue", inputs, years, True)
     elif archetype == CASE_ARCHETYPES[1]:
@@ -11942,33 +12030,6 @@ def render_investment_model(case: dict[str, object]) -> None:
         st.caption("Synergy Ramp % is the percentage of the full run-rate revenue and cost synergies expected to be realized in each year. For example, 25% / 55% / 80% / 100% represents partial realization until full run-rate is reached; the ramp is applied once.")
         inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone and Synergy Inputs",inputs["acquisition"],["Target Revenue","Target Gross Margin %","Target EBITDA","Target D&A","Target EBIT","Revenue Synergies","Cost Synergies","Synergy Ramp %","One-off Integration Costs"],years)
         st.caption("Projected working capital is calculated consistently from DSO, DIO and DPO. Any opening or transaction working-capital reference is not used as a second forecast input.")
-
-    if "Cost Reduction" in enabled and archetype != CASE_ARCHETYPES[2]:
-        st.markdown("**Savings / Benefits Register**")
-        st.caption("Full-run-rate realized saving = Gross Run-Rate Saving × Realization %. Ramp Profile determines how much of this amount is recognized in each forecast year.")
-        original_savings = deepcopy(inputs["savings_register"])
-        rows=[]
-        for row in inputs["savings_register"]:
-            item={key:value for key,value in row.items() if key not in {"Custom Y1 Ramp %","Custom Y2 Ramp %","Custom Y3+ Ramp %"}}
-            item["Realization %"]=safe_float(item.get("Realization %"))*100
-            item["Realized Saving"]=safe_float(item.get("Gross Run-rate Saving",item.get("Gross Saving")))*safe_float(item.get("Realization %"))/100
-            rows.append(item)
-        rows=render_investment_record_editor(case_id,"savings",rows,["Realized Saving"])
-        for index,row in enumerate(rows):
-            original = original_savings[index] if index < len(original_savings) else {}
-            row["Realization %"]=safe_float(row.get("Realization %"))/100
-            row["Realized Saving"]=safe_float(row.get("Gross Run-rate Saving",row.get("Gross Saving")))*row["Realization %"]
-            for field,default in [("Custom Y1 Ramp %",1/3),("Custom Y2 Ramp %",2/3),("Custom Y3+ Ramp %",1.0)]:
-                row[field]=safe_float(original.get(field,default))
-            if str(row.get("Ramp Profile")) == "Custom":
-                custom_columns=st.columns([.7,.7,.7,1.9])
-                st.caption(f"Custom ramp · {row.get('Category','Saving')}")
-                for column,(field,label) in zip(custom_columns,[('Custom Y1 Ramp %','Y1 Ramp %'),('Custom Y2 Ramp %','Y2 Ramp %'),('Custom Y3+ Ramp %','Y3+ Ramp %')]):
-                    key=f"investment_{case_id}_saving_{index}_{field.lower().replace(' ','_').replace('%','pct').replace('+','plus')}"
-                    investment_seed_widget(key,safe_float(row[field])*100)
-                    column.number_input(label,min_value=0.0,max_value=100.0,step=5.0,key=key)
-                    row[field]=safe_float(st.session_state[key])/100
-        inputs["savings_register"]=rows
 
     st.markdown("<div class='enterprise-section-title'>4. Operating Cost Structure</div>", unsafe_allow_html=True)
     st.caption("Defines how baseline and investment operating costs evolve and determines the project’s incremental profitability.")
@@ -11993,7 +12054,7 @@ def render_investment_model(case: dict[str, object]) -> None:
                 inputs["operating_cost_schedules"][group] = render_investment_driver_editor(case_id, f"cost_schedule_{group}", "Annual Cost Schedule", schedules, ["Baseline Cost", "Scenario Cost"], years)
             else:
                 if group == "manufacturing_cogs":
-                    st.caption("Baseline Input and Scenario Input use the basis shown in Cost Behavior: $/unit for variable rows and annual $ for fixed / step-fixed rows. Annual Growth % determines future-year values.")
+                    st.caption("Baseline Input and Scenario Input follow the selected Cost Behavior: per unit for variable rows and annual amount for fixed / step-fixed rows.")
                 else:
                     st.caption("Baseline Y1 / Scenario Y1 plus Annual Growth % determines future-year values.")
                 rows=[]
@@ -12002,6 +12063,65 @@ def render_investment_model(case: dict[str, object]) -> None:
                 for row in rows: row["Annual Growth %"]=safe_float(row.get("Annual Growth %"))/100
                 inputs["operating_costs"][group]=rows
                 st.caption("Use the add-row control to add a cost line.")
+
+    if "Cost Reduction" in enabled:
+        st.markdown("**Savings / Benefits Register**")
+        st.caption("Savings / Benefits Register explains the business drivers behind Baseline-to-Scenario operating cost or benefit changes. Mapped savings are not added again to project cash flow.")
+        st.caption("Full-run-rate realized saving = Gross Run-Rate Saving × Realization %. Ramp Profile describes the expected timing of the underlying modeled change.")
+        original_savings = deepcopy(inputs["savings_register"])
+        savings_rows=[]
+        for row in inputs["savings_register"]:
+            item={key:value for key,value in row.items() if key not in {"Custom Y1 Ramp %","Custom Y2 Ramp %","Custom Y3+ Ramp %"}}
+            item["Realization %"]=safe_float(item.get("Realization %"))*100
+            item["Realized Saving"]=safe_float(item.get("Gross Run-rate Saving",item.get("Gross Saving")))*safe_float(item.get("Realization %"))/100
+            savings_rows.append(item)
+        savings_rows=render_investment_record_editor(case_id,"savings",savings_rows,["Realized Saving"])
+        for index,row in enumerate(savings_rows):
+            original = original_savings[index] if index < len(original_savings) else {}
+            row["Realization %"]=safe_float(row.get("Realization %"))/100
+            row["Realized Saving"]=safe_float(row.get("Gross Run-rate Saving",row.get("Gross Saving")))*row["Realization %"]
+            for field,default in [("Custom Y1 Ramp %",1/3),("Custom Y2 Ramp %",2/3),("Custom Y3+ Ramp %",1.0)]:
+                row[field]=safe_float(original.get(field,default))
+            if str(row.get("Ramp Profile")) == "Custom":
+                custom_columns=st.columns([.7,.7,.7,1.9])
+                st.caption(f"Custom ramp · {row.get('Category','Saving')}")
+                for column,(field,label) in zip(custom_columns,[('Custom Y1 Ramp %','Y1 Ramp %'),('Custom Y2 Ramp %','Y2 Ramp %'),('Custom Y3+ Ramp %','Y3+ Ramp %')]):
+                    key=f"investment_{case_id}_saving_{index}_{field.lower().replace(' ','_').replace('%','pct').replace('+','plus')}"
+                    investment_seed_widget(key,safe_float(row[field])*100)
+                    column.number_input(label,min_value=0.0,max_value=100.0,step=5.0,key=key)
+                    row[field]=safe_float(st.session_state[key])/100
+        inputs["savings_register"]=savings_rows
+
+        trace_model = calculate_investment_model(inputs)
+        terminal_year = trace_model["years"][-1]
+        baseline_pnl = trace_model["baseline_pnl"].set_index("Metric")
+        scenario_pnl = trace_model["scenario_pnl"].set_index("Metric")
+        mapped_totals: dict[str, float] = {}
+        for row in savings_rows:
+            if not bool(row.get("Applicable", True)):
+                continue
+            mapping = str(row.get("Cost Line Mapping", "Other relevant controlled line"))
+            group = next((name for name in ["Manufacturing COGS", "Non-Manufacturing Personnel", "Non-Manufacturing OPEX", "Working Capital", "CAPEX Avoidance"] if mapping.startswith(name)), "Other relevant controlled line")
+            mapped_totals[group] = mapped_totals.get(group, 0.0) + safe_float(row.get("Realized Saving"))
+        modeled_reductions = {
+            "Manufacturing COGS": safe_float(baseline_pnl.at["COGS", terminal_year]) - safe_float(scenario_pnl.at["COGS", terminal_year]),
+            "Non-Manufacturing Personnel": safe_float(baseline_pnl.at["Non-Manufacturing Personnel", terminal_year]) - safe_float(scenario_pnl.at["Non-Manufacturing Personnel", terminal_year]),
+            "Non-Manufacturing OPEX": safe_float(baseline_pnl.at["Non-Manufacturing OPEX", terminal_year]) - safe_float(scenario_pnl.at["Non-Manufacturing OPEX", terminal_year]),
+            "CAPEX Avoidance": safe_float(inputs.get("investment", {}).get("CAPEX Avoidance", {}).get(terminal_year, 0.0)),
+        }
+        reconciliation_rows=[]
+        for mapping, mapped_value in mapped_totals.items():
+            modeled_value = modeled_reductions.get(mapping)
+            if modeled_value is None:
+                reconciliation_rows.append({"Mapped Line":mapping,"Mapped Full-Run-Rate Saving":money(mapped_value),f"Modeled Change ({terminal_year})":"Reference only","Status":"Traceability only"})
+                continue
+            variance = mapped_value - modeled_value
+            material = abs(variance) > max(100_000.0, abs(modeled_value) * .10)
+            reconciliation_rows.append({"Mapped Line":mapping,"Mapped Full-Run-Rate Saving":money(mapped_value),f"Modeled Change ({terminal_year})":money(modeled_value),"Status":"Review mismatch" if material else "Reconciled"})
+        if reconciliation_rows:
+            st.markdown("**Savings traceability reconciliation**")
+            st.caption("Compares mapped full-run-rate savings with the terminal-year Baseline-to-Scenario change. Differences are advisory and do not block editing.")
+            render_finance_table(pd.DataFrame(reconciliation_rows), right_align={"Mapped Full-Run-Rate Saving",f"Modeled Change ({terminal_year})"}, exception_values={"Review mismatch":"#fff4e5"})
 
     st.markdown("<div class='enterprise-section-title'>5. Cost of Capital & Investment Thresholds</div>", unsafe_allow_html=True)
     st.caption("Establishes the discount rate and capital-allocation benchmarks used to evaluate project returns against capital and risk.")
@@ -12012,7 +12132,6 @@ def render_investment_model(case: dict[str, object]) -> None:
     st.markdown("### FINANCIAL MODEL OUTPUTS")
     st.caption("Calculated outputs · Read-only results from the controlled assumptions above.")
     driver_names=[] if archetype==CASE_ARCHETYPES[0] and inputs["settings"].get("Revenue Modeling Mode")=="Unit-based" else ["Baseline Revenue","Incremental Revenue","Scenario Revenue"]
-    if "Cost Reduction" in enabled: driver_names.append("Realized Savings")
     if driver_names:
         calculated=pd.DataFrame([{"Calculated Driver":m,**{y:model["drivers"][m][y] for y in years}} for m in driver_names])
         st.caption("Calculated operating bridge from the assumptions above")

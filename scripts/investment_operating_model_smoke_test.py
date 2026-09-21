@@ -5,6 +5,8 @@ from math import isclose
 from pathlib import Path
 import sys
 
+import pandas as pd
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -61,7 +63,12 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
     sensitivity = calculate_investment_sensitivity(inputs, normalize_sensitivity_settings(inputs, None))
     base_row = sensitivity["scenarios"].set_index("Scenario").loc["Base"]
     assert close(base_row["NPV"], model["returns"]["Project NPV"])
-    assert close(base_row["IRR"], model["returns"]["Project IRR"], 1e-12)
+    model_irr = model["returns"]["Project IRR"]
+    sensitivity_irr = base_row["IRR"]
+    if model_irr is None:
+        assert sensitivity_irr is None or pd.isna(sensitivity_irr)
+    else:
+        assert close(sensitivity_irr, model_irr, 1e-12)
 
     financing = calculate_financing_scenario(model, default_financing_inputs(), "internal")
     assert close(financing["metrics"]["Project NPV"], model["returns"]["Project NPV"])
@@ -93,5 +100,14 @@ avoidance_model = calculate_investment_model(avoidance_inputs)
 avoidance_flow = avoidance_model["cash_flow"].set_index("Year")
 assert close(avoidance_flow.at["Y4", "CAPEX"], avoidance_inputs["investment"]["Sustaining CAPEX"]["Y4"])
 assert close(avoidance_flow.at["Y4", "Avoided CAPEX"], 4_000_000)
+
+# The Savings / Benefits Register is traceability only. Section 4 operating-cost
+# inputs remain the controlled source for project economics.
+savings_inputs = default_investment_inputs({"Case Archetype": CASE_ARCHETYPES[1]})
+savings_base = calculate_investment_model(savings_inputs)
+savings_inputs["savings_register"][0]["Gross Run-rate Saving"] *= 10
+savings_changed = calculate_investment_model(savings_inputs)
+assert close(savings_changed["returns"]["Project NPV"], savings_base["returns"]["Project NPV"])
+assert savings_changed["scenario_pnl"].equals(savings_base["scenario_pnl"])
 
 print("investment operating model reconciliation smoke test complete")

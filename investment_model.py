@@ -160,8 +160,8 @@ def default_investment_inputs(case: dict[str, Any]) -> dict[str, Any]:
         "settings": {"Case Name": str(case.get("Investment Case Name", "New Investment Case")), "Case Archetype": archetype, "Value Creation Drivers": archetype_default_drivers(archetype), "Financial Scope": str(case.get("Business Unit / Market", "Region A Operations")), "Currency": "USD", "Base Year": 2026, "Forecast Horizon": 10, "Investment Start Date": date(2026,10,1), "Operational Start Date": date(2027,7,1), "Applicable Tax Rate": .24, "Planning Inflation": .025, "Model Basis": "Nominal", "Model Version": "1.0", "As Of Date": date(2026,9,15), "Revenue Modeling Mode": "Unit-based"},
         "investment": {"uses": _uses(archetype), "Sustaining CAPEX": _series(220_000 if digital else 350_000, .02), "Sustaining CAPEX Source / Basis": "Long-range plan", "Sustaining CAPEX Comment / Rationale": "Maintenance capital", "CAPEX Avoidance": _series(0), "Useful Life": 10},
         "capacity": capacity,
-        "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Baseline Volume": "Y1 + Growth", "Baseline Net Price per Unit": "Y1 + Growth", "Scenario Net Price per Unit": "Y1 + Growth"},
-        "capacity_growth_rates": {"Baseline Capacity": .01, "Baseline Volume": .025, "Baseline Net Price per Unit": .02, "Scenario Net Price per Unit": .02},
+        "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Added Capacity from Investment": "Annual Schedule", "Baseline Volume": "Y1 + Growth", "Scenario Volume": "Annual Schedule", "Baseline Net Price per Unit": "Y1 + Growth", "Scenario Net Price per Unit": "Y1 + Growth"},
+        "capacity_growth_rates": {"Baseline Capacity": .01, "Added Capacity from Investment": 0.0, "Baseline Volume": .025, "Scenario Volume": 0.0, "Baseline Net Price per Unit": .02, "Scenario Net Price per Unit": .02},
         "revenue_based": {"Baseline Revenue": _series(60_000_000 if digital else 46_080_000,.035), "Incremental Revenue / Revenue Uplift": _annual([0,1e6,2.5e6,4e6,5.5e6,6e6,6.5e6,7e6,7.5e6,8e6])},
         "revenue_input_method": "Y1 + Growth",
         "revenue_growth_rate": .035,
@@ -184,7 +184,9 @@ def calculate_cost_of_equity(capital: dict[str, Any]) -> float:
     beta = _n(capital.get("Relevered Beta" if method == "CAPM – Peer / Proxy Beta" else "Beta"))
     if method.startswith("CAPM"):
         return _n(capital.get("Risk-Free Rate")) + beta * _n(capital.get("Equity Risk Premium")) + _n(capital.get("Country Risk Premium"))
-    return _n(capital.get("Corporate Cost of Equity" if method == "Corporate Provided Cost of Equity" else "Manual Cost of Equity"))
+    if method == "Corporate Provided Cost of Equity":
+        return _n(capital.get("Corporate Cost of Equity", capital.get("Manual Cost of Equity")))
+    return _n(capital.get("Manual Cost of Equity"))
 
 
 def _v(s: dict[str,Any], y: str) -> float: return _n(s.get(y,0))
@@ -318,16 +320,16 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     initial=_line_total(x["investment"]["uses"],"Amount"); life=max(1,int(x["investment"].get("Useful Life",10)))
     metrics=["Revenue","COGS","Gross Profit","Gross Margin %","Non-Manufacturing Personnel","Non-Manufacturing OPEX","EBITDA","EBITDA Margin %","Depreciation & Amortization","EBIT","EBIT Margin %"]
     base={m:{} for m in metrics}; scenario=deepcopy(base); drivers={m:{} for m in ["Total Available Capacity","Capacity Utilization %","Baseline Revenue","Incremental Revenue","Scenario Revenue","Realized Savings"]}
-    capacity_bridge={m:{} for m in ["Baseline Capacity","Baseline Volume","Baseline Idle Capacity","Baseline Utilization %","Added Capacity","Total Scenario Capacity","Scenario Volume","Scenario Idle Capacity","Scenario Utilization %","Baseline Revenue","Scenario Revenue","Incremental Revenue"]}
+    capacity_bridge={m:{} for m in ["Baseline Capacity","Added Capacity","Total Scenario Capacity","Baseline Volume","Scenario Volume","Incremental Volume","Baseline Idle Capacity","Scenario Idle Capacity","Baseline Utilization %","Scenario Utilization %","Baseline Net Price","Scenario Net Price","Net Price Delta","Net Price Change %","Baseline Revenue","Scenario Revenue","Incremental Revenue"]}
     cogs_components={name:{"Baseline":{},"Scenario":{}} for name in ["Direct Materials","Direct Labor","Variable Manufacturing Overhead","Fixed Manufacturing Overhead"]}
     sustaining_da={}; initial_da={}; baseline_da={}; target_da={}; baseline_materials={}; scenario_materials={}
     cumulative_sustaining=0.0
     for i,y in enumerate(years):
-        bv=_modeled_input_value(x,"capacity","Baseline Volume",y,i); sv=_v(x["capacity"]["Scenario Volume"],y); bp=_modeled_input_value(x,"capacity","Baseline Net Price per Unit",y,i); sp=_modeled_input_value(x,"capacity","Scenario Net Price per Unit",y,i); mode=str(s.get("Revenue Modeling Mode","Unit-based"))
+        bv=_modeled_input_value(x,"capacity","Baseline Volume",y,i); sv=_modeled_input_value(x,"capacity","Scenario Volume",y,i); bp=_modeled_input_value(x,"capacity","Baseline Net Price per Unit",y,i); sp=_modeled_input_value(x,"capacity","Scenario Net Price per Unit",y,i); mode=str(s.get("Revenue Modeling Mode","Unit-based"))
         if archetype==CASE_ARCHETYPES[0] and mode=="Unit-based":
-            baseline_capacity=_modeled_input_value(x,"capacity","Baseline Capacity",y,i); added_capacity=_v(x["capacity"]["Added Capacity from Investment"],y); cap=baseline_capacity+added_capacity
+            baseline_capacity=_modeled_input_value(x,"capacity","Baseline Capacity",y,i); added_capacity=_modeled_input_value(x,"capacity","Added Capacity from Investment",y,i); cap=baseline_capacity+added_capacity
             br=bv*bp; sr=sv*sp; util=_r(sv,cap)
-            bridge_values={"Baseline Capacity":baseline_capacity,"Baseline Volume":bv,"Baseline Idle Capacity":baseline_capacity-bv,"Baseline Utilization %":_r(bv,baseline_capacity),"Added Capacity":added_capacity,"Total Scenario Capacity":cap,"Scenario Volume":sv,"Scenario Idle Capacity":cap-sv,"Scenario Utilization %":util,"Baseline Revenue":br,"Scenario Revenue":sr,"Incremental Revenue":sr-br}
+            bridge_values={"Baseline Capacity":baseline_capacity,"Added Capacity":added_capacity,"Total Scenario Capacity":cap,"Baseline Volume":bv,"Scenario Volume":sv,"Incremental Volume":sv-bv,"Baseline Idle Capacity":baseline_capacity-bv,"Scenario Idle Capacity":cap-sv,"Baseline Utilization %":_r(bv,baseline_capacity),"Scenario Utilization %":util,"Baseline Net Price":bp,"Scenario Net Price":sp,"Net Price Delta":sp-bp,"Net Price Change %":_r(sp,bp)-1 if bp else 0.0,"Baseline Revenue":br,"Scenario Revenue":sr,"Incremental Revenue":sr-br}
             for metric,value in bridge_values.items(): capacity_bridge[metric][y]=value
         else:
             br=_modeled_input_value(x,"revenue_based","Baseline Revenue",y,i); sr=br+(_v(x["revenue_based"]["Incremental Revenue / Revenue Uplift"],y) if rev else 0); cap=util=0
@@ -335,27 +337,21 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
         if archetype==CASE_ARCHETYPES[2]:
             ramp=min(1,max(0,_v(x["acquisition"]["Synergy Ramp %"],y))); sr=br+_v(x["acquisition"]["Target Revenue"],y)+(_v(x["acquisition"]["Revenue Synergies"],y)*ramp if rev else 0)
         b_components,s_components=_manufacturing_costs(x,y,i,bv,sv)
-        realized_by_bucket={"manufacturing_cogs":0.0,"non_manufacturing_personnel":0.0,"non_manufacturing_opex":0.0}
-        manufacturing_savings={component:0.0 for component in s_components}
-        if saving and archetype!=CASE_ARCHETYPES[2]:
+        register_realized=0.0
+        if saving:
             for row in x.get("savings_register",[]):
                 if not bool(row.get("Applicable",True)): continue
                 amount=_n(row.get("Gross Run-rate Saving",row.get("Gross Saving")))*min(1,max(0,_n(row.get("Realization %"))))*_savings_ramp(row,i)
-                bucket=_saving_cost_bucket(row.get("Cost Line Mapping")); realized_by_bucket[bucket]+=amount
-                mapping=str(row.get("Cost Line Mapping",""))
-                for component in manufacturing_savings:
-                    if component in mapping:
-                        manufacturing_savings[component]+=amount
-                        break
-        adjusted_s_components={component:max(0.0,value-manufacturing_savings[component]) for component,value in s_components.items()}
+                register_realized+=amount
+        adjusted_s_components=dict(s_components)
         bc=sum(b_components.values()); sc=sum(adjusted_s_components.values())
         if archetype==CASE_ARCHETYPES[2]:
             target_revenue=_v(x["acquisition"]["Target Revenue"],y); revenue_synergy=_v(x["acquisition"]["Revenue Synergies"],y)*ramp if rev else 0
             target_margin=min(1,max(0,_v(x["acquisition"].get("Target Gross Margin %",{}),y) or .62)); target_cogs=(target_revenue+revenue_synergy)*(1-target_margin); sc+=target_cogs; adjusted_s_components["Direct Materials"]+=target_cogs
-        bpers=_cost_value(x,"non_manufacturing_personnel","Baseline Y1",y,i); spers=max(0.0,_cost_value(x,"non_manufacturing_personnel","Scenario Y1",y,i)-realized_by_bucket["non_manufacturing_personnel"])
-        bo=_cost_value(x,"non_manufacturing_opex","Baseline Y1",y,i); s_o=max(0.0,_cost_value(x,"non_manufacturing_opex","Scenario Y1",y,i)-realized_by_bucket["non_manufacturing_opex"])
+        bpers=_cost_value(x,"non_manufacturing_personnel","Baseline Y1",y,i); spers=max(0.0,_cost_value(x,"non_manufacturing_personnel","Scenario Y1",y,i))
+        bo=_cost_value(x,"non_manufacturing_opex","Baseline Y1",y,i); s_o=max(0.0,_cost_value(x,"non_manufacturing_opex","Scenario Y1",y,i))
         cost_synergy=_v(x["acquisition"]["Cost Synergies"],y)*ramp if archetype==CASE_ARCHETYPES[2] and saving else 0
-        realized=cost_synergy if archetype==CASE_ARCHETYPES[2] else sum(realized_by_bucket.values())
+        realized=cost_synergy if archetype==CASE_ARCHETYPES[2] else register_realized
         integration=_v(x["acquisition"]["One-off Integration Costs"],y) if archetype==CASE_ARCHETYPES[2] else 0
         bgp,sgp=br-bc,sr-sc; be=bgp-bpers-bo
         if archetype==CASE_ARCHETYPES[2]:
