@@ -84,7 +84,7 @@ def investment_sensitivity_drivers(inputs: dict[str, Any], base_model: dict[str,
 
     if archetype == CASE_ARCHETYPES[0] and str(settings.get("Revenue Modeling Mode", "Unit-based")) == "Unit-based":
         volume = _number(inputs.get("capacity", {}).get("Scenario Volume", {}).get(terminal))
-        price = _number(inputs.get("capacity", {}).get("Baseline Net Revenue per Unit", {}).get(terminal))
+        price = _number(inputs.get("capacity", {}).get("Baseline Net Price per Unit", {}).get(terminal))
         rows.extend([
             _driver("revenue_volume", "Scenario Volume", volume, f"{volume:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Commercial demand and utilization range", "Medium"),
             _driver("net_price", "Net Price", price, f"${price:,.1f}", "% change", "Relative % change", -8.0, 5.0, "Commercial pricing range", "Medium"),
@@ -159,7 +159,7 @@ def apply_sensitivity_driver(base_inputs: dict[str, Any], driver: dict[str, Any]
         else:
             _scale_series(inputs["revenue_based"]["Incremental Revenue / Revenue Uplift"], factor)
     elif driver_id == "net_price":
-        _scale_series(inputs["capacity"]["Baseline Net Revenue per Unit"], factor)
+        _scale_series(inputs["capacity"]["Baseline Net Price per Unit"], factor)
     elif driver_id == "variable_cost":
         _scale_cost_group(inputs, "manufacturing_cogs", factor)
     elif driver_id == "target_margin":

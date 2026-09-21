@@ -165,13 +165,9 @@ def ensure_financing_inputs(value: Any) -> dict[str, Any]:
 
 
 def _investment_uses(model_inputs: dict[str, Any]) -> dict[str, float]:
-    implementation_tokens = ("implementation", "integration", "consulting", "data migration", "training")
-    transaction_tokens = ("transaction fee", "transaction cost")
-    working_capital_tokens = ("working capital",)
-    other_tokens = ("contingency", "other use")
     result = {
-        "Initial CAPEX / Asset Purchase": 0.0,
-        "Implementation / Integration": 0.0,
+        "Initial CAPEX": 0.0,
+        "Implementation Costs": 0.0,
         "Transaction Costs": 0.0,
         "Initial Working Capital": 0.0,
         "Contingency / Other Uses": 0.0,
@@ -179,21 +175,9 @@ def _investment_uses(model_inputs: dict[str, Any]) -> dict[str, float]:
     for line in model_inputs.get("investment", {}).get("uses", []):
         if not bool(line.get("Applicable", True)):
             continue
-        name = str(line.get("Investment Component", "")).lower()
         amount = _number(line.get("Amount"))
         controlled_type = str(line.get("Funding Use Type", "")).strip()
-        if controlled_type in result:
-            result[controlled_type] += amount
-        elif any(token in name for token in transaction_tokens):
-            result["Transaction Costs"] += amount
-        elif any(token in name for token in working_capital_tokens):
-            result["Initial Working Capital"] += amount
-        elif any(token in name for token in other_tokens):
-            result["Contingency / Other Uses"] += amount
-        elif any(token in name for token in implementation_tokens):
-            result["Implementation / Integration"] += amount
-        else:
-            result["Initial CAPEX / Asset Purchase"] += amount
+        result[controlled_type if controlled_type in result else "Contingency / Other Uses"] += amount
     return result
 
 
@@ -313,8 +297,8 @@ def calculate_financing_scenario(
     }
 
     uses = pd.DataFrame([
-        {"Use": "Initial CAPEX / Asset Purchase", "Amount": use_components["Initial CAPEX / Asset Purchase"], "Type": "Model → Investment Uses"},
-        {"Use": "Implementation / Integration", "Amount": use_components["Implementation / Integration"], "Type": "Model → Investment Uses"},
+        {"Use": "Initial CAPEX", "Amount": use_components["Initial CAPEX"], "Type": "Model → Investment Uses"},
+        {"Use": "Implementation Costs", "Amount": use_components["Implementation Costs"], "Type": "Model → Investment Uses"},
         {"Use": "Transaction Costs", "Amount": use_components["Transaction Costs"], "Type": "Model → Investment Uses"},
         {"Use": "Initial Working Capital", "Amount": use_components["Initial Working Capital"], "Type": "Model → Investment Uses"},
         {"Use": "Contingency / Other Uses", "Amount": use_components["Contingency / Other Uses"], "Type": "Model → Investment Uses"},

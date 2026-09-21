@@ -42,6 +42,7 @@ from investment_model import (
     SCHEMA_VERSION as INVESTMENT_SCHEMA_VERSION,
     VALUE_CREATION_DRIVERS,
     archetype_default_drivers,
+    calculate_cost_of_equity,
     calculate_investment_model,
     default_investment_inputs,
     investment_demo_cases,
@@ -11166,6 +11167,20 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         current = deepcopy(all_inputs[case_id])
         defaults = default_investment_inputs(case)
         investment = current.setdefault("investment", {})
+        funding_use_by_component = {
+            "Equipment": "Initial CAPEX", "Construction": "Initial CAPEX", "Software": "Initial CAPEX",
+            "Purchase Price / Enterprise Value": "Initial CAPEX",
+            "Implementation": "Implementation Costs", "Integration": "Implementation Costs",
+            "Integration Costs": "Implementation Costs", "Consulting": "Implementation Costs",
+            "Data Migration": "Implementation Costs", "Training": "Implementation Costs",
+            "Transaction Fees": "Transaction Costs", "Other": "Contingency / Other Uses",
+        }
+        for use in investment.setdefault("uses", []):
+            if str(use.get("Funding Use Type", "")) not in {
+                "Initial CAPEX", "Implementation Costs", "Transaction Costs",
+                "Initial Working Capital", "Contingency / Other Uses",
+            }:
+                use["Funding Use Type"] = funding_use_by_component.get(str(use.get("Investment Component", "")), "Contingency / Other Uses")
         investment.setdefault("Sustaining CAPEX Source / Basis", defaults["investment"]["Sustaining CAPEX Source / Basis"])
         investment.setdefault("Sustaining CAPEX Comment / Rationale", defaults["investment"]["Sustaining CAPEX Comment / Rationale"])
         acquisition = current.setdefault("acquisition", {})
@@ -11173,9 +11188,16 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
             acquisition["Opening / Transaction Working Capital Reference"] = acquisition.pop("Target Working Capital")
         acquisition.setdefault("Target Gross Margin %", deepcopy(defaults["acquisition"]["Target Gross Margin %"]))
         capacity = current.setdefault("capacity", {})
+        old_price_name = "Baseline Net Revenue per Unit"
+        new_price_name = "Baseline Net Price per Unit"
+        if old_price_name in capacity and new_price_name not in capacity:
+            capacity[new_price_name] = capacity.pop(old_price_name)
         capacity.pop("Net Price Escalation %", None)
         current.setdefault("capacity_input_methods", deepcopy(defaults["capacity_input_methods"]))
         current.setdefault("capacity_growth_rates", deepcopy(defaults["capacity_growth_rates"]))
+        for settings_name in ("capacity_input_methods", "capacity_growth_rates"):
+            if old_price_name in current[settings_name] and new_price_name not in current[settings_name]:
+                current[settings_name][new_price_name] = current[settings_name].pop(old_price_name)
         current.setdefault("revenue_input_method", defaults["revenue_input_method"])
         current.setdefault("revenue_growth_rate", defaults["revenue_growth_rate"])
         current.setdefault("revenue_based", {}).pop("Revenue Growth %", None)
@@ -11546,6 +11568,11 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
             ], width="large")
         elif column == "Cost Behavior":
             column_config[column] = st.column_config.SelectboxColumn(column, options=["Variable — per unit", "Fixed / step-fixed — annual"], width="medium")
+        elif column == "Funding Use Type":
+            column_config[column] = st.column_config.SelectboxColumn(column, options=[
+                "Initial CAPEX", "Implementation Costs", "Transaction Costs",
+                "Initial Working Capital", "Contingency / Other Uses",
+            ], width="medium")
         else:
             column_config[column] = st.column_config.TextColumn(column, width=investment_editor_column_width(column))
     schema_suffix = "_generic_input_v2" if key == "cost_manufacturing_cogs" else ""
@@ -11717,6 +11744,19 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
         st.number_input("Corporate Cost of Equity %", step=.1, key=f"investment_{case_id}_capital_Corporate Cost of Equity")
     else:
         st.number_input("Manual Cost of Equity %", step=.1, key=f"investment_{case_id}_capital_Manual Cost of Equity")
+    if method.startswith("CAPM"):
+        for field in ["Risk-Free Rate", "Equity Risk Premium", "Country Risk Premium"]:
+            capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"]) / 100
+        beta_field = "Relevered Beta" if method == "CAPM – Peer / Proxy Beta" else "Beta"
+        capital[beta_field] = safe_float(st.session_state[f"investment_{case_id}_capital_{beta_field}"])
+        cost_of_equity = calculate_cost_of_equity(capital)
+        st.markdown("**Cost of Equity calculation**")
+        st.caption("Cost of Equity = Risk-Free Rate + Beta × Equity Risk Premium + Country Risk Premium")
+        st.markdown(
+            f"{capital['Risk-Free Rate'] * 100:.2f}% + {capital[beta_field]:.2f} × "
+            f"{capital['Equity Risk Premium'] * 100:.2f}% + {capital['Country Risk Premium'] * 100:.2f}% "
+            f"= **{cost_of_equity * 100:.3f}% ≈ {cost_of_equity * 100:.1f}%**"
+        )
     st.markdown("**Cost of Debt & Capital Structure**")
     st.caption(f"Applicable marginal corporate tax rate: {pct(inputs['settings'].get('Applicable Tax Rate', 0))}.")
     debt = st.columns([1.1, .9, .9, 1.0, 1.4])
@@ -11869,7 +11909,7 @@ def render_investment_model(case: dict[str, object]) -> None:
         mode=st.radio("Revenue Modeling Mode",["Unit-based","Revenue-based"],horizontal=True,key=mode_key)
         inputs["settings"]["Revenue Modeling Mode"]=mode
         if mode == "Unit-based":
-            for metric in ["Baseline Capacity", "Baseline Volume", "Baseline Net Revenue per Unit"]:
+            for metric in ["Baseline Capacity", "Baseline Volume", "Baseline Net Price per Unit"]:
                 source, method, growth = render_investment_series_method(
                     case_id,
                     "capacity",

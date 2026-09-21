@@ -39,28 +39,28 @@ def _annual(values: list[float]) -> dict[str, float]:
 def _uses(archetype: str) -> list[dict[str, Any]]:
     if archetype == CASE_ARCHETYPES[1]:
         rows = [
-            ("Software", 3_200_000, "Vendor quotation", "Initial platform licenses and configuration"),
-            ("Integration", 2_000_000, "IT implementation estimate", "Core-system and workflow integration"),
-            ("Consulting", 1_400_000, "Transformation estimate", "Design and implementation support"),
-            ("Data Migration", 1_000_000, "IT workplan", "Historical data preparation and migration"),
-            ("Training", 900_000, "HR / transformation estimate", "Role-based adoption and training program"),
-            ("Other", 500_000, "Management contingency", "Controlled implementation contingency"),
+            ("Software", 3_200_000, "Initial CAPEX", "Vendor quotation", "Initial platform licenses and configuration"),
+            ("Integration", 2_000_000, "Implementation Costs", "IT implementation estimate", "Core-system and workflow integration"),
+            ("Consulting", 1_400_000, "Implementation Costs", "Transformation estimate", "Design and implementation support"),
+            ("Data Migration", 1_000_000, "Implementation Costs", "IT workplan", "Historical data preparation and migration"),
+            ("Training", 900_000, "Implementation Costs", "HR / transformation estimate", "Role-based adoption and training program"),
+            ("Other", 500_000, "Contingency / Other Uses", "Management contingency", "Controlled implementation contingency"),
         ]
     elif archetype == CASE_ARCHETYPES[2]:
         rows = [
-            ("Purchase Price / Enterprise Value", 62_000_000, "Indicative valuation", "Current transaction value assumption"),
-            ("Transaction Fees", 2_800_000, "Advisor estimate", "Legal, diligence and advisory fees"),
-            ("Integration Costs", 5_500_000, "Integration office estimate", "Systems, organization and process integration"),
+            ("Purchase Price / Enterprise Value", 62_000_000, "Initial CAPEX", "Indicative valuation", "Current transaction value assumption"),
+            ("Transaction Fees", 2_800_000, "Transaction Costs", "Advisor estimate", "Legal, diligence and advisory fees"),
+            ("Integration Costs", 5_500_000, "Implementation Costs", "Integration office estimate", "Systems, organization and process integration"),
         ]
     else:
         rows = [
-            ("Equipment", 22_000_000, "Vendor quotation", "Production equipment and installation"),
-            ("Construction", 7_500_000, "Engineering estimate", "Facility modification and utilities"),
-            ("Implementation", 3_000_000, "Program workplan", "Commissioning and operating readiness"),
-            ("Integration", 1_500_000, "IT implementation estimate", "Manufacturing and planning-system integration"),
-            ("Other", 1_000_000, "Management contingency", "Controlled delivery contingency"),
+            ("Equipment", 22_000_000, "Initial CAPEX", "Vendor quotation", "Production equipment and installation"),
+            ("Construction", 7_500_000, "Initial CAPEX", "Engineering estimate", "Facility modification and utilities"),
+            ("Implementation", 3_000_000, "Implementation Costs", "Program workplan", "Commissioning and operating readiness"),
+            ("Integration", 1_500_000, "Implementation Costs", "IT implementation estimate", "Manufacturing and planning-system integration"),
+            ("Other", 1_000_000, "Contingency / Other Uses", "Management contingency", "Controlled delivery contingency"),
         ]
-    return [{"Applicable": True, "Investment Component": n, "Amount": v, "Timing": "Before operational start", "Source / Basis": source, "Comment / Rationale": comment} for n, v, source, comment in rows]
+    return [{"Applicable": True, "Investment Component": n, "Funding Use Type": funding_type, "Amount": v, "Timing": "Before operational start", "Source / Basis": source, "Comment / Rationale": comment} for n, v, funding_type, source, comment in rows]
 
 
 def _savings(archetype: str) -> list[dict[str, Any]]:
@@ -154,14 +154,14 @@ def default_investment_inputs(case: dict[str, Any]) -> dict[str, Any]:
     if archetype not in CASE_ARCHETYPES: archetype = CASE_ARCHETYPES[0]
     digital = archetype == CASE_ARCHETYPES[1]
     operating_costs = _costs(archetype)
-    capacity = {"Baseline Capacity": _series(900_000,.01), "Added Capacity from Investment": _series(360_000), "Baseline Volume": _series(720_000,.025), "Scenario Volume": _annual([792000,890000,970000,1045000,1085000,1105000,1120000,1130000,1140000,1150000]), "Baseline Net Revenue per Unit": _series(64,.02)}
+    capacity = {"Baseline Capacity": _series(900_000,.01), "Added Capacity from Investment": _series(360_000), "Baseline Volume": _series(720_000,.025), "Scenario Volume": _annual([792000,890000,970000,1045000,1085000,1105000,1120000,1130000,1140000,1150000]), "Baseline Net Price per Unit": _series(64,.02)}
     return {
         "schema_version": SCHEMA_VERSION,
         "settings": {"Case Name": str(case.get("Investment Case Name", "New Investment Case")), "Case Archetype": archetype, "Value Creation Drivers": archetype_default_drivers(archetype), "Financial Scope": str(case.get("Business Unit / Market", "Region A Operations")), "Currency": "USD", "Base Year": 2026, "Forecast Horizon": 10, "Investment Start Date": date(2026,10,1), "Operational Start Date": date(2027,7,1), "Applicable Tax Rate": .24, "Planning Inflation": .025, "Model Basis": "Nominal", "Model Version": "1.0", "As Of Date": date(2026,9,15), "Revenue Modeling Mode": "Unit-based"},
         "investment": {"uses": _uses(archetype), "Sustaining CAPEX": _series(220_000 if digital else 350_000, .02), "Sustaining CAPEX Source / Basis": "Long-range plan", "Sustaining CAPEX Comment / Rationale": "Maintenance capital", "CAPEX Avoidance": _series(0), "Useful Life": 10},
         "capacity": capacity,
-        "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Baseline Volume": "Y1 + Growth", "Baseline Net Revenue per Unit": "Y1 + Growth"},
-        "capacity_growth_rates": {"Baseline Capacity": .01, "Baseline Volume": .025, "Baseline Net Revenue per Unit": .02},
+        "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Baseline Volume": "Y1 + Growth", "Baseline Net Price per Unit": "Y1 + Growth"},
+        "capacity_growth_rates": {"Baseline Capacity": .01, "Baseline Volume": .025, "Baseline Net Price per Unit": .02},
         "revenue_based": {"Baseline Revenue": _series(60_000_000 if digital else 46_080_000,.035), "Incremental Revenue / Revenue Uplift": _annual([0,1e6,2.5e6,4e6,5.5e6,6e6,6.5e6,7e6,7.5e6,8e6])},
         "revenue_input_method": "Y1 + Growth",
         "revenue_growth_rate": .035,
@@ -177,6 +177,14 @@ def _n(v: Any) -> float:
     try:
         n=float(v); return n if isfinite(n) else 0.0
     except (TypeError,ValueError): return 0.0
+
+
+def calculate_cost_of_equity(capital: dict[str, Any]) -> float:
+    method = str(capital.get("Cost of Equity Method"))
+    beta = _n(capital.get("Relevered Beta" if method == "CAPM – Peer / Proxy Beta" else "Beta"))
+    if method.startswith("CAPM"):
+        return _n(capital.get("Risk-Free Rate")) + beta * _n(capital.get("Equity Risk Premium")) + _n(capital.get("Country Risk Premium"))
+    return _n(capital.get("Corporate Cost of Equity" if method == "Corporate Provided Cost of Equity" else "Manual Cost of Equity"))
 
 
 def _v(s: dict[str,Any], y: str) -> float: return _n(s.get(y,0))
@@ -304,8 +312,8 @@ def _pnl(rows:dict[str,dict[str,float]], years:list[str])->pd.DataFrame:
 def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     x=deepcopy(raw); s=x["settings"]; years=INVESTMENT_YEARS[:5 if int(s.get("Forecast Horizon",10))==5 else 10]
     archetype=str(s.get("Case Archetype",CASE_ARCHETYPES[0])); enabled=set(s.get("Value Creation Drivers",[])); rev="Revenue Growth" in enabled; saving="Cost Reduction" in enabled; wc_on="Working Capital Improvement" in enabled
-    tax=min(1,max(0,_n(s.get("Applicable Tax Rate")))); c=x["capital"]; method=str(c.get("Cost of Equity Method")); beta=_n(c.get("Relevered Beta" if method=="CAPM – Peer / Proxy Beta" else "Beta"))
-    ke=(_n(c.get("Risk-Free Rate"))+beta*_n(c.get("Equity Risk Premium"))+_n(c.get("Country Risk Premium"))) if method.startswith("CAPM") else _n(c.get("Corporate Cost of Equity" if method=="Corporate Provided Cost of Equity" else "Manual Cost of Equity"))
+    tax=min(1,max(0,_n(s.get("Applicable Tax Rate")))); c=x["capital"]
+    ke=calculate_cost_of_equity(c)
     pre_tax_debt=_n(c.get("Pre-tax Cost of Debt")); kd=pre_tax_debt*(1-tax); debt=min(1,max(0,_n(c.get("Target Debt %")))); equity=1-debt; c["Target Equity %"]=equity; wacc=ke*equity+kd*debt
     initial=_line_total(x["investment"]["uses"],"Amount"); life=max(1,int(x["investment"].get("Useful Life",10)))
     metrics=["Revenue","COGS","Gross Profit","Gross Margin %","Non-Manufacturing Personnel","Non-Manufacturing OPEX","EBITDA","EBITDA Margin %","Depreciation & Amortization","EBIT","EBIT Margin %"]
@@ -315,7 +323,7 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     sustaining_da={}; initial_da={}; baseline_da={}; target_da={}; baseline_materials={}; scenario_materials={}
     cumulative_sustaining=0.0
     for i,y in enumerate(years):
-        bv=_modeled_input_value(x,"capacity","Baseline Volume",y,i); sv=_v(x["capacity"]["Scenario Volume"],y); bp=_modeled_input_value(x,"capacity","Baseline Net Revenue per Unit",y,i); mode=str(s.get("Revenue Modeling Mode","Unit-based"))
+        bv=_modeled_input_value(x,"capacity","Baseline Volume",y,i); sv=_v(x["capacity"]["Scenario Volume"],y); bp=_modeled_input_value(x,"capacity","Baseline Net Price per Unit",y,i); mode=str(s.get("Revenue Modeling Mode","Unit-based"))
         if archetype==CASE_ARCHETYPES[0] and mode=="Unit-based":
             baseline_capacity=_modeled_input_value(x,"capacity","Baseline Capacity",y,i); added_capacity=_v(x["capacity"]["Added Capacity from Investment"],y); cap=baseline_capacity+added_capacity
             br=bv*bp; sr=sv*bp if rev else br; util=_r(sv,cap)
