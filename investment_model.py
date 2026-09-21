@@ -39,28 +39,28 @@ def _annual(values: list[float]) -> dict[str, float]:
 def _uses(archetype: str) -> list[dict[str, Any]]:
     if archetype == CASE_ARCHETYPES[1]:
         rows = [
-            ("Software", 3_200_000, "Initial CAPEX", "Vendor quotation", "Initial platform licenses and configuration"),
-            ("Integration", 2_000_000, "Implementation Costs", "IT implementation estimate", "Core-system and workflow integration"),
-            ("Consulting", 1_400_000, "Implementation Costs", "Transformation estimate", "Design and implementation support"),
-            ("Data Migration", 1_000_000, "Implementation Costs", "IT workplan", "Historical data preparation and migration"),
-            ("Training", 900_000, "Implementation Costs", "HR / transformation estimate", "Role-based adoption and training program"),
-            ("Other", 500_000, "Contingency / Other Uses", "Management contingency", "Controlled implementation contingency"),
+            ("Software", 3_200_000, "Vendor quotation", "Initial platform licenses and configuration"),
+            ("Integration", 2_000_000, "IT implementation estimate", "Core-system and workflow integration"),
+            ("Consulting", 1_400_000, "Transformation estimate", "Design and implementation support"),
+            ("Data Migration", 1_000_000, "IT workplan", "Historical data preparation and migration"),
+            ("Training", 900_000, "HR / transformation estimate", "Role-based adoption and training program"),
+            ("Other", 500_000, "Management contingency", "Controlled implementation contingency"),
         ]
     elif archetype == CASE_ARCHETYPES[2]:
         rows = [
-            ("Purchase Price / Enterprise Value", 62_000_000, "Initial CAPEX", "Indicative valuation", "Current transaction value assumption"),
-            ("Transaction Fees", 2_800_000, "Transaction Costs", "Advisor estimate", "Legal, diligence and advisory fees"),
-            ("Integration Costs", 5_500_000, "Implementation Costs", "Integration office estimate", "Systems, organization and process integration"),
+            ("Purchase Price / Enterprise Value", 62_000_000, "Indicative valuation", "Current transaction value assumption"),
+            ("Transaction Fees", 2_800_000, "Advisor estimate", "Legal, diligence and advisory fees"),
+            ("Integration Costs", 5_500_000, "Integration office estimate", "Systems, organization and process integration"),
         ]
     else:
         rows = [
-            ("Equipment", 22_000_000, "Initial CAPEX", "Vendor quotation", "Production equipment and installation"),
-            ("Construction", 7_500_000, "Initial CAPEX", "Engineering estimate", "Facility modification and utilities"),
-            ("Implementation", 3_000_000, "Implementation Costs", "Program workplan", "Commissioning and operating readiness"),
-            ("Integration", 1_500_000, "Implementation Costs", "IT implementation estimate", "Manufacturing and planning-system integration"),
-            ("Other", 1_000_000, "Contingency / Other Uses", "Management contingency", "Controlled delivery contingency"),
+            ("Equipment", 22_000_000, "Vendor quotation", "Production equipment and installation"),
+            ("Construction", 7_500_000, "Engineering estimate", "Facility modification and utilities"),
+            ("Implementation", 3_000_000, "Program workplan", "Commissioning and operating readiness"),
+            ("Integration", 1_500_000, "IT implementation estimate", "Manufacturing and planning-system integration"),
+            ("Other", 1_000_000, "Management contingency", "Controlled delivery contingency"),
         ]
-    return [{"Applicable": True, "Investment Component": n, "Funding Use Type": funding_type, "Amount": v, "Timing": "Before operational start", "Source / Basis": source, "Comment / Rationale": comment} for n, v, funding_type, source, comment in rows]
+    return [{"Applicable": True, "Investment Component": n, "Amount": v, "Timing": "Before operational start", "Source / Basis": source, "Comment / Rationale": comment} for n, v, source, comment in rows]
 
 
 def _savings(archetype: str) -> list[dict[str, Any]]:

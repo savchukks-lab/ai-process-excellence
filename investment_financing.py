@@ -172,12 +172,21 @@ def _investment_uses(model_inputs: dict[str, Any]) -> dict[str, float]:
         "Initial Working Capital": 0.0,
         "Contingency / Other Uses": 0.0,
     }
+    component_mapping = {
+        "Equipment": "Initial CAPEX", "Construction": "Initial CAPEX", "Software": "Initial CAPEX",
+        "Purchase Price / Enterprise Value": "Initial CAPEX",
+        "Implementation": "Implementation Costs", "Integration": "Implementation Costs",
+        "Integration Costs": "Implementation Costs", "Consulting": "Implementation Costs",
+        "Data Migration": "Implementation Costs", "Training": "Implementation Costs",
+        "Transaction Fees": "Transaction Costs", "Initial Working Capital": "Initial Working Capital",
+        "Other": "Contingency / Other Uses",
+    }
     for line in model_inputs.get("investment", {}).get("uses", []):
         if not bool(line.get("Applicable", True)):
             continue
         amount = _number(line.get("Amount"))
-        controlled_type = str(line.get("Funding Use Type", "")).strip()
-        result[controlled_type if controlled_type in result else "Contingency / Other Uses"] += amount
+        component = str(line.get("Investment Component", "")).strip()
+        result[component_mapping.get(component, "Contingency / Other Uses")] += amount
     return result
 
 

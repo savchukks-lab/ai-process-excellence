@@ -8814,6 +8814,7 @@ def render_finance_table(
     exception_values: dict[str, str] | None = None,
     nonzero_highlights: dict[str, str] | None = None,
     emphasized_columns: set[str] | None = None,
+    column_widths: dict[str, str] | None = None,
 ) -> None:
     """Render a small Finance table without Streamlit's internal scroll container."""
     if not isinstance(table, pd.DataFrame) or table.empty:
@@ -8823,6 +8824,11 @@ def render_finance_table(
     exception_values = exception_values or {}
     nonzero_highlights = nonzero_highlights or {}
     emphasized_columns = emphasized_columns or set()
+    column_widths = column_widths or {}
+    colgroup = "".join(
+        f"<col style='width:{escape(str(column_widths.get(str(column), 'auto')))}'>"
+        for column in table.columns
+    )
     headers = "".join(
         f"<th style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
         f"border-bottom:1px solid #d8dee8;background:{'#e5ebf3' if str(column) in emphasized_columns else '#eef2f7'};"
@@ -8851,7 +8857,7 @@ def render_finance_table(
     st.markdown(
         "<table style='width:100%;border-collapse:collapse;border:1px solid #d8dee8;"
         "font-size:0.82rem;line-height:1.25;table-layout:fixed'>"
-        f"<thead><tr>{headers}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>",
+        f"<colgroup>{colgroup}</colgroup><thead><tr>{headers}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>",
         unsafe_allow_html=True,
     )
 
@@ -11167,20 +11173,8 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         current = deepcopy(all_inputs[case_id])
         defaults = default_investment_inputs(case)
         investment = current.setdefault("investment", {})
-        funding_use_by_component = {
-            "Equipment": "Initial CAPEX", "Construction": "Initial CAPEX", "Software": "Initial CAPEX",
-            "Purchase Price / Enterprise Value": "Initial CAPEX",
-            "Implementation": "Implementation Costs", "Integration": "Implementation Costs",
-            "Integration Costs": "Implementation Costs", "Consulting": "Implementation Costs",
-            "Data Migration": "Implementation Costs", "Training": "Implementation Costs",
-            "Transaction Fees": "Transaction Costs", "Other": "Contingency / Other Uses",
-        }
         for use in investment.setdefault("uses", []):
-            if str(use.get("Funding Use Type", "")) not in {
-                "Initial CAPEX", "Implementation Costs", "Transaction Costs",
-                "Initial Working Capital", "Contingency / Other Uses",
-            }:
-                use["Funding Use Type"] = funding_use_by_component.get(str(use.get("Investment Component", "")), "Contingency / Other Uses")
+            use.pop("Funding Use Type", None)
         investment.setdefault("Sustaining CAPEX Source / Basis", defaults["investment"]["Sustaining CAPEX Source / Basis"])
         investment.setdefault("Sustaining CAPEX Comment / Rationale", defaults["investment"]["Sustaining CAPEX Comment / Rationale"])
         acquisition = current.setdefault("acquisition", {})
@@ -11568,11 +11562,6 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
             ], width="large")
         elif column == "Cost Behavior":
             column_config[column] = st.column_config.SelectboxColumn(column, options=["Variable — per unit", "Fixed / step-fixed — annual"], width="medium")
-        elif column == "Funding Use Type":
-            column_config[column] = st.column_config.SelectboxColumn(column, options=[
-                "Initial CAPEX", "Implementation Costs", "Transaction Costs",
-                "Initial Working Capital", "Contingency / Other Uses",
-            ], width="medium")
         else:
             column_config[column] = st.column_config.TextColumn(column, width=investment_editor_column_width(column))
     schema_suffix = "_generic_input_v2" if key == "cost_manufacturing_cogs" else ""
@@ -11770,6 +11759,29 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     target_equity = 100.0 - safe_float(st.session_state[f"investment_{case_id}_capital_Target Debt %"])
     debt[2].metric("Target Equity %", f"{target_equity:.1f}%")
     debt[3].number_input("Corporate Hurdle Rate %", step=0.1, key=f"investment_{case_id}_capital_Corporate Hurdle Rate")
+    live_capital = deepcopy(capital)
+    for field in percent_fields:
+        live_capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"]) / 100
+    for field in ["Beta", "Unlevered Beta", "Relevered Beta"]:
+        live_capital[field] = safe_float(st.session_state[f"investment_{case_id}_capital_{field}"])
+    live_cost_of_equity = calculate_cost_of_equity(live_capital)
+    live_debt_weight = min(1.0, max(0.0, live_capital["Target Debt %"]))
+    live_equity_weight = 1.0 - live_debt_weight
+    live_tax_rate = min(1.0, max(0.0, safe_float(inputs["settings"].get("Applicable Tax Rate", 0.0))))
+    live_after_tax_debt = live_capital["Pre-tax Cost of Debt"] * (1.0 - live_tax_rate)
+    live_wacc = live_equity_weight * live_cost_of_equity + live_debt_weight * live_after_tax_debt
+    st.markdown("**WACC calculation**")
+    st.caption("After-tax Cost of Debt = Pre-tax Cost of Debt × (1 − Tax Rate)")
+    st.markdown(
+        f"{live_capital['Pre-tax Cost of Debt'] * 100:.2f}% × (1 − {live_tax_rate * 100:.1f}%) "
+        f"= **{live_after_tax_debt * 100:.2f}%**"
+    )
+    st.caption("WACC = Equity Weight × Cost of Equity + Debt Weight × After-tax Cost of Debt")
+    st.markdown(
+        f"{live_equity_weight * 100:.1f}% × {live_cost_of_equity * 100:.1f}% + "
+        f"{live_debt_weight * 100:.1f}% × {live_after_tax_debt * 100:.1f}% "
+        f"= **{live_wacc * 100:.1f}%**"
+    )
     st.caption("Target capital structure is used for WACC and represents the company’s long-term financing mix. It is not necessarily the funding mix of this specific project; project funding is modeled separately in Financing.")
     st.markdown("**Management Benchmarks**")
     benchmark = st.columns([1, 1.15, 1, 1.5])
@@ -11786,20 +11798,6 @@ def render_investment_capital(case_id: str, inputs: dict[str, object]) -> dict[s
     strip[1].metric("Hurdle Rate", pct(capital["Corporate Hurdle Rate"]))
     strip[2].metric("Existing ROIC", pct(capital["Existing Business ROIC"]))
     strip[3].metric("Marginal Return", pct(capital["Marginal Reinvestment Return"]))
-    wacc_bridge = returns.get("WACC")
-    st.markdown("**WACC calculation bridge**")
-    wacc_columns = st.columns(6)
-    for column, (label, value) in zip(wacc_columns, [
-        ("Cost of Equity", returns.get("Cost of Equity")),
-        ("Equity Weight", returns.get("Target Equity Weight")),
-        ("Pre-tax Cost of Debt", returns.get("Pre-tax Cost of Debt")),
-        ("After-tax Cost of Debt", returns.get("After-tax Cost of Debt")),
-        ("Debt Weight", returns.get("Target Debt Weight")),
-        ("WACC", wacc_bridge),
-    ]):
-        column.metric(label, pct(value))
-    if method.startswith("CAPM"):
-        st.caption("Cost of Equity = Risk-Free Rate + Beta × Equity Risk Premium + Country Risk Premium. WACC applies the target capital structure, which remains separate from the project-specific funding mix in Financing.")
     with st.expander("Assumption source, methodology and rationale", expanded=False):
         for field in ["Source / Methodology", "Effective Date", "Rationale"]:
             key=f"investment_{case_id}_capital_meta_{field}";investment_seed_widget(key,str(capital.get(field,"")));st.text_input(field,key=key);capital[field]=st.session_state[key]
@@ -13237,19 +13235,38 @@ def render_investment_financing(case: dict[str, object]) -> None:
         else:
             st.caption("Sources equal Uses automatically through residual Internal Cash / Equity.")
         st.caption("Sources & Uses funds the upfront requirement only. Sustaining CAPEX and future operating cash needs are handled through project cash flow.")
-        st.markdown("**Future Funding Through Operations**")
-        st.caption("Sustaining CAPEX is funded from project operating cash flow where available; additional equity support is required only when annual project cash flow is insufficient.")
-        st.metric("Total Equity Contributions", money(metrics["Total Equity Contributions"]), help="Initial Equity Contribution plus Additional Equity Support required after inception.")
-        future_funding = pd.DataFrame([
-            {"Item": "Sustaining CAPEX over forecast", "Amount / Treatment": money(metrics["Sustaining CAPEX Over Forecast"])},
-            {"Item": "Avoided Future CAPEX benefit over forecast", "Amount / Treatment": money(metrics["Avoided Future CAPEX Benefit Over Forecast"])},
-            {"Item": "Project operating cash flow available to fund future needs", "Amount / Treatment": money(metrics["Project Operating Cash Flow Available"])},
-            {"Item": "Additional Equity Support", "Amount / Treatment": money(metrics["Additional Equity Support"])},
-            {"Item": "Initial Equity Contribution", "Amount / Treatment": money(metrics["Initial Equity Contribution"])},
-            {"Item": "Total Equity Contributions", "Amount / Treatment": money(metrics["Total Equity Contributions"])},
-        ])
-        render_finance_table(future_funding, right_align={"Amount / Treatment"})
-        st.caption("Avoided Future CAPEX is a future project cash-flow benefit, not an upfront funding source. It can reduce later equity support only through the annual project cash-flow bridge.")
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .future-funding-block-marker) {
+                width: 100%;
+                max-width: 950px;
+                margin-left: 0;
+                margin-right: auto;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.container():
+            st.markdown("<span class='future-funding-block-marker'></span>", unsafe_allow_html=True)
+            st.markdown("**Future Funding Through Operations**")
+            st.caption("Sustaining CAPEX is funded from project operating cash flow where available; additional equity support is required only when annual project cash flow is insufficient.")
+            st.metric("Total Equity Contributions", money(metrics["Total Equity Contributions"]), help="Initial Equity Contribution plus Additional Equity Support required after inception.")
+            future_funding = pd.DataFrame([
+                {"Item": "Sustaining CAPEX over forecast", "Amount / Treatment": money(metrics["Sustaining CAPEX Over Forecast"])},
+                {"Item": "Avoided Future CAPEX benefit over forecast", "Amount / Treatment": money(metrics["Avoided Future CAPEX Benefit Over Forecast"])},
+                {"Item": "Project operating cash flow available to fund future needs", "Amount / Treatment": money(metrics["Project Operating Cash Flow Available"])},
+                {"Item": "Additional Equity Support", "Amount / Treatment": money(metrics["Additional Equity Support"])},
+                {"Item": "Initial Equity Contribution", "Amount / Treatment": money(metrics["Initial Equity Contribution"])},
+                {"Item": "Total Equity Contributions", "Amount / Treatment": money(metrics["Total Equity Contributions"])},
+            ])
+            render_finance_table(
+                future_funding,
+                right_align={"Amount / Treatment"},
+                column_widths={"Item": "72%", "Amount / Treatment": "28%"},
+            )
+            st.caption("Avoided Future CAPEX is a future project cash-flow benefit, not an upfront funding source. It can reduce later equity support only through the annual project cash-flow bridge.")
 
     with debt_schedule_slot:
         if debt_pct <= 0:
