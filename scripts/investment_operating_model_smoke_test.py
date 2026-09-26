@@ -101,13 +101,51 @@ avoidance_flow = avoidance_model["cash_flow"].set_index("Year")
 assert close(avoidance_flow.at["Y4", "CAPEX"], avoidance_inputs["investment"]["Sustaining CAPEX"]["Y4"])
 assert close(avoidance_flow.at["Y4", "Avoided CAPEX"], 4_000_000)
 
-# The Savings / Benefits Register is traceability only. Section 4 operating-cost
-# inputs remain the controlled source for project economics.
-savings_inputs = default_investment_inputs({"Case Archetype": CASE_ARCHETYPES[1]})
-savings_base = calculate_investment_model(savings_inputs)
-savings_inputs["savings_register"][0]["Gross Run-rate Saving"] *= 10
-savings_changed = calculate_investment_model(savings_inputs)
-assert close(savings_changed["returns"]["Project NPV"], savings_base["returns"]["Project NPV"])
-assert savings_changed["scenario_pnl"].equals(savings_base["scenario_pnl"])
+# Savings are deducted once from the mapped scenario cost line after the
+# underlying variable/fixed mechanics are calculated.
+variable_base_inputs = default_investment_inputs({"Case Archetype": CASE_ARCHETYPES[0]})
+variable_base_inputs["settings"]["Value Creation Drivers"] = ["Revenue Growth"]
+variable_base = calculate_investment_model(variable_base_inputs)
+variable_inputs = deepcopy(variable_base_inputs)
+variable_inputs["settings"]["Value Creation Drivers"] = ["Revenue Growth", "Cost Reduction"]
+variable_inputs["savings_register"] = [{
+    "Applicable": True,
+    "Category": "Manufacturing",
+    "Saving Mechanism": "Supplier productivity",
+    "Cost Line Mapping": "Manufacturing COGS · Direct Materials",
+    "Gross Run-rate Saving": 1_000_000,
+    "Realization %": 1.0,
+    "Ramp Profile": "Immediate",
+}]
+variable_inputs["capacity"]["Scenario Volume"]["Y1"] *= 1.25
+variable_model = calculate_investment_model(variable_inputs)
+variable_reconciliation = variable_model["savings_reconciliation"].set_index("Mapped Line")
+assert close(variable_reconciliation.at["Manufacturing COGS · Direct Materials", "Expected Y1"], 1_000_000)
+assert close(variable_reconciliation.at["Manufacturing COGS · Direct Materials", "Reflected Y1"], 1_000_000)
+assert close(variable_model["drivers"]["Realized Savings"]["Y1"], 1_000_000)
+
+fixed_base_inputs = default_investment_inputs({"Case Archetype": CASE_ARCHETYPES[1]})
+fixed_base_inputs["settings"]["Value Creation Drivers"] = []
+fixed_base = calculate_investment_model(fixed_base_inputs)
+fixed_inputs = deepcopy(fixed_base_inputs)
+fixed_inputs["settings"]["Value Creation Drivers"] = ["Cost Reduction"]
+fixed_inputs["savings_register"] = [{
+    "Applicable": True,
+    "Category": "Operations",
+    "Saving Mechanism": "Contract consolidation",
+    "Cost Line Mapping": "Non-Manufacturing OPEX · Other Fixed Overhead",
+    "Gross Run-rate Saving": 500_000,
+    "Realization %": 1.0,
+    "Ramp Profile": "Immediate",
+}]
+fixed_model = calculate_investment_model(fixed_inputs)
+base_scenario = fixed_base["scenario_pnl"].set_index("Metric")
+saved_scenario = fixed_model["scenario_pnl"].set_index("Metric")
+assert close(base_scenario.at["Non-Manufacturing OPEX", "Y1"] - saved_scenario.at["Non-Manufacturing OPEX", "Y1"], 500_000)
+assert close(saved_scenario.at["EBITDA", "Y1"] - base_scenario.at["EBITDA", "Y1"], 500_000)
+assert close(saved_scenario.at["EBIT", "Y1"] - base_scenario.at["EBIT", "Y1"], 500_000)
+fixed_reconciliation = fixed_model["savings_reconciliation"].set_index("Mapped Line")
+assert close(fixed_reconciliation.at["Non-Manufacturing OPEX · Other Fixed Overhead", "Expected Y1"], 500_000)
+assert close(fixed_reconciliation.at["Non-Manufacturing OPEX · Other Fixed Overhead", "Reflected Y1"], 500_000)
 
 print("investment operating model reconciliation smoke test complete")

@@ -15,6 +15,8 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 
+from openai_service import DEFAULT_OPENAI_MODEL, OpenAIServiceError, generate_text
+
 from deal_logic import (
     calculate_gross_profit,
     calculate_margin_pct,
@@ -657,14 +659,57 @@ def inject_css() -> None:
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) {
             min-height: 15rem;
+            position: relative;
+            cursor: pointer;
+            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+        }
+        div[data-testid="stColumn"]:has(.module-card-marker) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+            min-height: 15rem;
+            position: relative;
+            cursor: pointer;
             transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):hover {
             transform: translateY(-1px);
             box-shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
         }
+        div[data-testid="stColumn"]:has(.module-card-marker):hover > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+            transform: translateY(-1px);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
+        }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-available) {
             border-color: #9fcfbe !important;
+        }
+        div[data-testid="stColumn"]:has(.module-card-available) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+            border-color: #9fcfbe !important;
+        }
+        div[data-testid="stElementContainer"][class*="st-key-module_card_"] {
+            position: absolute;
+            inset: 0;
+            z-index: 3;
+            width: 100% !important;
+            height: 100% !important;
+        }
+        div[data-testid="stElementContainer"][class*="st-key-module_card_"] div[data-testid="stButton"],
+        div[data-testid="stElementContainer"][class*="st-key-module_card_"] div[data-testid="stButton"] > button {
+            width: 100%;
+            height: 100%;
+            min-height: 100%;
+            padding: 0;
+            border: 0 !important;
+            border-radius: inherit;
+            background: transparent !important;
+            box-shadow: none !important;
+            opacity: 0;
+            cursor: pointer;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):has(div[data-testid="stButton"] > button:hover) {
+            border-color: #72b89f !important;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
+        }
+        div[data-testid="stColumn"]:has(.module-card-marker):has(button:hover) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+            border-color: #72b89f !important;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
         }
         .module-card-title {
             color: #0f172a;
@@ -682,6 +727,18 @@ def inject_css() -> None:
             color: #64748b;
             font-size: 0.84rem;
             margin: 0.65rem 0;
+        }
+        .module-card-explore {
+            position: absolute;
+            right: 1rem;
+            bottom: 0.82rem;
+            color: #7b8798;
+            font-size: 0.76rem;
+            font-style: italic;
+            transition: color 140ms ease;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):hover .module-card-explore {
+            color: #16805d;
         }
         .module-status {
             display: inline-flex;
@@ -701,6 +758,65 @@ def inject_css() -> None:
             color: #475569;
             background: #f1f5f9;
             border: 1px solid #d7dee8;
+        }
+        .platform-ai-section {
+            margin-top: 2rem;
+            max-width: 58rem;
+        }
+        .platform-ai-title {
+            color: #0f172a;
+            font-size: 1.08rem;
+            font-weight: 720;
+            margin-bottom: 0.2rem;
+        }
+        .platform-ai-helper,
+        .platform-ai-quota {
+            color: #64748b;
+            font-size: 0.86rem;
+            line-height: 1.4;
+        }
+        .platform-ai-quota {
+            margin: 0.2rem 0 0.65rem;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) {
+            border: 0;
+            padding: 0;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] button {
+            min-height: 2.25rem;
+            height: 2.25rem;
+            width: auto;
+            padding: 0 1rem;
+            border-radius: 6px;
+            font-weight: 650;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] {
+            width: fit-content;
+        }
+        .platform-ai-answer {
+            max-width: 58rem;
+            margin-top: 1rem;
+            padding: 1rem 1.05rem 0.85rem;
+            border: 1px solid #d7dee8;
+            border-radius: 8px;
+            background: #ffffff;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+        }
+        .platform-ai-answer-title {
+            color: #0f172a;
+            font-size: 0.9rem;
+            font-weight: 720;
+            margin-bottom: 0.5rem;
+        }
+        .platform-ai-answer-body {
+            color: #334155;
+            font-size: 0.92rem;
+            line-height: 1.55;
+        }
+        .platform-ai-answer-footer {
+            color: #7b8798;
+            font-size: 0.75rem;
+            margin-top: 0.7rem;
         }
         .enterprise-section-title {
             color: #0f172a;
@@ -4256,6 +4372,35 @@ def render_home_hero() -> None:
     )
 
 
+PLATFORM_AI_SESSION_LIMIT = 5
+PLATFORM_AI_MAX_OUTPUT_TOKENS = 420
+PLATFORM_AI_CONTEXT = """You are the concise guide for AI Decision Platform, an enterprise application with three modules.
+
+Deal Approval supports commercial pricing and deal governance. Its workflow is Prepare, Enrich, Review, Decide. Use it for customer pricing requests, discount governance, commercial terms, and approval routing.
+
+Launch Sandbox supports cross-functional launch planning and decision preparation. Its workflow is Collaborate, Validate, Build Case, Decide. Use it to align Marketing, Sales, Medical, Market Access, Regulatory, Supply/Operations, and Finance around launch assumptions, readiness, sensitivities, and a launch decision case.
+
+Investment Case supports finance-led investment modelling, financing, sensitivity analysis, and management decision papers. Its workflow is Model, Finance, Stress-test, Decide. Use it for CAPEX, cost-reduction, acquisition, or strategic investment economics and funding analysis.
+
+Explain module differences and help users choose the appropriate module. Answer only questions about AI Decision Platform, its modules, or their workflows. If a question is clearly unrelated, state briefly that this guide is intended for questions about AI Decision Platform and its modules. Do not perform business calculations, make approval decisions, recommend investments, or invent application capabilities. Treat every question independently. Respond in plain management language and keep the answer within 150 to 250 words, using fewer words when sufficient."""
+
+
+def platform_ai_questions_remaining() -> int:
+    used = int(st.session_state.get("platform_ai_questions_used", 0))
+    return max(0, PLATFORM_AI_SESSION_LIMIT - used)
+
+
+def open_platform_module(module: str) -> None:
+    st.session_state.current_module = module
+    st.session_state.current_page = "Deal Request List"
+    st.session_state.selected_deal_id = None
+    st.session_state.deal_list_selected_deal_id = None
+    st.session_state.launch_page = "Launch Sandbox Home"
+    st.session_state.selected_launch_case_id = None
+    st.session_state.investment_page = "Investment Case Home"
+    st.session_state.selected_investment_case_id = None
+
+
 def page_platform_home() -> None:
     st.markdown(
         """
@@ -4272,7 +4417,7 @@ def page_platform_home() -> None:
         {
             "title": "Deal Approval",
             "description": "Commercial pricing and deal governance",
-            "process": "Prepare -> Enrich -> Review -> Decide",
+            "process": "Prepare · Enrich · Review · Decide",
             "status": "Available",
             "status_class": "module-status-available",
             "marker": "module-card-available",
@@ -4283,7 +4428,7 @@ def page_platform_home() -> None:
         {
             "title": "Launch Sandbox",
             "description": "Cross-functional launch planning, readiness and decision preparation",
-            "process": "Collaborate -> Validate -> Build Case -> Decide",
+            "process": "Collaborate · Validate · Build Case · Decide",
             "status": "Available",
             "status_class": "module-status-available",
             "marker": "module-card-available",
@@ -4294,7 +4439,7 @@ def page_platform_home() -> None:
         {
             "title": "Investment Case",
             "description": "Integrated investment modelling, financing and capital allocation",
-            "process": "Baseline -> Invest -> Finance -> Stress-test -> Decide",
+            "process": "Model · Finance · Stress-test · Decide",
             "status": "Available",
             "status_class": "module-status-available",
             "marker": "module-card-available",
@@ -4317,19 +4462,88 @@ def page_platform_home() -> None:
                 <div class="module-card-description">{spec["description"]}</div>
                 <div class="module-card-process">{spec["process"]}</div>
                 <div class="module-status {spec["status_class"]}">{spec["status"]}</div>
+                <div class="module-card-explore">Explore</div>
                 """,
                 unsafe_allow_html=True,
             )
             if st.button(spec["button"], key=f"module_card_{spec['title'].lower().replace(' ', '_')}", disabled=not spec["enabled"]):
-                st.session_state.current_module = spec["module"]
-                st.session_state.current_page = "Deal Request List"
-                st.session_state.selected_deal_id = None
-                st.session_state.deal_list_selected_deal_id = None
-                st.session_state.launch_page = "Launch Sandbox Home"
-                st.session_state.selected_launch_case_id = None
-                st.session_state.investment_page = "Investment Case Home"
-                st.session_state.selected_investment_case_id = None
+                open_platform_module(spec["module"])
                 st.rerun()
+
+    remaining = platform_ai_questions_remaining()
+    st.markdown(
+        """
+        <div class="platform-ai-section">
+            <div class="platform-ai-title">Ask the Platform</div>
+            <div class="platform-ai-helper">Ask about the platform, its modules, workflows, or which module fits a use case.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    quota_placeholder = st.empty()
+    quota_placeholder.markdown(
+        f'<div class="platform-ai-quota">{remaining} AI question{"s" if remaining != 1 else ""} remaining in this session</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.form("platform_ai_question_form", clear_on_submit=False):
+        st.markdown("<span class='platform-ai-form-marker'></span>", unsafe_allow_html=True)
+        question = st.text_input(
+            "Ask about the platform or its modules",
+            placeholder="Ask about the platform or its modules...",
+            label_visibility="collapsed",
+            disabled=remaining <= 0,
+            key="platform_ai_question",
+        )
+        submitted = st.form_submit_button(
+            "Ask AI",
+            disabled=remaining <= 0,
+        )
+
+    if submitted:
+        clean_question = str(question or "").strip()
+        if not clean_question:
+            st.session_state.platform_ai_error = "Enter a question about the platform or its modules."
+            st.session_state.platform_ai_answer = ""
+        else:
+            st.session_state.platform_ai_questions_used = int(
+                st.session_state.get("platform_ai_questions_used", 0)
+            ) + 1
+            try:
+                st.session_state.platform_ai_answer = generate_text(
+                    clean_question,
+                    context=PLATFORM_AI_CONTEXT,
+                    model=DEFAULT_OPENAI_MODEL,
+                    max_output_tokens=PLATFORM_AI_MAX_OUTPUT_TOKENS,
+                )
+                st.session_state.platform_ai_error = ""
+            except OpenAIServiceError as exc:
+                st.session_state.platform_ai_answer = ""
+                st.session_state.platform_ai_error = str(exc)
+
+        updated_remaining = platform_ai_questions_remaining()
+        quota_placeholder.markdown(
+            f'<div class="platform-ai-quota">{updated_remaining} AI question{"s" if updated_remaining != 1 else ""} remaining in this session</div>',
+            unsafe_allow_html=True,
+        )
+
+    platform_ai_error = str(st.session_state.get("platform_ai_error", "")).strip()
+    if platform_ai_error:
+        st.warning(platform_ai_error)
+
+    platform_ai_answer = str(st.session_state.get("platform_ai_answer", "")).strip()
+    if platform_ai_answer:
+        safe_answer = escape(platform_ai_answer).replace("\n", "<br>")
+        st.markdown(
+            f"""
+            <div class="platform-ai-answer">
+                <div class="platform-ai-answer-title">AI Platform Guide</div>
+                <div class="platform-ai-answer-body">{safe_answer}</div>
+                <div class="platform-ai-answer-footer">AI-generated · Based on platform documentation</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def launch_product(products: pd.DataFrame, product_name: str) -> dict[str, object]:
@@ -11203,12 +11417,14 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
     else:
         current = deepcopy(all_inputs[case_id])
         defaults = default_investment_inputs(case)
+        current.setdefault("settings", {}).pop("Revenue Modeling Mode", None)
         investment = current.setdefault("investment", {})
         for use in investment.setdefault("uses", []):
             use.pop("Funding Use Type", None)
         investment.setdefault("Sustaining CAPEX Source / Basis", defaults["investment"]["Sustaining CAPEX Source / Basis"])
         investment.setdefault("Sustaining CAPEX Comment / Rationale", defaults["investment"]["Sustaining CAPEX Comment / Rationale"])
         acquisition = current.setdefault("acquisition", {})
+        acquisition.pop("Cost Synergies", None)
         if "Target Working Capital" in acquisition and "Opening / Transaction Working Capital Reference" not in acquisition:
             acquisition["Opening / Transaction Working Capital Reference"] = acquisition.pop("Target Working Capital")
         acquisition.setdefault("Target Gross Margin %", deepcopy(defaults["acquisition"]["Target Gross Margin %"]))
@@ -11993,98 +12209,92 @@ def render_investment_model(case: dict[str, object]) -> None:
     st.markdown(f"**{context_title}**")
     st.caption(context_description)
     if archetype == CASE_ARCHETYPES[0]:
-        mode_key=f"investment_{case_id}_revenue_mode"; investment_seed_widget(mode_key,inputs["settings"].get("Revenue Modeling Mode","Unit-based"))
-        mode=st.radio("Revenue Modeling Mode",["Unit-based","Revenue-based"],horizontal=True,key=mode_key)
-        inputs["settings"]["Revenue Modeling Mode"]=mode
-        if mode == "Unit-based":
-            def render_capacity_metric(metric: str, label: str, section_key: str) -> None:
-                source, method, growth = render_investment_series_method(
-                    case_id,
-                    section_key,
-                    metric,
-                    inputs["capacity"],
-                    str(inputs.get("capacity_input_methods", {}).get(metric, "Y1 + Growth")),
-                    safe_float(inputs.get("capacity_growth_rates", {}).get(metric, 0.0)),
-                    years,
-                    display_label=label,
-                    compact_ten_year=True,
-                )
-                inputs["capacity"] = source
-                inputs.setdefault("capacity_input_methods", {})[metric] = method
-                inputs.setdefault("capacity_growth_rates", {})[metric] = growth
-
-            st.markdown("**A. Volume**")
-            volume_columns = st.columns(2)
-            with volume_columns[0]:
-                render_capacity_metric("Baseline Volume", "Baseline Volume", "capacity_baseline_volume")
-            with volume_columns[1]:
-                render_capacity_metric("Scenario Volume", "Investment Scenario Volume", "capacity_scenario_volume")
-            st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
-            volume_bridge = calculate_investment_model(inputs)["capacity_bridge"]
-            render_finance_table(
-                format_investment_driver_table(volume_bridge[volume_bridge["Metric"] == "Incremental Volume"], years),
-                right_align=set(years),
+        def render_capacity_metric(metric: str, label: str, section_key: str) -> None:
+            source, method, growth = render_investment_series_method(
+                case_id,
+                section_key,
+                metric,
+                inputs["capacity"],
+                str(inputs.get("capacity_input_methods", {}).get(metric, "Y1 + Growth")),
+                safe_float(inputs.get("capacity_growth_rates", {}).get(metric, 0.0)),
+                years,
+                display_label=label,
                 compact_ten_year=True,
             )
+            inputs["capacity"] = source
+            inputs.setdefault("capacity_input_methods", {})[metric] = method
+            inputs.setdefault("capacity_growth_rates", {})[metric] = growth
 
-            st.markdown("<div class='investment-driver-section-gap'></div>", unsafe_allow_html=True)
-            st.markdown("**B. Net Price**")
-            price_columns = st.columns(2)
-            with price_columns[0]:
-                render_capacity_metric("Baseline Net Price per Unit", "Baseline Net Price", "capacity_baseline_price")
-            with price_columns[1]:
-                render_capacity_metric("Scenario Net Price per Unit", "Investment Scenario Net Price", "capacity_scenario_price")
-            st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
-            price_bridge = calculate_investment_model(inputs)["capacity_bridge"]
-            price_rows = price_bridge[price_bridge["Metric"].isin(["Net Price Delta", "Net Price Change %"])]
-            render_finance_table(
-                format_investment_driver_table(price_rows, years),
-                right_align=set(years),
-                secondary_rows={"Net Price Change %"},
-                compact_ten_year=True,
-            )
+        st.markdown("**A. Volume**")
+        volume_columns = st.columns(2)
+        with volume_columns[0]:
+            render_capacity_metric("Baseline Volume", "Baseline Volume", "capacity_baseline_volume")
+        with volume_columns[1]:
+            render_capacity_metric("Scenario Volume", "Investment Scenario Volume", "capacity_scenario_volume")
+        st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
+        volume_bridge = calculate_investment_model(inputs)["capacity_bridge"]
+        render_finance_table(
+            format_investment_driver_table(volume_bridge[volume_bridge["Metric"] == "Incremental Volume"], years),
+            right_align=set(years),
+            compact_ten_year=True,
+        )
 
-            st.markdown("<div class='investment-driver-section-gap'></div>", unsafe_allow_html=True)
-            st.markdown("**C. Capacity**")
-            capacity_columns = st.columns(2)
-            with capacity_columns[0]:
-                render_capacity_metric("Baseline Capacity", "Baseline Capacity", "capacity_baseline_capacity")
-            with capacity_columns[1]:
-                render_capacity_metric("Added Capacity from Investment", "Added Capacity from Investment", "capacity_added_capacity")
-            st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
-            capacity_bridge = calculate_investment_model(inputs)["capacity_bridge"]
-            capacity_rows = capacity_bridge[capacity_bridge["Metric"].isin([
-                "Total Scenario Capacity", "Baseline Utilization %", "Scenario Utilization %",
-                "Baseline Idle Capacity", "Scenario Idle Capacity",
-            ])]
-            render_finance_table(
-                format_investment_driver_table(capacity_rows, years),
-                right_align=set(years),
-                secondary_rows={"Baseline Utilization %", "Scenario Utilization %"},
-                compact_ten_year=True,
-            )
+        st.markdown("<div class='investment-driver-section-gap'></div>", unsafe_allow_html=True)
+        st.markdown("**B. Net Price**")
+        price_columns = st.columns(2)
+        with price_columns[0]:
+            render_capacity_metric("Baseline Net Price per Unit", "Baseline Net Price", "capacity_baseline_price")
+        with price_columns[1]:
+            render_capacity_metric("Scenario Net Price per Unit", "Investment Scenario Net Price", "capacity_scenario_price")
+        st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
+        price_bridge = calculate_investment_model(inputs)["capacity_bridge"]
+        price_rows = price_bridge[price_bridge["Metric"].isin(["Net Price Delta", "Net Price Change %"])]
+        render_finance_table(
+            format_investment_driver_table(price_rows, years),
+            right_align=set(years),
+            secondary_rows={"Net Price Change %"},
+            compact_ten_year=True,
+        )
 
-            bridge = calculate_investment_model(inputs)["capacity_bridge"]
-            st.markdown("<div class='investment-driver-bridge-gap'></div>", unsafe_allow_html=True)
-            st.markdown("**Operating Driver Bridge**")
-            st.caption("Controlled reconciliation of capacity, volume, utilization, net price and revenue from Baseline to Investment Scenario.")
-            render_finance_table(
-                format_investment_driver_table(bridge, years),
-                right_align=set(years),
-                secondary_rows={"Baseline Utilization %", "Scenario Utilization %", "Net Price Change %"},
-                compact_ten_year=True,
-            )
-        else:
-            inputs = render_investment_revenue_inputs(case_id, "capacity_revenue", inputs, years, True, compact_ten_year=True)
+        st.markdown("<div class='investment-driver-section-gap'></div>", unsafe_allow_html=True)
+        st.markdown("**C. Capacity**")
+        capacity_columns = st.columns(2)
+        with capacity_columns[0]:
+            render_capacity_metric("Baseline Capacity", "Baseline Capacity", "capacity_baseline_capacity")
+        with capacity_columns[1]:
+            render_capacity_metric("Added Capacity from Investment", "Added Capacity from Investment", "capacity_added_capacity")
+        st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
+        capacity_bridge = calculate_investment_model(inputs)["capacity_bridge"]
+        capacity_rows = capacity_bridge[capacity_bridge["Metric"].isin([
+            "Total Scenario Capacity", "Baseline Utilization %", "Scenario Utilization %",
+            "Baseline Idle Capacity", "Scenario Idle Capacity",
+        ])]
+        render_finance_table(
+            format_investment_driver_table(capacity_rows, years),
+            right_align=set(years),
+            secondary_rows={"Baseline Utilization %", "Scenario Utilization %"},
+            compact_ten_year=True,
+        )
+
+        bridge = calculate_investment_model(inputs)["capacity_bridge"]
+        st.markdown("<div class='investment-driver-bridge-gap'></div>", unsafe_allow_html=True)
+        st.markdown("**Operating Driver Bridge**")
+        st.caption("Controlled reconciliation of capacity, volume, utilization, net price and revenue from Baseline to Investment Scenario.")
+        render_finance_table(
+            format_investment_driver_table(bridge, years),
+            right_align=set(years),
+            secondary_rows={"Baseline Utilization %", "Scenario Utilization %", "Net Price Change %"},
+            compact_ten_year=True,
+        )
     elif archetype == CASE_ARCHETYPES[1]:
         st.info("Implementation expenditure is captured in Investment Uses. Physical capacity and volume assumptions do not apply to this archetype.")
         inputs = render_investment_revenue_inputs(case_id, "digital_revenue", inputs, years, "Revenue Growth" in enabled, compact_ten_year=True)
     else:
         st.caption("Investment Scenario = Acquirer Baseline + Target + Synergies - Integration Effects.")
         inputs = render_investment_revenue_inputs(case_id, "acquirer_base", inputs, years, False, compact_ten_year=True)
-        st.caption("Revenue Synergies are the full run-rate incremental revenue opportunity. Cost Synergies are the full run-rate recurring cost savings opportunity.")
-        st.caption("Synergy Ramp % is the percentage of the full run-rate revenue and cost synergies expected to be realized in each year. For example, 25% / 55% / 80% / 100% represents partial realization until full run-rate is reached; the ramp is applied once.")
-        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone and Synergy Inputs",inputs["acquisition"],["Target Revenue","Target Gross Margin %","Target EBITDA","Target D&A","Target EBIT","Revenue Synergies","Cost Synergies","Synergy Ramp %","One-off Integration Costs"],years,compact_ten_year=True)
+        st.caption("Revenue Synergies are modeled here. Cost synergies are entered once in the Savings / Benefits Register and mapped to their operating cost line.")
+        st.caption("Synergy Ramp % is the percentage of full run-rate revenue synergies expected to be realized in each year; savings use their own register ramp profile.")
+        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone and Synergy Inputs",inputs["acquisition"],["Target Revenue","Target Gross Margin %","Target EBITDA","Target D&A","Target EBIT","Revenue Synergies","Synergy Ramp %","One-off Integration Costs"],years,compact_ten_year=True)
         st.caption("Projected working capital is calculated consistently from DSO, DIO and DPO. Any opening or transaction working-capital reference is not used as a second forecast input.")
 
     st.markdown("<div class='investment-operating-cost-gap'></div><div class='enterprise-section-title'>4. Operating Cost Structure</div>", unsafe_allow_html=True)
@@ -12122,8 +12332,8 @@ def render_investment_model(case: dict[str, object]) -> None:
 
     if "Cost Reduction" in enabled:
         st.markdown("**Savings / Benefits Register**")
-        st.caption("Savings / Benefits Register explains the business drivers behind Baseline-to-Scenario operating cost or benefit changes. Mapped savings are not added again to project cash flow.")
-        st.caption("Full-run-rate realized saving = Gross Run-Rate Saving × Realization %. Ramp Profile describes the expected timing of the underlying modeled change.")
+        st.caption("Savings entered here are automatically reflected in the mapped operating cost line and are not added separately to cash flow.")
+        st.caption("Full-run-rate realized saving = Gross Run-Rate Saving × Realization %. Ramp Profile determines the annual realized saving.")
         original_savings = deepcopy(inputs["savings_register"])
         savings_rows=[]
         for row in inputs["savings_register"]:
@@ -12150,34 +12360,16 @@ def render_investment_model(case: dict[str, object]) -> None:
 
         trace_model = calculate_investment_model(inputs)
         terminal_year = trace_model["years"][-1]
-        baseline_pnl = trace_model["baseline_pnl"].set_index("Metric")
-        scenario_pnl = trace_model["scenario_pnl"].set_index("Metric")
-        mapped_totals: dict[str, float] = {}
-        for row in savings_rows:
-            if not bool(row.get("Applicable", True)):
-                continue
-            mapping = str(row.get("Cost Line Mapping", "Other relevant controlled line"))
-            group = next((name for name in ["Manufacturing COGS", "Non-Manufacturing Personnel", "Non-Manufacturing OPEX", "Working Capital", "CAPEX Avoidance"] if mapping.startswith(name)), "Other relevant controlled line")
-            mapped_totals[group] = mapped_totals.get(group, 0.0) + safe_float(row.get("Realized Saving"))
-        modeled_reductions = {
-            "Manufacturing COGS": safe_float(baseline_pnl.at["COGS", terminal_year]) - safe_float(scenario_pnl.at["COGS", terminal_year]),
-            "Non-Manufacturing Personnel": safe_float(baseline_pnl.at["Non-Manufacturing Personnel", terminal_year]) - safe_float(scenario_pnl.at["Non-Manufacturing Personnel", terminal_year]),
-            "Non-Manufacturing OPEX": safe_float(baseline_pnl.at["Non-Manufacturing OPEX", terminal_year]) - safe_float(scenario_pnl.at["Non-Manufacturing OPEX", terminal_year]),
-            "CAPEX Avoidance": safe_float(inputs.get("investment", {}).get("CAPEX Avoidance", {}).get(terminal_year, 0.0)),
-        }
         reconciliation_rows=[]
-        for mapping, mapped_value in mapped_totals.items():
-            modeled_value = modeled_reductions.get(mapping)
-            if modeled_value is None:
-                reconciliation_rows.append({"Mapped Line":mapping,"Mapped Full-Run-Rate Saving":money(mapped_value),f"Modeled Change ({terminal_year})":"Reference only","Status":"Traceability only"})
-                continue
-            variance = mapped_value - modeled_value
-            material = abs(variance) > max(100_000.0, abs(modeled_value) * .10)
-            reconciliation_rows.append({"Mapped Line":mapping,"Mapped Full-Run-Rate Saving":money(mapped_value),f"Modeled Change ({terminal_year})":money(modeled_value),"Status":"Review mismatch" if material else "Reconciled"})
+        for _, row in trace_model.get("savings_reconciliation", pd.DataFrame()).iterrows():
+            expected = safe_float(row.get(f"Expected {terminal_year}"))
+            reflected = safe_float(row.get(f"Reflected {terminal_year}"))
+            tolerance = max(1.0, abs(expected) * 0.001)
+            reconciliation_rows.append({"Mapped Line":row.get("Mapped Line"),"Expected Realized Saving":money(expected),"Saving Reflected in Model":money(reflected),"Status":"Reconciled" if abs(expected-reflected)<=tolerance else "Review mismatch"})
         if reconciliation_rows:
             st.markdown("**Savings traceability reconciliation**")
-            st.caption("Compares mapped full-run-rate savings with the terminal-year Baseline-to-Scenario change. Differences are advisory and do not block editing.")
-            render_finance_table(pd.DataFrame(reconciliation_rows), right_align={"Mapped Full-Run-Rate Saving",f"Modeled Change ({terminal_year})"}, exception_values={"Review mismatch":"#fff4e5"})
+            st.caption(f"Shows whether each mapped saving is fully reflected in the controlled model for {terminal_year}; volume-driven cost changes are excluded from this test.")
+            render_finance_table(pd.DataFrame(reconciliation_rows), right_align={"Expected Realized Saving","Saving Reflected in Model"}, exception_values={"Review mismatch":"#fff4e5"})
 
     st.markdown("<div class='enterprise-section-title'>5. Cost of Capital & Investment Thresholds</div>", unsafe_allow_html=True)
     st.caption("Establishes the discount rate and capital-allocation benchmarks used to evaluate project returns against capital and risk.")
@@ -12187,7 +12379,7 @@ def render_investment_model(case: dict[str, object]) -> None:
     st.markdown("---")
     st.markdown("### FINANCIAL MODEL OUTPUTS")
     st.caption("Calculated outputs · Read-only results from the controlled assumptions above.")
-    driver_names=[] if archetype==CASE_ARCHETYPES[0] and inputs["settings"].get("Revenue Modeling Mode")=="Unit-based" else ["Baseline Revenue","Incremental Revenue","Scenario Revenue"]
+    driver_names=[] if archetype==CASE_ARCHETYPES[0] else ["Baseline Revenue","Incremental Revenue","Scenario Revenue"]
     if driver_names:
         calculated=pd.DataFrame([{"Calculated Driver":m,**{y:model["drivers"][m][y] for y in years}} for m in driver_names])
         st.caption("Calculated operating bridge from the assumptions above")
@@ -12674,7 +12866,7 @@ def render_investment_decision_case(case: dict[str, object]) -> None:
         archetype = str(settings.get("Case Archetype", ""))
         if archetype == CASE_ARCHETYPES[2]:
             active_driver_groups = ("acquisition",)
-        elif archetype == CASE_ARCHETYPES[0] and str(settings.get("Revenue Modeling Mode", "Unit-based")) == "Unit-based":
+        elif archetype == CASE_ARCHETYPES[0]:
             active_driver_groups = ("capacity",)
         else:
             active_driver_groups = ("revenue_based",)

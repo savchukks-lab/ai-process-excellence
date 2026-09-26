@@ -44,6 +44,7 @@ for case in cases:
         result = calculate_investment_model(variant)
         assert result["years"]
         assert "Project NPV" in result["returns"]
+        assert variant["settings"]["Case Archetype"] == inputs["settings"]["Case Archetype"]
 
 for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
     case = {"Case ID": f"INV-T{index}", "Investment Case Name": archetype, "Case Archetype": archetype, "Investment Type": archetype, "Business Unit / Market": "Test Scope", "Owner": "Daniel Ortiz", "Status": "Draft", "Last Updated": "2026-09-15"}
@@ -53,10 +54,6 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
         result = calculate_investment_model(inputs)
         assert result["returns"]["WACC"] > 0
     if archetype == CASE_ARCHETYPES[0]:
-        for mode in ("Unit-based", "Revenue-based"):
-            inputs["settings"]["Revenue Modeling Mode"] = mode
-            assert calculate_investment_model(inputs)["years"]
-
         inputs = default_investment_inputs(case)
         inputs["capacity_input_methods"]["Baseline Volume"] = "Y1 + Growth"
         inputs["capacity"]["Baseline Volume"]["Y1"] = 720_000
@@ -82,17 +79,13 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
         assert (annual_result["working_capital"]["Incremental Inventory"] > 0).all()
         assert (annual_result["working_capital"]["Incremental Accounts Payable"] > 0).all()
 
-        revenue_inputs = deepcopy(inputs)
-        revenue_inputs["settings"]["Revenue Modeling Mode"] = "Revenue-based"
-        revenue_inputs["revenue_input_method"] = "Y1 + Growth"
-        revenue_inputs["revenue_based"]["Baseline Revenue"]["Y1"] = 20_000_000
-        revenue_inputs["revenue_growth_rate"] = 0.05
-        revenue_growth_result = calculate_investment_model(revenue_inputs)
-        assert round(revenue_growth_result["baseline_pnl"].set_index("Metric").at["Revenue", "Y2"]) == 21_000_000
-        revenue_inputs["revenue_input_method"] = "Annual Schedule"
-        revenue_inputs["revenue_based"]["Baseline Revenue"]["Y2"] = 22_222_222
-        revenue_annual_result = calculate_investment_model(revenue_inputs)
-        assert revenue_annual_result["baseline_pnl"].set_index("Metric").at["Revenue", "Y2"] == 22_222_222
+        revenue_bridge = annual_result["capacity_bridge"].set_index("Metric")
+        baseline_pnl = annual_result["baseline_pnl"].set_index("Metric")
+        scenario_pnl = annual_result["scenario_pnl"].set_index("Metric")
+        for year in annual_result["years"]:
+            assert abs(revenue_bridge.at["Baseline Revenue", year] - revenue_bridge.at["Baseline Volume", year] * revenue_bridge.at["Baseline Net Price", year]) < 0.01
+            assert abs(revenue_bridge.at["Scenario Revenue", year] - revenue_bridge.at["Scenario Volume", year] * revenue_bridge.at["Scenario Net Price", year]) < 0.01
+            assert abs(revenue_bridge.at["Incremental Revenue", year] - (scenario_pnl.at["Revenue", year] - baseline_pnl.at["Revenue", year])) < 0.01
 
         ramp_expectations = {
             "Immediate": (720_000, 720_000, 720_000),
@@ -108,6 +101,7 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
                 "Gross Run-rate Saving": 900_000,
                 "Realization %": 0.80,
                 "Ramp Profile": ramp_profile,
+                "Cost Line Mapping": "Manufacturing COGS · Direct Materials",
                 "Custom Y1 Ramp %": 0.20,
                 "Custom Y2 Ramp %": 0.60,
                 "Custom Y3+ Ramp %": 0.90,

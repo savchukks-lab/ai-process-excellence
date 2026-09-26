@@ -58,6 +58,7 @@ def generate_text(
     *,
     model: str = DEFAULT_OPENAI_MODEL,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    max_output_tokens: int | None = None,
     client: ResponsesClient | None = None,
 ) -> str:
     """Generate text from a prompt and optional structured context.
@@ -86,8 +87,12 @@ def generate_text(
     if context_text:
         request_input = f"Structured context:\n{context_text}\n\nTask:\n{clean_prompt}"
 
+    request_options: dict[str, Any] = {"model": model, "input": request_input}
+    if max_output_tokens is not None:
+        request_options["max_output_tokens"] = max(1, int(max_output_tokens))
+
     try:
-        response = client.responses.create(model=model, input=request_input)
+        response = client.responses.create(**request_options)
     except APITimeoutError as exc:
         raise OpenAIServiceError("OpenAI did not respond before the request timed out.") from exc
     except APIConnectionError as exc:

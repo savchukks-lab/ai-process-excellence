@@ -82,7 +82,7 @@ def investment_sensitivity_drivers(inputs: dict[str, Any], base_model: dict[str,
     enabled = set(settings.get("Value Creation Drivers", []))
     rows: list[dict[str, Any]] = []
 
-    if archetype == CASE_ARCHETYPES[0] and str(settings.get("Revenue Modeling Mode", "Unit-based")) == "Unit-based":
+    if archetype == CASE_ARCHETYPES[0]:
         volume = _number(inputs.get("capacity", {}).get("Scenario Volume", {}).get(terminal))
         price = _number(inputs.get("capacity", {}).get("Scenario Net Price per Unit", {}).get(terminal))
         rows.extend([
@@ -151,7 +151,7 @@ def apply_sensitivity_driver(base_inputs: dict[str, Any], driver: dict[str, Any]
     archetype = str(inputs.get("settings", {}).get("Case Archetype", CASE_ARCHETYPES[0]))
 
     if driver_id == "revenue_volume":
-        if archetype == CASE_ARCHETYPES[0] and str(inputs["settings"].get("Revenue Modeling Mode", "Unit-based")) == "Unit-based":
+        if archetype == CASE_ARCHETYPES[0]:
             _scale_series(inputs["capacity"]["Scenario Volume"], factor)
         elif archetype == CASE_ARCHETYPES[2]:
             _scale_series(inputs["acquisition"]["Target Revenue"], factor)
@@ -183,12 +183,9 @@ def apply_sensitivity_driver(base_inputs: dict[str, Any], driver: dict[str, Any]
         inputs["working_capital"][field] = max(0.0, _number(scenario_value))
     elif driver_id == "savings_realization":
         realization_factor = max(0.0, _number(scenario_value) / 100.0)
-        if archetype == CASE_ARCHETYPES[2]:
-            _scale_series(inputs["acquisition"]["Cost Synergies"], realization_factor)
-        else:
-            for row in inputs.get("savings_register", []):
-                if row.get("Applicable", True):
-                    row["Gross Run-rate Saving"] = _number(row.get("Gross Run-rate Saving", row.get("Gross Saving"))) * realization_factor
+        for row in inputs.get("savings_register", []):
+            if row.get("Applicable", True):
+                row["Gross Run-rate Saving"] = _number(row.get("Gross Run-rate Saving", row.get("Gross Saving"))) * realization_factor
     return inputs
 
 
