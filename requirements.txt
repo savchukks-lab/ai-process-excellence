@@ -5,3 +5,4 @@ openpyxl==3.1.5
 altair==5.3.0
 watchdog==4.0.2
 pyarrow==15.0.2
+openai==3.19.2
