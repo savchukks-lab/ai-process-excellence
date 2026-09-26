@@ -708,6 +708,30 @@ def inject_css() -> None:
             font-weight: 720;
             margin: 0.75rem 0 0.35rem;
         }
+        .investment-driver-section-gap {
+            height: 1.65rem;
+            margin-top: 0.45rem;
+            border-top: 1px solid #edf1f5;
+        }
+        .investment-driver-output-gap {
+            height: 0.7rem;
+        }
+        .investment-driver-bridge-gap,
+        .investment-operating-cost-gap {
+            height: 1.9rem;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .investment-compact-wide-editor-marker)
+        > div[data-testid="stElementContainer"] div[data-testid="stDataFrame"] [role="columnheader"],
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .investment-compact-wide-editor-marker)
+        > div[data-testid="stElementContainer"] div[data-testid="stDataFrame"] [role="gridcell"] {
+            font-size: 0.74rem !important;
+            line-height: 1.15 !important;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .investment-compact-wide-editor-marker)
+        > div[data-testid="stElementContainer"] div[data-testid="stDataFrame"] {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
         .investment-overview-section-spacer {
             height: 1.75rem;
         }
@@ -8815,6 +8839,7 @@ def render_finance_table(
     nonzero_highlights: dict[str, str] | None = None,
     emphasized_columns: set[str] | None = None,
     column_widths: dict[str, str] | None = None,
+    compact_ten_year: bool = False,
 ) -> None:
     """Render a small Finance table without Streamlit's internal scroll container."""
     if not isinstance(table, pd.DataFrame) or table.empty:
@@ -8824,13 +8849,19 @@ def render_finance_table(
     exception_values = exception_values or {}
     nonzero_highlights = nonzero_highlights or {}
     emphasized_columns = emphasized_columns or set()
-    column_widths = column_widths or {}
+    column_widths = dict(column_widths or {})
+    if compact_ten_year and len(table.columns) == 11:
+        column_widths.setdefault(str(table.columns[0]), "15%")
+        for column in table.columns[1:]:
+            column_widths.setdefault(str(column), "8.5%")
+    cell_padding = "5px 4px" if compact_ten_year else "7px 8px"
+    table_font_size = "0.73rem" if compact_ten_year else "0.82rem"
     colgroup = "".join(
         f"<col style='width:{escape(str(column_widths.get(str(column), 'auto')))}'>"
         for column in table.columns
     )
     headers = "".join(
-        f"<th style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
+        f"<th style='padding:{cell_padding};text-align:{'right' if str(column) in right_align else 'left'};"
         f"border-bottom:1px solid #d8dee8;background:{'#e5ebf3' if str(column) in emphasized_columns else '#eef2f7'};"
         f"font-weight:{'750' if str(column) in emphasized_columns else '650'};white-space:normal'>"
         f"{escape(str(column))}</th>"
@@ -8849,14 +8880,14 @@ def render_finance_table(
                 exception_background = nonzero_highlights[str(column)]
             column_emphasis = "font-weight:700;color:#233044;" if str(column) in emphasized_columns else ""
             cells += (
-                f"<td style='padding:7px 8px;text-align:{'right' if str(column) in right_align else 'left'};"
+                f"<td style='padding:{cell_padding};text-align:{'right' if str(column) in right_align else 'left'};"
                 f"border-bottom:1px solid #e5e9f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere;"
                 f"background:{exception_background};{row_style}{column_emphasis}'>{escape(value)}</td>"
             )
         body_rows.append(f"<tr style='background:{background}'>{cells}</tr>")
     st.markdown(
         "<table style='width:100%;border-collapse:collapse;border:1px solid #d8dee8;"
-        "font-size:0.82rem;line-height:1.25;table-layout:fixed'>"
+        f"font-size:{table_font_size};line-height:1.22;table-layout:fixed'>"
         f"<colgroup>{colgroup}</colgroup><thead><tr>{headers}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>",
         unsafe_allow_html=True,
     )
@@ -11396,6 +11427,7 @@ def render_investment_driver_editor(
     source: dict[str, dict[str, float]],
     metrics: list[str],
     years: list[str],
+    compact_ten_year: bool = False,
 ) -> dict[str, dict[str, float]]:
     st.markdown(f"**{title}**")
     updated = deepcopy(source)
@@ -11417,23 +11449,32 @@ def render_investment_driver_editor(
         if len(grouped_metrics) > 1:
             st.caption(kind)
         year_config = {
-            year: st.column_config.NumberColumn(year, format=investment_driver_display_format(kind), width="small")
+            year: st.column_config.NumberColumn(
+                year,
+                format=investment_driver_display_format(kind),
+                width=52 if compact_ten_year else "small",
+            )
             for year in years
         }
         source_frame = pd.DataFrame(rows)
         editor_key = f"investment_driver_{case_id}_{section_key}_{kind.lower().replace(' ', '_')}_{len(years)}"
         editor_source = apply_data_editor_state(source_frame, st.session_state.get(editor_key))
-        editor = st.data_editor(
-            editor_source,
-            key=editor_key,
-            hide_index=True,
-            use_container_width=True,
-            disabled=["Input"],
-            column_config={
-                "Input": st.column_config.TextColumn("Input", width="medium"),
+        editor_kwargs = {
+            "key": editor_key,
+            "hide_index": True,
+            "use_container_width": True,
+            "disabled": ["Input"],
+            "column_config": {
+                "Input": st.column_config.TextColumn("Input", width=105 if compact_ten_year else "medium"),
                 **year_config,
             },
-        )
+        }
+        if compact_ten_year:
+            with st.container():
+                st.markdown("<div class='investment-compact-wide-editor-marker'></div>", unsafe_allow_html=True)
+                editor = st.data_editor(editor_source, **editor_kwargs)
+        else:
+            editor = st.data_editor(editor_source, **editor_kwargs)
         updated_editor = apply_data_editor_state(editor.copy(), st.session_state.get(editor_key))
         for _, row in updated_editor.iterrows():
             metric = str(row.get("Input", ""))
@@ -11455,6 +11496,7 @@ def render_investment_series_method(
     growth: float,
     years: list[str],
     display_label: str | None = None,
+    compact_ten_year: bool = False,
 ) -> tuple[dict[str, dict[str, float]], str, float]:
     visible_label = display_label or metric
     st.markdown(f"**{visible_label}**")
@@ -11463,7 +11505,7 @@ def render_investment_series_method(
     selected_method = st.radio("Input Method", ["Y1 + Growth", "Annual Schedule"], horizontal=True, key=method_key)
     updated = deepcopy(source)
     if selected_method == "Annual Schedule":
-        updated = render_investment_driver_editor(case_id, f"{section_key}_{metric}", "Annual Schedule", updated, [metric], years)
+        updated = render_investment_driver_editor(case_id, f"{section_key}_{metric}", "Annual Schedule", updated, [metric], years, compact_ten_year=compact_ten_year)
         return updated, selected_method, growth
     y1_key = f"investment_{case_id}_{section_key}_{re.sub(r'[^a-z0-9]+', '_', metric.lower()).strip('_')}_y1"
     growth_key = f"{y1_key}_growth"
@@ -11483,6 +11525,7 @@ def render_investment_revenue_inputs(
     inputs: dict[str, object],
     years: list[str],
     include_incremental: bool,
+    compact_ten_year: bool = False,
 ) -> dict[str, object]:
     revenue_source, method, growth = render_investment_series_method(
         case_id,
@@ -11492,6 +11535,7 @@ def render_investment_revenue_inputs(
         str(inputs.get("revenue_input_method", "Y1 + Growth")),
         safe_float(inputs.get("revenue_growth_rate", .035)),
         years,
+        compact_ten_year=compact_ten_year,
     )
     inputs["revenue_based"] = revenue_source
     inputs["revenue_input_method"] = method
@@ -11504,6 +11548,7 @@ def render_investment_revenue_inputs(
             inputs["revenue_based"],
             ["Incremental Revenue / Revenue Uplift"],
             years,
+            compact_ten_year=compact_ten_year,
         )
         st.caption("Scenario Revenue is calculated as Baseline Revenue plus Incremental Revenue / Revenue Uplift.")
     return inputs
@@ -11962,6 +12007,7 @@ def render_investment_model(case: dict[str, object]) -> None:
                     safe_float(inputs.get("capacity_growth_rates", {}).get(metric, 0.0)),
                     years,
                     display_label=label,
+                    compact_ten_year=True,
                 )
                 inputs["capacity"] = source
                 inputs.setdefault("capacity_input_methods", {})[metric] = method
@@ -11973,32 +12019,39 @@ def render_investment_model(case: dict[str, object]) -> None:
                 render_capacity_metric("Baseline Volume", "Baseline Volume", "capacity_baseline_volume")
             with volume_columns[1]:
                 render_capacity_metric("Scenario Volume", "Investment Scenario Volume", "capacity_scenario_volume")
+            st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
             volume_bridge = calculate_investment_model(inputs)["capacity_bridge"]
             render_finance_table(
                 format_investment_driver_table(volume_bridge[volume_bridge["Metric"] == "Incremental Volume"], years),
                 right_align=set(years),
+                compact_ten_year=True,
             )
 
+            st.markdown("<div class='investment-driver-section-gap'></div>", unsafe_allow_html=True)
             st.markdown("**B. Net Price**")
             price_columns = st.columns(2)
             with price_columns[0]:
                 render_capacity_metric("Baseline Net Price per Unit", "Baseline Net Price", "capacity_baseline_price")
             with price_columns[1]:
                 render_capacity_metric("Scenario Net Price per Unit", "Investment Scenario Net Price", "capacity_scenario_price")
+            st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
             price_bridge = calculate_investment_model(inputs)["capacity_bridge"]
             price_rows = price_bridge[price_bridge["Metric"].isin(["Net Price Delta", "Net Price Change %"])]
             render_finance_table(
                 format_investment_driver_table(price_rows, years),
                 right_align=set(years),
                 secondary_rows={"Net Price Change %"},
+                compact_ten_year=True,
             )
 
+            st.markdown("<div class='investment-driver-section-gap'></div>", unsafe_allow_html=True)
             st.markdown("**C. Capacity**")
             capacity_columns = st.columns(2)
             with capacity_columns[0]:
                 render_capacity_metric("Baseline Capacity", "Baseline Capacity", "capacity_baseline_capacity")
             with capacity_columns[1]:
                 render_capacity_metric("Added Capacity from Investment", "Added Capacity from Investment", "capacity_added_capacity")
+            st.markdown("<div class='investment-driver-output-gap'></div>", unsafe_allow_html=True)
             capacity_bridge = calculate_investment_model(inputs)["capacity_bridge"]
             capacity_rows = capacity_bridge[capacity_bridge["Metric"].isin([
                 "Total Scenario Capacity", "Baseline Utilization %", "Scenario Utilization %",
@@ -12008,30 +12061,33 @@ def render_investment_model(case: dict[str, object]) -> None:
                 format_investment_driver_table(capacity_rows, years),
                 right_align=set(years),
                 secondary_rows={"Baseline Utilization %", "Scenario Utilization %"},
+                compact_ten_year=True,
             )
 
             bridge = calculate_investment_model(inputs)["capacity_bridge"]
+            st.markdown("<div class='investment-driver-bridge-gap'></div>", unsafe_allow_html=True)
             st.markdown("**Operating Driver Bridge**")
             st.caption("Controlled reconciliation of capacity, volume, utilization, net price and revenue from Baseline to Investment Scenario.")
             render_finance_table(
                 format_investment_driver_table(bridge, years),
                 right_align=set(years),
                 secondary_rows={"Baseline Utilization %", "Scenario Utilization %", "Net Price Change %"},
+                compact_ten_year=True,
             )
         else:
-            inputs = render_investment_revenue_inputs(case_id, "capacity_revenue", inputs, years, True)
+            inputs = render_investment_revenue_inputs(case_id, "capacity_revenue", inputs, years, True, compact_ten_year=True)
     elif archetype == CASE_ARCHETYPES[1]:
         st.info("Implementation expenditure is captured in Investment Uses. Physical capacity and volume assumptions do not apply to this archetype.")
-        inputs = render_investment_revenue_inputs(case_id, "digital_revenue", inputs, years, "Revenue Growth" in enabled)
+        inputs = render_investment_revenue_inputs(case_id, "digital_revenue", inputs, years, "Revenue Growth" in enabled, compact_ten_year=True)
     else:
         st.caption("Investment Scenario = Acquirer Baseline + Target + Synergies - Integration Effects.")
-        inputs = render_investment_revenue_inputs(case_id, "acquirer_base", inputs, years, False)
+        inputs = render_investment_revenue_inputs(case_id, "acquirer_base", inputs, years, False, compact_ten_year=True)
         st.caption("Revenue Synergies are the full run-rate incremental revenue opportunity. Cost Synergies are the full run-rate recurring cost savings opportunity.")
         st.caption("Synergy Ramp % is the percentage of the full run-rate revenue and cost synergies expected to be realized in each year. For example, 25% / 55% / 80% / 100% represents partial realization until full run-rate is reached; the ramp is applied once.")
-        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone and Synergy Inputs",inputs["acquisition"],["Target Revenue","Target Gross Margin %","Target EBITDA","Target D&A","Target EBIT","Revenue Synergies","Cost Synergies","Synergy Ramp %","One-off Integration Costs"],years)
+        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone and Synergy Inputs",inputs["acquisition"],["Target Revenue","Target Gross Margin %","Target EBITDA","Target D&A","Target EBIT","Revenue Synergies","Cost Synergies","Synergy Ramp %","One-off Integration Costs"],years,compact_ten_year=True)
         st.caption("Projected working capital is calculated consistently from DSO, DIO and DPO. Any opening or transaction working-capital reference is not used as a second forecast input.")
 
-    st.markdown("<div class='enterprise-section-title'>4. Operating Cost Structure</div>", unsafe_allow_html=True)
+    st.markdown("<div class='investment-operating-cost-gap'></div><div class='enterprise-section-title'>4. Operating Cost Structure</div>", unsafe_allow_html=True)
     st.caption("Defines how baseline and investment operating costs evolve and determines the project’s incremental profitability.")
     definitions={
         "manufacturing_cogs": ("A. Manufacturing COGS", "Direct Materials, Direct Labor, Variable Manufacturing Overhead and Fixed Manufacturing Overhead drive reported COGS. Variable inputs are expressed per unit; fixed and step-fixed inputs are annual amounts."),
