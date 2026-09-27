@@ -924,6 +924,108 @@ def inject_css() -> None:
             border-bottom-color: #9fcfc1;
             color: #344054;
         }
+        .module-nav-marker,
+        .module-control-marker {
+            display: none;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.module-nav-marker) {
+            align-items: flex-end;
+            column-gap: 0.75rem;
+            margin-bottom: 0.8rem;
+        }
+        div[data-testid="stColumn"]:has(.module-nav-marker) div[data-testid="stButton"] button,
+        div[data-testid="column"]:has(.module-nav-marker) div[data-testid="stButton"] button {
+            width: auto;
+            min-height: 2.25rem;
+            height: auto;
+            padding: 0.42rem 0.08rem 0.5rem;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            border-radius: 0;
+            background: transparent;
+            box-shadow: none;
+            color: #475467;
+            font-size: 0.96rem;
+            font-weight: 600;
+            white-space: nowrap;
+            transition: color 120ms ease, border-color 120ms ease;
+        }
+        div[data-testid="stColumn"]:has(.module-nav-marker) div[data-testid="stButton"] button:hover,
+        div[data-testid="column"]:has(.module-nav-marker) div[data-testid="stButton"] button:hover {
+            border-bottom-color: #9fcfc1;
+            background: transparent;
+            color: #0f513f;
+        }
+        div[data-testid="stColumn"]:has(.module-nav-active) div[data-testid="stButton"] button,
+        div[data-testid="column"]:has(.module-nav-active) div[data-testid="stButton"] button {
+            border-bottom-color: #17866b;
+            color: #0f513f;
+        }
+        div[data-testid="stColumn"]:has(.module-nav-marker) div[data-testid="stButton"] button:disabled,
+        div[data-testid="column"]:has(.module-nav-marker) div[data-testid="stButton"] button:disabled {
+            border-bottom-color: transparent;
+            color: #98a2b3;
+            opacity: 1;
+        }
+        div[data-testid="stColumn"]:has(.module-control-marker),
+        div[data-testid="column"]:has(.module-control-marker) {
+            min-width: 14rem;
+        }
+        div[role="radiogroup"][aria-label="Launch case section"] {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin: 0.45rem 0 1rem;
+        }
+        div[role="radiogroup"][aria-label="Launch case section"] label {
+            margin: 0;
+            padding: 0.42rem 0.7rem;
+            border: 1px solid #d7dee8;
+            border-radius: 6px;
+            background: #ffffff;
+            color: #667085;
+            transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+        }
+        div[role="radiogroup"][aria-label="Launch case section"] label:has(input:checked) {
+            border-color: #83bca9;
+            background: #f1f8f5;
+            color: #0f513f;
+        }
+        div[role="radiogroup"][aria-label="Launch case section"] label > div:first-child,
+        div[role="radiogroup"][aria-label="Launch workstream"] label > div:first-child {
+            display: none;
+        }
+        div[role="radiogroup"][aria-label="Launch case section"] label p,
+        div[role="radiogroup"][aria-label="Launch workstream"] label p {
+            color: inherit;
+            font-size: 0.86rem;
+            font-weight: 600;
+            line-height: 1.2;
+            margin: 0;
+        }
+        div[role="radiogroup"][aria-label="Launch workstream"] {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.9rem;
+            margin: 0.25rem 0 1rem;
+        }
+        div[role="radiogroup"][aria-label="Launch workstream"] label {
+            margin: 0;
+            padding: 0.45rem 0.05rem 0.55rem;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            border-radius: 0;
+            background: transparent;
+            color: #667085;
+        }
+        div[role="radiogroup"][aria-label="Launch workstream"] label:has(input:checked) {
+            border-bottom-color: #17866b;
+            color: #0f513f;
+        }
+        div[role="radiogroup"][aria-label="Launch workstream"] label:hover {
+            border-bottom-color: #9fcfc1;
+            color: #344054;
+        }
         div[data-testid="stHorizontalBlock"]:has(.nav-marker) {
             align-items: flex-end;
             margin-bottom: 0.6rem;
@@ -1209,6 +1311,28 @@ def inject_css() -> None:
             [data-testid="column"] {
                 width: 100% !important;
                 flex: 1 1 auto !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.module-nav-marker) {
+                flex-direction: row !important;
+                flex-wrap: wrap !important;
+                align-items: flex-end !important;
+                gap: 0.25rem 0.8rem !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.module-nav-marker) > div[data-testid="stColumn"]:has(.module-nav-marker),
+            div[data-testid="stHorizontalBlock"]:has(.module-nav-marker) > div[data-testid="column"]:has(.module-nav-marker) {
+                width: auto !important;
+                flex: 0 0 auto !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.module-nav-marker) > div[data-testid="stColumn"]:has(.module-control-marker),
+            div[data-testid="stHorizontalBlock"]:has(.module-nav-marker) > div[data-testid="column"]:has(.module-control-marker) {
+                width: 100% !important;
+                flex: 1 0 100% !important;
+                min-width: 0;
+                margin-top: 0.15rem;
+            }
+            div[data-testid="stHorizontalBlock"]:has(.module-nav-marker) div[data-testid="stButton"] button {
+                white-space: normal;
+                text-align: left;
             }
             [data-testid="stColumn"]:has(.nav-title-marker),
             [data-testid="column"]:has(.nav-title-marker) {
@@ -6617,24 +6741,29 @@ def handle_launch_role_change() -> None:
 
 
 def launch_top_navigation() -> None:
-    nav_cols = st.columns([0.9, 1.2, 1.1, 2.2])
+    nav_cols = st.columns([1.0, 1.35, 1.15, 0.35, 2.0])
+    current_page = str(st.session_state.get("launch_page", "Launch Sandbox Home"))
+    nav_cols[0].markdown("<span class='module-nav-marker'></span>", unsafe_allow_html=True)
     if nav_cols[0].button("Platform Home", key="launch_platform_home"):
         clear_launch_case_selection()
         st.session_state.current_module = "platform_home"
         st.session_state.launch_page = "Launch Sandbox Home"
         st.session_state.selected_launch_case_id = None
         st.rerun()
+    nav_cols[1].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'Launch Sandbox Home' else ''}'></span>", unsafe_allow_html=True)
     if nav_cols[1].button("Launch Sandbox Home", key="launch_home"):
         clear_launch_case_selection()
         st.session_state.launch_page = "Launch Sandbox Home"
         st.session_state.selected_launch_case_id = None
         st.rerun()
+    nav_cols[2].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'New Launch Case' else ''}'></span>", unsafe_allow_html=True)
     if nav_cols[2].button("New Launch Case", key="launch_new_case", disabled=not launch_is_coordinator()):
         clear_launch_case_selection()
         st.session_state.launch_page = "New Launch Case"
         st.session_state.selected_launch_case_id = None
         st.rerun()
-    nav_cols[3].selectbox(
+    nav_cols[4].markdown("<span class='module-control-marker'></span>", unsafe_allow_html=True)
+    nav_cols[4].selectbox(
         "CURRENT ROLE",
         LAUNCH_ROLES,
         key="launch_current_role",
@@ -11383,18 +11512,22 @@ def set_investment_case_selection(case_id: str, case_ids: tuple[str, ...]) -> No
 
 
 def investment_top_navigation() -> None:
-    nav = st.columns([0.9, 1.25, 1.15, 4.8])
+    nav = st.columns([1.0, 1.35, 1.2, 4.8])
+    current_page = str(st.session_state.get("investment_page", "Investment Case Home"))
+    nav[0].markdown("<span class='module-nav-marker'></span>", unsafe_allow_html=True)
     if nav[0].button("Platform Home", key="investment_platform_home"):
         clear_investment_case_selection()
         st.session_state.current_module = "platform_home"
         st.session_state.investment_page = "Investment Case Home"
         st.session_state.selected_investment_case_id = None
         st.rerun()
+    nav[1].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'Investment Case Home' else ''}'></span>", unsafe_allow_html=True)
     if nav[1].button("Investment Case Home", key="investment_home"):
         clear_investment_case_selection()
         st.session_state.investment_page = "Investment Case Home"
         st.session_state.selected_investment_case_id = None
         st.rerun()
+    nav[2].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'New Investment Case' else ''}'></span>", unsafe_allow_html=True)
     if nav[2].button("New Investment Case", key="investment_new_case"):
         clear_investment_case_selection()
         st.session_state.investment_page = "New Investment Case"
@@ -16204,16 +16337,26 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
         st.session_state.current_page = "Deal Request List"
 
     with st.container():
-        nav_cols = st.columns([0.55, 0.95, 1.75, 1.35, 1.05])
-        nav_cols[0].markdown("<span class='nav-marker nav-title-marker'></span>", unsafe_allow_html=True)
-        if nav_cols[0].button("Home", key="top_navigation_home"):
+        nav_cols = st.columns([1.0, 1.35, 1.05, 0.3, 1.85, 1.45])
+        current_page = str(st.session_state.get("current_page", "Deal Request List"))
+        nav_cols[0].markdown("<span class='module-nav-marker'></span>", unsafe_allow_html=True)
+        if nav_cols[0].button("Platform Home", key="top_navigation_platform_home"):
+            clear_deal_editor_state()
+            st.session_state.selected_deal_id = None
+            st.session_state.deal_list_selected_deal_id = None
+            st.session_state.approval_queue_selected_deal_id = None
+            st.session_state.current_page = "Deal Request List"
+            st.session_state.current_module = "platform_home"
+            st.rerun()
+        nav_cols[1].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'Deal Request List' else ''}'></span>", unsafe_allow_html=True)
+        if nav_cols[1].button("Deal Approval Home", key="top_navigation_home"):
             clear_deal_editor_state()
             st.session_state.selected_deal_id = None
             st.session_state.current_page = "Deal Request List"
             st.rerun()
-        nav_cols[2].markdown("<span class='nav-marker nav-user-marker'></span>", unsafe_allow_html=True)
+        nav_cols[4].markdown("<span class='module-control-marker nav-user-marker'></span>", unsafe_allow_html=True)
         persona_options = list(PERSONAS.keys())
-        selected_persona = nav_cols[2].selectbox(
+        selected_persona = nav_cols[4].selectbox(
             "Current User",
             persona_options,
             index=persona_options.index(current_persona()),
@@ -16230,15 +16373,15 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
             render_role_switch_confirmation(data)
 
         new_disabled = not is_kam_role(st.session_state.role)
-        nav_cols[1].markdown("<span class='nav-marker nav-new-marker'></span>", unsafe_allow_html=True)
-        if nav_cols[1].button("New Request", disabled=new_disabled):
+        nav_cols[2].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'New Deal Intake' else ''}'></span>", unsafe_allow_html=True)
+        if nav_cols[2].button("New Request", disabled=new_disabled):
             clear_deal_editor_state()
             st.session_state.deal_edit_active = True
             st.session_state.current_page = "New Deal Intake"
             st.rerun()
 
-        nav_cols[3].markdown("<span class='nav-marker nav-governance-marker'></span>", unsafe_allow_html=True)
-        with nav_cols[3].popover("Reference & Governance", use_container_width=True):
+        nav_cols[5].markdown("<span class='module-control-marker nav-governance-marker'></span>", unsafe_allow_html=True)
+        with nav_cols[5].popover("Reference & Governance", use_container_width=True):
             st.markdown("**Governance**")
             if st.button("Approval Rules & Matrix", key="nav_approval_matrix", use_container_width=True):
                 st.session_state.current_page = "Approval Matrix"
@@ -16266,15 +16409,6 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
                 confirm_reset = st.checkbox("I understand and want to reset this demo session.", key="admin_confirm_reset")
                 if st.button("Reset Demo Session", key="admin_reset_demo", use_container_width=True, disabled=not confirm_reset):
                     reset_demo_session()
-        nav_cols[4].markdown("<span class='nav-marker nav-platform-marker'></span>", unsafe_allow_html=True)
-        if nav_cols[4].button("Platform Home", key="top_navigation_platform_home"):
-            clear_deal_editor_state()
-            st.session_state.selected_deal_id = None
-            st.session_state.deal_list_selected_deal_id = None
-            st.session_state.approval_queue_selected_deal_id = None
-            st.session_state.current_page = "Deal Request List"
-            st.session_state.current_module = "platform_home"
-            st.rerun()
     return st.session_state.current_page
 
 
