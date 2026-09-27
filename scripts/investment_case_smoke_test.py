@@ -98,8 +98,7 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
             savings_inputs["settings"]["Value Creation Drivers"] = ["Cost Reduction"]
             savings_inputs["savings_register"] = [{
                 "Initiative": "Ramp test",
-                "Gross Run-rate Saving": 900_000,
-                "Realization %": 0.80,
+                "Expected Annual Saving": 720_000,
                 "Ramp Profile": ramp_profile,
                 "Cost Line Mapping": "Manufacturing COGS · Direct Materials",
                 "Custom Y1 Ramp %": 0.20,
@@ -111,6 +110,18 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
             savings_result = calculate_investment_model(savings_inputs)
             realized = savings_result["drivers"]["Realized Savings"]
             assert tuple(round(realized[year]) for year in ("Y1", "Y2", "Y3")) == expected
+    if archetype == CASE_ARCHETYPES[1]:
+        digital_no_growth = deepcopy(inputs)
+        digital_no_growth["settings"]["Value Creation Drivers"] = [driver for driver in digital_no_growth["settings"]["Value Creation Drivers"] if driver != "Revenue Growth"]
+        digital_base = calculate_investment_model(digital_no_growth)
+        digital_growth = deepcopy(inputs)
+        digital_growth["settings"]["Value Creation Drivers"] = list(set(digital_growth["settings"]["Value Creation Drivers"] + ["Revenue Growth"]))
+        digital_growth["revenue_impact_input_method"] = "Y1 + Growth"
+        digital_growth["revenue_based"]["Incremental Revenue / Revenue Uplift"]["Y1"] = 1_000_000
+        digital_growth["revenue_impact_growth_rate"] = .10
+        digital_result = calculate_investment_model(digital_growth)
+        assert digital_base["drivers"]["Scenario Revenue"]["Y1"] == digital_base["drivers"]["Baseline Revenue"]["Y1"]
+        assert round(digital_result["drivers"]["Incremental Revenue"]["Y2"]) == 1_100_000
     if archetype == CASE_ARCHETYPES[2]:
         acquisition_result = calculate_investment_model(inputs)
         acquisition_pnl = acquisition_result["scenario_pnl"].set_index("Metric")
@@ -118,6 +129,11 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
         assert 0 < acquisition_pnl.at["Gross Margin %", "Y1"] < 1
         assert "Target Working Capital" not in inputs["acquisition"]
         assert "Opening / Transaction Working Capital Reference" in inputs["acquisition"]
+        for removed_field in ("Target Gross Margin %", "Target EBITDA", "Target EBIT", "Target D&A"):
+            assert removed_field not in inputs["acquisition"]
+        acquisition_bridge = acquisition_result["acquisition_bridge"].set_index("Metric")
+        for year in acquisition_result["years"]:
+            assert abs(acquisition_bridge.at["Scenario Revenue", year] - sum(acquisition_bridge.at[row, year] for row in ["Acquirer Baseline Revenue", "Target Standalone Revenue", "Realized Revenue Synergies"])) < 0.01
 
     app = AppTest.from_file(str(APP_PATH), default_timeout=90)
     app.session_state["current_module"] = "investment"
@@ -202,11 +218,11 @@ custom_driver_key = f"investment_{case_id}_driver_cost_reduction"
 next(widget for widget in app.checkbox if widget.key == custom_driver_key).set_value(True).run()
 assert_clean(app, "Customized value drivers")
 assert "Cost Reduction" in app.session_state["investment_case_inputs"][case_id]["settings"]["Value Creation Drivers"]
-savings_key = f"investment_records_{case_id}_savings"
-app.session_state[savings_key] = {"edited_rows": {0: {"Gross Run-rate Saving": 700_000}}, "added_rows": [], "deleted_rows": []}
+savings_key = f"investment_records_{case_id}_savings_expected_annual_v1"
+app.session_state[savings_key] = {"edited_rows": {0: {"Expected Annual Saving": 700_000}}, "added_rows": [], "deleted_rows": []}
 app.run()
 assert_clean(app, "Savings register first edit")
-assert app.session_state["investment_case_inputs"][case_id]["savings_register"][0]["Gross Run-rate Saving"] == 700_000
+assert app.session_state["investment_case_inputs"][case_id]["savings_register"][0]["Expected Annual Saving"] == 700_000
 
 for group, field, value in (
     ("non_manufacturing_personnel", "Scenario Y1", 5_000_000),
@@ -255,12 +271,12 @@ acquisition_app.session_state["investment_case_inputs"] = {acquisition_case["Cas
 acquisition_app.session_state[f"investment_case_section_{acquisition_case['Case ID']}"] = "Model"
 acquisition_app.run()
 assert_clean(acquisition_app, "Acquisition first-edit setup")
-acquisition_editor_key = f"investment_driver_{acquisition_case['Case ID']}_acquisition_monetary_value_10"
-acquisition_app.session_state[acquisition_editor_key] = {"edited_rows": {4: {"Y1": 3_750_000}}, "added_rows": [], "deleted_rows": []}
+acquisition_editor_key = f"investment_driver_{acquisition_case['Case ID']}_acquisition_monetary_value_10_simplified_v1"
+acquisition_app.session_state[acquisition_editor_key] = {"edited_rows": {1: {"Y1": 3_750_000}}, "added_rows": [], "deleted_rows": []}
 acquisition_app.run()
 assert_clean(acquisition_app, "Acquisition synergy first edit")
 assert acquisition_app.session_state["investment_case_inputs"][acquisition_case["Case ID"]]["acquisition"]["Revenue Synergies"]["Y1"] == 3_750_000
-assert any(widget.key == f"investment_records_{acquisition_case['Case ID']}_savings" for widget in acquisition_app.dataframe)
+assert any(widget.key == f"investment_records_{acquisition_case['Case ID']}_savings_expected_annual_v1" for widget in acquisition_app.dataframe)
 
 for case in cases:
     case_id = case["Case ID"]

@@ -66,19 +66,19 @@ def _uses(archetype: str) -> list[dict[str, Any]]:
 def _savings(archetype: str) -> list[dict[str, Any]]:
     if archetype == CASE_ARCHETYPES[1]:
         rows = [
-            ("Personnel", 8_500_000, "Process automation", 3_100_000, .75, "Non-Manufacturing Personnel · Operations"),
-            ("Logistics", 6_200_000, "Routing optimization", 900_000, .8, "Non-Manufacturing OPEX · Other Fixed Overhead"),
-            ("IT", 4_000_000, "Application consolidation", 650_000, .7, "Non-Manufacturing OPEX · Software Licenses"),
+            ("Personnel", "Process automation", 2_325_000, "Non-Manufacturing Personnel · Operations"),
+            ("Supply Chain / Logistics", "Routing optimization", 720_000, "Non-Manufacturing OPEX · Other Fixed Overhead"),
+            ("IT / Systems", "Application consolidation", 455_000, "Non-Manufacturing OPEX · Software Licenses"),
         ]
     elif archetype == CASE_ARCHETYPES[2]:
         rows = [
-            ("Procurement", 18_000_000, "Combined purchasing scale", 2_000_000, .6, "Manufacturing COGS · Direct Materials"),
-            ("Personnel", 14_000_000, "Shared-service consolidation", 2_600_000, .55, "Non-Manufacturing Personnel · Operations"),
-            ("Logistics", 9_000_000, "Network consolidation", 1_100_000, .5, "Non-Manufacturing OPEX · Other Fixed Overhead"),
+            ("Procurement", "Combined purchasing scale", 1_200_000, "Manufacturing COGS · Direct Materials"),
+            ("Personnel", "Shared-service consolidation", 1_430_000, "Non-Manufacturing Personnel · Operations"),
+            ("Supply Chain / Logistics", "Network consolidation", 550_000, "Non-Manufacturing OPEX · Other Fixed Overhead"),
         ]
     else:
-        rows = [("Manufacturing", 15_000_000, "Yield and line efficiency", 650_000, .65, "Manufacturing COGS · Direct Materials")]
-    return [{"Applicable": True, "Category": c, "Baseline Cost / Cost Pool": p, "Saving Mechanism": m, "Cost Line Mapping": mapping, "Gross Run-rate Saving": g, "Realization %": r, "Ramp Profile": "2-year ramp", "Custom Y1 Ramp %": 1/3, "Custom Y2 Ramp %": 2/3, "Custom Y3+ Ramp %": 1.0, "Realized Saving": g*r, "Source / Basis": "Functional estimate", "Comment": "Annual run-rate at maturity"} for c,p,m,g,r,mapping in rows]
+        rows = [("Manufacturing", "Yield and line efficiency", 422_500, "Manufacturing COGS · Direct Materials")]
+    return [{"Applicable": True, "Category": c, "Saving Mechanism": m, "Cost Line Mapping": mapping, "Expected Annual Saving": saving, "Ramp Profile": "2-year ramp", "Custom Y1 Ramp %": 1/3, "Custom Y2 Ramp %": 2/3, "Custom Y3+ Ramp %": 1.0, "Source / Basis": "Functional estimate", "Comment": "Expected annual saving at full ramp"} for c,m,saving,mapping in rows]
 
 
 def _costs(archetype: str) -> dict[str, list[dict[str, Any]]]:
@@ -91,6 +91,7 @@ def _costs(archetype: str) -> dict[str, list[dict[str, Any]]]:
     elif acquisition:
         manufacturing_cogs = [
             {"Applicable": True, "Cost Line": "Direct Materials", "Cost Behavior": "Fixed / step-fixed — annual", "Baseline Input": 18_432_000, "Scenario Input": 18_432_000, "Annual Growth %": .02, "Source / Basis": "Target diligence", "Comment": "Payable-bearing material and product cost"},
+            {"Applicable": True, "Cost Line": "Direct Materials", "Cost Behavior": "Fixed / step-fixed — annual", "Baseline Input": 0, "Scenario Input": 12_920_000, "Annual Growth %": .04, "Source / Basis": "Target diligence", "Comment": "Target standalone cost base before mapped savings"},
         ]
     else:
         manufacturing_cogs = [
@@ -158,14 +159,16 @@ def default_investment_inputs(case: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "settings": {"Case Name": str(case.get("Investment Case Name", "New Investment Case")), "Case Archetype": archetype, "Value Creation Drivers": archetype_default_drivers(archetype), "Financial Scope": str(case.get("Business Unit / Market", "Region A Operations")), "Currency": "USD", "Base Year": 2026, "Forecast Horizon": 10, "Investment Start Date": date(2026,10,1), "Operational Start Date": date(2027,7,1), "Applicable Tax Rate": .24, "Planning Inflation": .025, "Model Basis": "Nominal", "Model Version": "1.0", "As Of Date": date(2026,9,15)},
-        "investment": {"uses": _uses(archetype), "Sustaining CAPEX": _series(220_000 if digital else 350_000, .02), "Sustaining CAPEX Source / Basis": "Long-range plan", "Sustaining CAPEX Comment / Rationale": "Maintenance capital", "CAPEX Avoidance": _series(0), "Useful Life": 10},
+        "investment": {"uses": _uses(archetype), "Sustaining CAPEX": _series(220_000 if digital else 350_000, .02), "Sustaining CAPEX Source / Basis": "Long-range plan", "Sustaining CAPEX Comment / Rationale": "Maintenance capital", "CAPEX Avoidance": _series(0), "Acquisition / Target D&A": _series(1.1e6,.02) if archetype == CASE_ARCHETYPES[2] else _series(0), "Useful Life": 10},
         "capacity": capacity,
         "capacity_input_methods": {"Baseline Capacity": "Y1 + Growth", "Added Capacity from Investment": "Annual Schedule", "Baseline Volume": "Y1 + Growth", "Scenario Volume": "Annual Schedule", "Baseline Net Price per Unit": "Y1 + Growth", "Scenario Net Price per Unit": "Y1 + Growth"},
         "capacity_growth_rates": {"Baseline Capacity": .01, "Added Capacity from Investment": 0.0, "Baseline Volume": .025, "Scenario Volume": 0.0, "Baseline Net Price per Unit": .02, "Scenario Net Price per Unit": .02},
         "revenue_based": {"Baseline Revenue": _series(60_000_000 if digital else 46_080_000,.035), "Incremental Revenue / Revenue Uplift": _annual([0,1e6,2.5e6,4e6,5.5e6,6e6,6.5e6,7e6,7.5e6,8e6])},
         "revenue_input_method": "Y1 + Growth",
         "revenue_growth_rate": .035,
-        "acquisition": {"Target Revenue": _series(34e6,.04), "Target Gross Margin %": _annual([.62] * 10), "Target EBITDA": _series(5.8e6,.05), "Target D&A": _series(1.1e6,.02), "Target EBIT": _series(4.7e6,.05), "Opening / Transaction Working Capital Reference": _series(4.8e6,.03), "Revenue Synergies": _series(3.5e6,.03), "Synergy Ramp %": _annual([.25,.55,.8,1,1,1,1,1,1,1]), "One-off Integration Costs": _annual([4e6,2e6,.5e6,0,0,0,0,0,0,0])},
+        "revenue_impact_input_method": "Annual Schedule",
+        "revenue_impact_growth_rate": .0,
+        "acquisition": {"Target Standalone Revenue": _series(34e6,.04), "Opening / Transaction Working Capital Reference": _series(4.8e6,.03), "Revenue Synergies": _series(3.5e6,.03), "Revenue Synergy Ramp %": _annual([.25,.55,.8,1,1,1,1,1,1,1]), "One-off Integration Costs": _annual([4e6,2e6,.5e6,0,0,0,0,0,0,0])},
         "savings_register": _savings(archetype), "operating_costs": operating_costs,
         "operating_cost_input_methods": {group: "Y1 + Growth" for group in operating_costs},
         "operating_cost_schedules": _cost_schedules(operating_costs, capacity["Baseline Volume"], capacity["Scenario Volume"]),
@@ -245,6 +248,9 @@ def _modeled_input_value(x:dict[str,Any], section:str, metric:str, year:str, ind
     if section=="capacity":
         method=str(x.get("capacity_input_methods",{}).get(metric,"Annual Schedule"))
         growth=_n(x.get("capacity_growth_rates",{}).get(metric,0))
+    elif metric == "Incremental Revenue / Revenue Uplift":
+        method=str(x.get("revenue_impact_input_method","Annual Schedule"))
+        growth=_n(x.get("revenue_impact_growth_rate",0))
     else:
         method=str(x.get("revenue_input_method","Annual Schedule"))
         growth=_n(x.get("revenue_growth_rate",0))
@@ -321,6 +327,7 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     metrics=["Revenue","COGS","Gross Profit","Gross Margin %","Non-Manufacturing Personnel","Non-Manufacturing OPEX","EBITDA","EBITDA Margin %","Depreciation & Amortization","EBIT","EBIT Margin %"]
     base={m:{} for m in metrics}; scenario=deepcopy(base); drivers={m:{} for m in ["Total Available Capacity","Capacity Utilization %","Baseline Revenue","Incremental Revenue","Scenario Revenue","Realized Savings"]}
     capacity_bridge={m:{} for m in ["Baseline Capacity","Added Capacity","Total Scenario Capacity","Baseline Volume","Scenario Volume","Incremental Volume","Baseline Idle Capacity","Scenario Idle Capacity","Baseline Utilization %","Scenario Utilization %","Baseline Net Price","Scenario Net Price","Net Price Delta","Net Price Change %","Baseline Revenue","Scenario Revenue","Incremental Revenue"]}
+    acquisition_bridge={m:{} for m in ["Acquirer Baseline Revenue","Target Standalone Revenue","Realized Revenue Synergies","Scenario Revenue"]}
     cogs_components={name:{"Baseline":{},"Scenario":{}} for name in ["Direct Materials","Direct Labor","Variable Manufacturing Overhead","Fixed Manufacturing Overhead"]}
     savings_expected:dict[str,dict[str,float]]={}; savings_reflected:dict[str,dict[str,float]]={}
     sustaining_da={}; initial_da={}; baseline_da={}; target_da={}; baseline_materials={}; scenario_materials={}
@@ -333,23 +340,21 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
             bridge_values={"Baseline Capacity":baseline_capacity,"Added Capacity":added_capacity,"Total Scenario Capacity":cap,"Baseline Volume":bv,"Scenario Volume":sv,"Incremental Volume":sv-bv,"Baseline Idle Capacity":baseline_capacity-bv,"Scenario Idle Capacity":cap-sv,"Baseline Utilization %":_r(bv,baseline_capacity),"Scenario Utilization %":util,"Baseline Net Price":bp,"Scenario Net Price":sp,"Net Price Delta":sp-bp,"Net Price Change %":_r(sp,bp)-1 if bp else 0.0,"Baseline Revenue":br,"Scenario Revenue":sr,"Incremental Revenue":sr-br}
             for metric,value in bridge_values.items(): capacity_bridge[metric][y]=value
         else:
-            br=_modeled_input_value(x,"revenue_based","Baseline Revenue",y,i); sr=br+(_v(x["revenue_based"]["Incremental Revenue / Revenue Uplift"],y) if rev else 0); cap=util=0
+            br=_modeled_input_value(x,"revenue_based","Baseline Revenue",y,i); sr=br+(_modeled_input_value(x,"revenue_based","Incremental Revenue / Revenue Uplift",y,i) if rev else 0); cap=util=0
         ramp=1.0
         if archetype==CASE_ARCHETYPES[2]:
-            ramp=min(1,max(0,_v(x["acquisition"]["Synergy Ramp %"],y))); sr=br+_v(x["acquisition"]["Target Revenue"],y)+(_v(x["acquisition"]["Revenue Synergies"],y)*ramp if rev else 0)
+            ramp=min(1,max(0,_v(x["acquisition"]["Revenue Synergy Ramp %"],y))); target_revenue=_v(x["acquisition"]["Target Standalone Revenue"],y); realized_synergy=_v(x["acquisition"]["Revenue Synergies"],y)*ramp if rev else 0; sr=br+target_revenue+realized_synergy
+            for metric,value in {"Acquirer Baseline Revenue":br,"Target Standalone Revenue":target_revenue,"Realized Revenue Synergies":realized_synergy,"Scenario Revenue":sr}.items(): acquisition_bridge[metric][y]=value
         b_components,s_components=_manufacturing_costs(x,y,i,bv,sv)
         annual_savings:dict[str,float]={}
         if saving:
             for row in x.get("savings_register",[]):
                 if not bool(row.get("Applicable",True)): continue
-                amount=_n(row.get("Gross Run-rate Saving",row.get("Gross Saving")))*min(1,max(0,_n(row.get("Realization %"))))*_savings_ramp(row,i)
+                amount=_n(row.get("Expected Annual Saving"))*_savings_ramp(row,i)
                 mapping=str(row.get("Cost Line Mapping") or "Other relevant controlled line")
                 annual_savings[mapping]=annual_savings.get(mapping,0.0)+amount
         reflected_savings={mapping:0.0 for mapping in annual_savings}
         adjusted_s_components=dict(s_components)
-        if archetype==CASE_ARCHETYPES[2]:
-            target_revenue=_v(x["acquisition"]["Target Revenue"],y); revenue_synergy=_v(x["acquisition"]["Revenue Synergies"],y)*ramp if rev else 0
-            target_margin=min(1,max(0,_v(x["acquisition"].get("Target Gross Margin %",{}),y) or .62)); target_cogs=(target_revenue+revenue_synergy)*(1-target_margin); adjusted_s_components["Direct Materials"]+=target_cogs
         for mapping,expected in annual_savings.items():
             if not mapping.startswith("Manufacturing COGS"): continue
             component=mapping.split(" · ",1)[1] if " · " in mapping else "Direct Materials"
@@ -369,13 +374,11 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
             savings_expected.setdefault(mapping,{})[y]=expected
             savings_reflected.setdefault(mapping,{})[y]=reflected_savings.get(mapping,0.0)
         integration=_v(x["acquisition"]["One-off Integration Costs"],y) if archetype==CASE_ARCHETYPES[2] else 0
+        if archetype==CASE_ARCHETYPES[2]: s_o+=integration
         bgp,sgp=br-bc,sr-sc; be=bgp-bpers-bo
-        if archetype==CASE_ARCHETYPES[2]:
-            target_ebitda=_v(x["acquisition"]["Target EBITDA"],y); revenue_synergy=_v(x["acquisition"]["Revenue Synergies"],y)*ramp if rev else 0; target_margin=min(1,max(0,_v(x["acquisition"].get("Target Gross Margin %",{}),y) or .62))
-            se=be+target_ebitda+revenue_synergy*target_margin+realized-integration; s_o=max(0.0,sgp-spers-se)
-        else: se=sgp-spers-s_o
+        se=sgp-spers-s_o
         cumulative_sustaining+=_v(x["investment"].get("Sustaining CAPEX",{}),y)
-        baseline_da[y]=br*.025; initial_da[y]=initial/life; sustaining_da[y]=cumulative_sustaining/life; target_da[y]=_v(x["acquisition"].get("Target D&A",{}),y) if archetype==CASE_ARCHETYPES[2] else 0.0
+        baseline_da[y]=br*.025; initial_da[y]=initial/life; sustaining_da[y]=cumulative_sustaining/life; target_da[y]=_v(x["investment"].get("Acquisition / Target D&A",{}),y) if archetype==CASE_ARCHETYPES[2] else 0.0
         bda=baseline_da[y]; sda=bda+initial_da[y]+sustaining_da[y]+target_da[y]; bit,sit=be-bda,se-sda
         vals={"Revenue":(br,sr),"COGS":(bc,sc),"Gross Profit":(bgp,sgp),"Gross Margin %":(_r(bgp,br),_r(sgp,sr)),"Non-Manufacturing Personnel":(bpers,spers),"Non-Manufacturing OPEX":(bo,s_o),"EBITDA":(be,se),"EBITDA Margin %":(_r(be,br),_r(se,sr)),"Depreciation & Amortization":(bda,sda),"EBIT":(bit,sit),"EBIT Margin %":(_r(bit,br),_r(sit,sr))}
         for metric,pair in vals.items(): base[metric][y],scenario[metric][y]=pair
@@ -433,4 +436,5 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     savings_rows=[]
     for mapping in sorted(set(savings_expected)|set(savings_reflected)):
         savings_rows.append({"Mapped Line":mapping,**{f"Expected {y}":savings_expected.get(mapping,{}).get(y,0.0) for y in years},**{f"Reflected {y}":savings_reflected.get(mapping,{}).get(y,0.0) for y in years}})
-    return {"inputs":x,"years":years,"drivers":drivers,"capacity_bridge":bridge_frame,"savings_reconciliation":pd.DataFrame(savings_rows),"cogs_bridge":pd.DataFrame(cogs_rows),"depreciation_bridge":da_bridge,"baseline_pnl":baseline,"scenario_pnl":scenario_pnl,"incremental":incremental,"working_capital":pd.DataFrame(wc_rows),"tax_bridge":pd.DataFrame(tax_rows),"cash_flow":pd.DataFrame(rows),"wacc_bridge":wacc_bridge,"returns":returns,"total_initial_investment":initial,"working_capital_enabled":wc_on,"capital_structure_valid":True}
+    acquisition_frame=pd.DataFrame([{"Metric":metric,**values} for metric,values in acquisition_bridge.items()]) if archetype==CASE_ARCHETYPES[2] else pd.DataFrame()
+    return {"inputs":x,"years":years,"drivers":drivers,"capacity_bridge":bridge_frame,"acquisition_bridge":acquisition_frame,"savings_reconciliation":pd.DataFrame(savings_rows),"cogs_bridge":pd.DataFrame(cogs_rows),"depreciation_bridge":da_bridge,"baseline_pnl":baseline,"scenario_pnl":scenario_pnl,"incremental":incremental,"working_capital":pd.DataFrame(wc_rows),"tax_bridge":pd.DataFrame(tax_rows),"cash_flow":pd.DataFrame(rows),"wacc_bridge":wacc_bridge,"returns":returns,"total_initial_investment":initial,"working_capital_enabled":wc_on,"capital_structure_valid":True}

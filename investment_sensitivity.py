@@ -93,12 +93,8 @@ def investment_sensitivity_drivers(inputs: dict[str, Any], base_model: dict[str,
         revenue = _pnl_value(model, "Revenue", terminal)
         rows.append(_driver("revenue_volume", "Revenue", revenue, f"${revenue:,.0f}", "% change", "Relative % change", -10.0, 10.0, "Commercial demand and utilization range", "Medium"))
 
-    if archetype == CASE_ARCHETYPES[2]:
-        margin = _number(inputs.get("acquisition", {}).get("Target Gross Margin %", {}).get(terminal))
-        rows.append(_driver("target_margin", "Gross Margin", margin, f"{margin:.1%}", "percentage points", "Percentage-point change", -5.0, 3.0, "Target margin diligence range", "Medium", "Operating Economics"))
-    else:
-        variable_cost = _pnl_value(model, "COGS", terminal)
-        rows.append(_driver("variable_cost", "Variable Cost", variable_cost, f"${variable_cost:,.0f}", "% change", "Relative % change", 10.0, -7.5, "Supplier / unit-cost planning range", "High", "Operating Economics"))
+    variable_cost = _pnl_value(model, "COGS", terminal)
+    rows.append(_driver("variable_cost", "Variable Cost", variable_cost, f"${variable_cost:,.0f}", "% change", "Relative % change", 10.0, -7.5, "Supplier / unit-cost planning range", "High", "Operating Economics"))
 
     personnel = _pnl_value(model, "Non-Manufacturing Personnel", terminal)
     fixed_cost = _pnl_value(model, "Non-Manufacturing OPEX", terminal)
@@ -154,7 +150,7 @@ def apply_sensitivity_driver(base_inputs: dict[str, Any], driver: dict[str, Any]
         if archetype == CASE_ARCHETYPES[0]:
             _scale_series(inputs["capacity"]["Scenario Volume"], factor)
         elif archetype == CASE_ARCHETYPES[2]:
-            _scale_series(inputs["acquisition"]["Target Revenue"], factor)
+            _scale_series(inputs["acquisition"]["Target Standalone Revenue"], factor)
             _scale_series(inputs["acquisition"]["Revenue Synergies"], factor)
         else:
             _scale_series(inputs["revenue_based"]["Incremental Revenue / Revenue Uplift"], factor)
@@ -162,10 +158,6 @@ def apply_sensitivity_driver(base_inputs: dict[str, Any], driver: dict[str, Any]
         _scale_series(inputs["capacity"]["Scenario Net Price per Unit"], factor)
     elif driver_id == "variable_cost":
         _scale_cost_group(inputs, "manufacturing_cogs", factor)
-    elif driver_id == "target_margin":
-        delta = _number(scenario_value) / 100.0
-        for year in inputs["acquisition"]["Target Gross Margin %"]:
-            inputs["acquisition"]["Target Gross Margin %"][year] = min(1.0, max(0.0, _number(inputs["acquisition"]["Target Gross Margin %"][year]) + delta))
     elif driver_id == "personnel_cost":
         _scale_cost_group(inputs, "non_manufacturing_personnel", factor)
     elif driver_id == "fixed_cost":
@@ -185,7 +177,7 @@ def apply_sensitivity_driver(base_inputs: dict[str, Any], driver: dict[str, Any]
         realization_factor = max(0.0, _number(scenario_value) / 100.0)
         for row in inputs.get("savings_register", []):
             if row.get("Applicable", True):
-                row["Gross Run-rate Saving"] = _number(row.get("Gross Run-rate Saving", row.get("Gross Saving"))) * realization_factor
+                row["Expected Annual Saving"] = _number(row.get("Expected Annual Saving")) * realization_factor
     return inputs
 
 

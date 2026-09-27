@@ -11425,9 +11425,19 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         investment.setdefault("Sustaining CAPEX Comment / Rationale", defaults["investment"]["Sustaining CAPEX Comment / Rationale"])
         acquisition = current.setdefault("acquisition", {})
         acquisition.pop("Cost Synergies", None)
+        if "Target Revenue" in acquisition and "Target Standalone Revenue" not in acquisition:
+            acquisition["Target Standalone Revenue"] = acquisition.pop("Target Revenue")
+        if "Synergy Ramp %" in acquisition and "Revenue Synergy Ramp %" not in acquisition:
+            acquisition["Revenue Synergy Ramp %"] = acquisition.pop("Synergy Ramp %")
         if "Target Working Capital" in acquisition and "Opening / Transaction Working Capital Reference" not in acquisition:
             acquisition["Opening / Transaction Working Capital Reference"] = acquisition.pop("Target Working Capital")
-        acquisition.setdefault("Target Gross Margin %", deepcopy(defaults["acquisition"]["Target Gross Margin %"]))
+        legacy_target_da = acquisition.pop("Target D&A", None)
+        current.setdefault("investment", {}).setdefault(
+            "Acquisition / Target D&A",
+            deepcopy(legacy_target_da if isinstance(legacy_target_da, dict) else defaults["investment"]["Acquisition / Target D&A"]),
+        )
+        for legacy_field in ("Target Gross Margin %", "Target EBITDA", "Target EBIT"):
+            acquisition.pop(legacy_field, None)
         capacity = current.setdefault("capacity", {})
         old_price_name = "Baseline Net Revenue per Unit"
         new_price_name = "Baseline Net Price per Unit"
@@ -11448,10 +11458,19 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
             current[settings_name].setdefault(scenario_price_name, current[settings_name].get(new_price_name, defaults[settings_name][scenario_price_name]))
         current.setdefault("revenue_input_method", defaults["revenue_input_method"])
         current.setdefault("revenue_growth_rate", defaults["revenue_growth_rate"])
+        current.setdefault("revenue_impact_input_method", defaults["revenue_impact_input_method"])
+        current.setdefault("revenue_impact_growth_rate", defaults["revenue_impact_growth_rate"])
         current.setdefault("revenue_based", {}).pop("Revenue Growth %", None)
         for saving in current.setdefault("savings_register", []):
-            if "Gross Saving" in saving and "Gross Run-rate Saving" not in saving:
-                saving["Gross Run-rate Saving"] = saving.pop("Gross Saving")
+            if "Expected Annual Saving" not in saving:
+                gross = safe_float(saving.get("Gross Run-rate Saving", saving.get("Gross Saving", 0.0)))
+                realization = safe_float(saving.get("Realization %", 1.0))
+                saving["Expected Annual Saving"] = gross * realization
+            for legacy_field in ("Gross Saving", "Gross Run-rate Saving", "Realization %", "Realized Saving", "Baseline Cost / Cost Pool"):
+                saving.pop(legacy_field, None)
+            saving["Category"] = {"Logistics": "Supply Chain / Logistics", "IT": "IT / Systems"}.get(
+                str(saving.get("Category", "Other")), str(saving.get("Category", "Other"))
+            )
             saving.setdefault("Ramp Profile", "2-year ramp")
             saving.setdefault("Custom Y1 Ramp %", 1 / 3)
             saving.setdefault("Custom Y2 Ramp %", 2 / 3)
@@ -11467,6 +11486,10 @@ def investment_case_inputs(case: dict[str, object]) -> dict[str, object]:
         operating_costs = current.setdefault("operating_costs", {})
         if "manufacturing_cogs" not in operating_costs:
             operating_costs["manufacturing_cogs"] = deepcopy(defaults["operating_costs"]["manufacturing_cogs"])
+        if str(current.get("settings", {}).get("Case Archetype")) == CASE_ARCHETYPES[2] and not any(
+            "Target standalone cost base" in str(row.get("Comment", "")) for row in operating_costs["manufacturing_cogs"]
+        ):
+            operating_costs["manufacturing_cogs"].append(deepcopy(defaults["operating_costs"]["manufacturing_cogs"][1]))
         migrated_manufacturing_rows = []
         for row in operating_costs["manufacturing_cogs"]:
             migrated = dict(row)
@@ -11626,9 +11649,9 @@ def investment_editor_column_width(column: str) -> str:
     if column in {"Applicable", "Year"} or re.fullmatch(r"Y\d+", column):
         return "small"
     if column in {
-        "Amount", "Baseline Cost / Cost Pool", "Gross Saving", "Gross Run-rate Saving", "Realized Saving",
+        "Amount", "Expected Annual Saving",
         "Baseline Unit Cost", "Scenario Unit Cost", "Baseline Y1", "Scenario Y1", "Baseline Input", "Scenario Input",
-        "Realization %", "Annual Growth %", "Custom Y1 Ramp %", "Custom Y2 Ramp %", "Custom Y3+ Ramp %",
+        "Annual Growth %", "Custom Y1 Ramp %", "Custom Y2 Ramp %", "Custom Y3+ Ramp %",
     }:
         return "small"
     if column in {"Comment", "Comment / Rationale", "Saving Mechanism"}:
@@ -11673,7 +11696,8 @@ def render_investment_driver_editor(
             for year in years
         }
         source_frame = pd.DataFrame(rows)
-        editor_key = f"investment_driver_{case_id}_{section_key}_{kind.lower().replace(' ', '_')}_{len(years)}"
+        schema_suffix = "_simplified_v1" if section_key == "acquisition" else ""
+        editor_key = f"investment_driver_{case_id}_{section_key}_{kind.lower().replace(' ', '_')}_{len(years)}{schema_suffix}"
         editor_source = apply_data_editor_state(source_frame, st.session_state.get(editor_key))
         editor_kwargs = {
             "key": editor_key,
@@ -11757,16 +11781,21 @@ def render_investment_revenue_inputs(
     inputs["revenue_input_method"] = method
     inputs["revenue_growth_rate"] = growth
     if include_incremental:
-        inputs["revenue_based"] = render_investment_driver_editor(
+        uplift_source, uplift_method, uplift_growth = render_investment_series_method(
             case_id,
             f"{section_key}_uplift",
             "Incremental Revenue / Revenue Uplift",
             inputs["revenue_based"],
-            ["Incremental Revenue / Revenue Uplift"],
+            str(inputs.get("revenue_impact_input_method", "Annual Schedule")),
+            safe_float(inputs.get("revenue_impact_growth_rate", 0.0)),
             years,
+            display_label="Revenue Impact / Revenue Uplift",
             compact_ten_year=compact_ten_year,
         )
-        st.caption("Scenario Revenue is calculated as Baseline Revenue plus Incremental Revenue / Revenue Uplift.")
+        inputs["revenue_based"] = uplift_source
+        inputs["revenue_impact_input_method"] = uplift_method
+        inputs["revenue_impact_growth_rate"] = uplift_growth
+        st.caption("Scenario Revenue = Baseline Revenue + Revenue Impact.")
     return inputs
 
 
@@ -11800,13 +11829,13 @@ def handle_investment_archetype_change(case_id: str) -> None:
 
 def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str, object]], disabled: list[str] | None = None) -> list[dict[str, object]]:
     frame = pd.DataFrame(rows)
-    display_labels = {"Realized Saving": "Full-Run-Rate Realized Saving"}
+    display_labels = {}
     whole_number_fields = {
-        "Amount", "Baseline Cost / Cost Pool", "Gross Saving", "Gross Run-rate Saving", "Realized Saving",
+        "Amount", "Expected Annual Saving",
         "Baseline Y1", "Scenario Y1",
     }
     one_decimal_fields = {"Baseline Unit Cost", "Scenario Unit Cost", "Baseline Input", "Scenario Input"}
-    percent_fields = {"Realization %", "Annual Growth %", "Custom Y1 Ramp %", "Custom Y2 Ramp %", "Custom Y3+ Ramp %"}
+    percent_fields = {"Annual Growth %", "Custom Y1 Ramp %", "Custom Y2 Ramp %", "Custom Y3+ Ramp %"}
     display_frame = frame.copy(deep=True)
     for column in display_frame.columns:
         if column in whole_number_fields:
@@ -11829,6 +11858,11 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
             column_config[column] = st.column_config.CheckboxColumn(column, width="small")
         elif column == "Ramp Profile":
             column_config[column] = st.column_config.SelectboxColumn(column, options=["Immediate", "1-year ramp", "2-year ramp", "Custom"], width="medium")
+        elif column == "Category" and key == "savings":
+            column_config[column] = st.column_config.SelectboxColumn(column, options=[
+                "Procurement", "Manufacturing", "Supply Chain / Logistics", "Personnel", "IT / Systems",
+                "Facilities", "SG&A / Corporate Overhead", "Commercial", "Other",
+            ], width="medium")
         elif column == "Cost Line Mapping":
             column_config[column] = st.column_config.SelectboxColumn(column, options=[
                 "Manufacturing COGS",
@@ -11850,7 +11884,7 @@ def render_investment_record_editor(case_id: str, key: str, rows: list[dict[str,
             column_config[column] = st.column_config.SelectboxColumn(column, options=["Variable — per unit", "Fixed / step-fixed — annual"], width="medium")
         else:
             column_config[column] = st.column_config.TextColumn(column, width=investment_editor_column_width(column))
-    schema_suffix = "_generic_input_v2" if key == "cost_manufacturing_cogs" else ""
+    schema_suffix = "_generic_input_v2" if key == "cost_manufacturing_cogs" else "_expected_annual_v1" if key == "savings" else ""
     editor_key = f"investment_records_{case_id}_{key}{schema_suffix}"
     editor_source = apply_data_editor_state(display_frame, st.session_state.get(editor_key))
     edited = st.data_editor(
@@ -12290,11 +12324,18 @@ def render_investment_model(case: dict[str, object]) -> None:
         st.info("Implementation expenditure is captured in Investment Uses. Physical capacity and volume assumptions do not apply to this archetype.")
         inputs = render_investment_revenue_inputs(case_id, "digital_revenue", inputs, years, "Revenue Growth" in enabled, compact_ten_year=True)
     else:
-        st.caption("Investment Scenario = Acquirer Baseline + Target + Synergies - Integration Effects.")
+        st.caption("Build the acquisition revenue case from the acquirer baseline, target standalone revenue and realized revenue synergies.")
         inputs = render_investment_revenue_inputs(case_id, "acquirer_base", inputs, years, False, compact_ten_year=True)
         st.caption("Revenue Synergies are modeled here. Cost synergies are entered once in the Savings / Benefits Register and mapped to their operating cost line.")
-        st.caption("Synergy Ramp % is the percentage of full run-rate revenue synergies expected to be realized in each year; savings use their own register ramp profile.")
-        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone and Synergy Inputs",inputs["acquisition"],["Target Revenue","Target Gross Margin %","Target EBITDA","Target D&A","Target EBIT","Revenue Synergies","Synergy Ramp %","One-off Integration Costs"],years,compact_ten_year=True)
+        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone Revenue and Revenue Synergies",inputs["acquisition"],["Target Standalone Revenue","Revenue Synergies","Revenue Synergy Ramp %"],years,compact_ten_year=True)
+        acquisition_bridge = calculate_investment_model(inputs).get("acquisition_bridge", pd.DataFrame())
+        if not acquisition_bridge.empty:
+            st.markdown("**Revenue Bridge**")
+            st.caption("Acquirer Baseline Revenue + Target Standalone Revenue + Realized Revenue Synergies = Scenario Revenue.")
+            render_finance_table(format_investment_driver_table(acquisition_bridge, years), right_align=set(years), compact_ten_year=True)
+        st.markdown("**One-off Integration Costs**")
+        st.caption("Temporary integration execution costs are modeled only in the years incurred and remain separate from recurring savings.")
+        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition_integration","Integration Cost Schedule",inputs["acquisition"],["One-off Integration Costs"],years,compact_ten_year=True)
         st.caption("Projected working capital is calculated consistently from DSO, DIO and DPO. Any opening or transaction working-capital reference is not used as a second forecast input.")
 
     st.markdown("<div class='investment-operating-cost-gap'></div><div class='enterprise-section-title'>4. Operating Cost Structure</div>", unsafe_allow_html=True)
@@ -12333,19 +12374,15 @@ def render_investment_model(case: dict[str, object]) -> None:
     if "Cost Reduction" in enabled:
         st.markdown("**Savings / Benefits Register**")
         st.caption("Savings entered here are automatically reflected in the mapped operating cost line and are not added separately to cash flow.")
-        st.caption("Full-run-rate realized saving = Gross Run-Rate Saving × Realization %. Ramp Profile determines the annual realized saving.")
+        st.caption("Annual Realized Saving = Expected Annual Saving × Ramp %." )
         original_savings = deepcopy(inputs["savings_register"])
         savings_rows=[]
         for row in inputs["savings_register"]:
             item={key:value for key,value in row.items() if key not in {"Custom Y1 Ramp %","Custom Y2 Ramp %","Custom Y3+ Ramp %"}}
-            item["Realization %"]=safe_float(item.get("Realization %"))*100
-            item["Realized Saving"]=safe_float(item.get("Gross Run-rate Saving",item.get("Gross Saving")))*safe_float(item.get("Realization %"))/100
             savings_rows.append(item)
-        savings_rows=render_investment_record_editor(case_id,"savings",savings_rows,["Realized Saving"])
+        savings_rows=render_investment_record_editor(case_id,"savings",savings_rows)
         for index,row in enumerate(savings_rows):
             original = original_savings[index] if index < len(original_savings) else {}
-            row["Realization %"]=safe_float(row.get("Realization %"))/100
-            row["Realized Saving"]=safe_float(row.get("Gross Run-rate Saving",row.get("Gross Saving")))*row["Realization %"]
             for field,default in [("Custom Y1 Ramp %",1/3),("Custom Y2 Ramp %",2/3),("Custom Y3+ Ramp %",1.0)]:
                 row[field]=safe_float(original.get(field,default))
             if str(row.get("Ramp Profile")) == "Custom":
@@ -12365,11 +12402,11 @@ def render_investment_model(case: dict[str, object]) -> None:
             expected = safe_float(row.get(f"Expected {terminal_year}"))
             reflected = safe_float(row.get(f"Reflected {terminal_year}"))
             tolerance = max(1.0, abs(expected) * 0.001)
-            reconciliation_rows.append({"Mapped Line":row.get("Mapped Line"),"Expected Realized Saving":money(expected),"Saving Reflected in Model":money(reflected),"Status":"Reconciled" if abs(expected-reflected)<=tolerance else "Review mismatch"})
+            reconciliation_rows.append({"Mapped Line":row.get("Mapped Line"),"Expected Annual Saving":money(expected),"Saving Reflected in Model":money(reflected),"Status":"Reconciled" if abs(expected-reflected)<=tolerance else "Review mismatch"})
         if reconciliation_rows:
             st.markdown("**Savings traceability reconciliation**")
             st.caption(f"Shows whether each mapped saving is fully reflected in the controlled model for {terminal_year}; volume-driven cost changes are excluded from this test.")
-            render_finance_table(pd.DataFrame(reconciliation_rows), right_align={"Expected Realized Saving","Saving Reflected in Model"}, exception_values={"Review mismatch":"#fff4e5"})
+            render_finance_table(pd.DataFrame(reconciliation_rows), right_align={"Expected Annual Saving","Saving Reflected in Model"}, exception_values={"Review mismatch":"#fff4e5"})
 
     st.markdown("<div class='enterprise-section-title'>5. Cost of Capital & Investment Thresholds</div>", unsafe_allow_html=True)
     st.caption("Establishes the discount rate and capital-allocation benchmarks used to evaluate project returns against capital and risk.")

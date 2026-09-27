@@ -113,8 +113,7 @@ variable_inputs["savings_register"] = [{
     "Category": "Manufacturing",
     "Saving Mechanism": "Supplier productivity",
     "Cost Line Mapping": "Manufacturing COGS · Direct Materials",
-    "Gross Run-rate Saving": 1_000_000,
-    "Realization %": 1.0,
+    "Expected Annual Saving": 1_000_000,
     "Ramp Profile": "Immediate",
 }]
 variable_inputs["capacity"]["Scenario Volume"]["Y1"] *= 1.25
@@ -134,8 +133,7 @@ fixed_inputs["savings_register"] = [{
     "Category": "Operations",
     "Saving Mechanism": "Contract consolidation",
     "Cost Line Mapping": "Non-Manufacturing OPEX · Other Fixed Overhead",
-    "Gross Run-rate Saving": 500_000,
-    "Realization %": 1.0,
+    "Expected Annual Saving": 500_000,
     "Ramp Profile": "Immediate",
 }]
 fixed_model = calculate_investment_model(fixed_inputs)
@@ -147,5 +145,22 @@ assert close(saved_scenario.at["EBIT", "Y1"] - base_scenario.at["EBIT", "Y1"], 5
 fixed_reconciliation = fixed_model["savings_reconciliation"].set_index("Mapped Line")
 assert close(fixed_reconciliation.at["Non-Manufacturing OPEX · Other Fixed Overhead", "Expected Y1"], 500_000)
 assert close(fixed_reconciliation.at["Non-Manufacturing OPEX · Other Fixed Overhead", "Reflected Y1"], 500_000)
+
+# Acquisition profitability is derived from revenue, operating costs and the
+# controlled D&A bridge. One-off integration costs remain temporary OPEX.
+acquisition_inputs = default_investment_inputs({"Case Archetype": CASE_ARCHETYPES[2]})
+for removed_field in ("Target Gross Margin %", "Target EBITDA", "Target EBIT", "Target D&A"):
+    assert removed_field not in acquisition_inputs["acquisition"]
+acquisition_model = calculate_investment_model(acquisition_inputs)
+acquisition_no_integration = deepcopy(acquisition_inputs)
+acquisition_no_integration["acquisition"]["One-off Integration Costs"] = {
+    year: 0.0 for year in acquisition_no_integration["acquisition"]["One-off Integration Costs"]
+}
+acquisition_no_integration_model = calculate_investment_model(acquisition_no_integration)
+acquisition_pnl = acquisition_model["scenario_pnl"].set_index("Metric")
+acquisition_no_integration_pnl = acquisition_no_integration_model["scenario_pnl"].set_index("Metric")
+assert close(acquisition_pnl.at["Non-Manufacturing OPEX", "Y1"] - acquisition_no_integration_pnl.at["Non-Manufacturing OPEX", "Y1"], 4_000_000)
+assert close(acquisition_no_integration_pnl.at["EBITDA", "Y1"] - acquisition_pnl.at["EBITDA", "Y1"], 4_000_000)
+assert close(acquisition_model["depreciation_bridge"].set_index("D&A Component").at["Acquisition / Target D&A", "Y1"], acquisition_inputs["investment"]["Acquisition / Target D&A"]["Y1"])
 
 print("investment operating model reconciliation smoke test complete")
