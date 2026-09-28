@@ -46,6 +46,21 @@ for index, archetype in enumerate(CASE_ARCHETYPES, start=1):
     for year in years:
         assert close(total_da[year], scenario.at["Depreciation & Amortization", year])
 
+    scenario_bridges = model["scenario_cost_bridges"]
+    expected_bridge_totals = {
+        "manufacturing_cogs": ("Scenario Manufacturing COGS", "Total Scenario Manufacturing COGS", "COGS"),
+        "non_manufacturing_personnel": ("Scenario Non-Manufacturing Personnel", None, "Non-Manufacturing Personnel"),
+        "non_manufacturing_opex": ("Scenario Non-Manufacturing OPEX", None, "Non-Manufacturing OPEX"),
+    }
+    for group, (standard_total, acquisition_total, pnl_line) in expected_bridge_totals.items():
+        bridge = scenario_bridges[group].set_index("Bridge Component")
+        total_row = acquisition_total if acquisition_total and acquisition_total in bridge.index else standard_total
+        assert total_row in bridge.index
+        for year in years:
+            assert close(bridge.at[total_row, year], scenario.at[pnl_line, year])
+        for row_name, row in bridge.iterrows():
+            assert any(abs(float(row[year])) > 1e-9 for year in years), f"Zero-only bridge row: {group} / {row_name}"
+
     cash_flow = model["cash_flow"].set_index("Year")
     for year in years:
         expected = (
@@ -161,6 +176,9 @@ acquisition_pnl = acquisition_model["scenario_pnl"].set_index("Metric")
 acquisition_no_integration_pnl = acquisition_no_integration_model["scenario_pnl"].set_index("Metric")
 assert close(acquisition_pnl.at["Non-Manufacturing OPEX", "Y1"] - acquisition_no_integration_pnl.at["Non-Manufacturing OPEX", "Y1"], 4_000_000)
 assert close(acquisition_no_integration_pnl.at["EBITDA", "Y1"] - acquisition_pnl.at["EBITDA", "Y1"], 4_000_000)
+acquisition_opex_bridge = acquisition_model["scenario_cost_bridges"]["non_manufacturing_opex"].set_index("Bridge Component")
+assert close(acquisition_opex_bridge.at["One-off Integration Costs", "Y1"], 4_000_000)
+assert close(acquisition_opex_bridge.at["One-off Integration Costs", "Y4"], 0.0)
 assert close(acquisition_model["depreciation_bridge"].set_index("D&A Component").at["Acquisition / Target D&A", "Y1"], acquisition_inputs["investment"]["Acquisition / Target D&A"]["Y1"])
 
 print("investment operating model reconciliation smoke test complete")

@@ -12561,19 +12561,6 @@ def render_investment_model(case: dict[str, object]) -> None:
                     row[field]=safe_float(st.session_state[key])/100
         inputs["savings_register"]=savings_rows
 
-        trace_model = calculate_investment_model(inputs)
-        terminal_year = trace_model["years"][-1]
-        reconciliation_rows=[]
-        for _, row in trace_model.get("savings_reconciliation", pd.DataFrame()).iterrows():
-            expected = safe_float(row.get(f"Expected {terminal_year}"))
-            reflected = safe_float(row.get(f"Reflected {terminal_year}"))
-            tolerance = max(1.0, abs(expected) * 0.001)
-            reconciliation_rows.append({"Mapped Line":row.get("Mapped Line"),"Expected Annual Saving":money(expected),"Saving Reflected in Model":money(reflected),"Status":"Reconciled" if abs(expected-reflected)<=tolerance else "Review mismatch"})
-        if reconciliation_rows:
-            st.markdown("**Savings traceability reconciliation**")
-            st.caption(f"Shows whether each mapped saving is fully reflected in the controlled model for {terminal_year}; volume-driven cost changes are excluded from this test.")
-            render_finance_table(pd.DataFrame(reconciliation_rows), right_align={"Expected Annual Saving","Saving Reflected in Model"}, exception_values={"Review mismatch":"#fff4e5"})
-
     st.markdown("<div class='enterprise-section-title'>5. Cost of Capital & Investment Thresholds</div>", unsafe_allow_html=True)
     st.caption("Establishes the discount rate and capital-allocation benchmarks used to evaluate project returns against capital and risk.")
     inputs = render_investment_capital(case_id, inputs)
@@ -12591,15 +12578,31 @@ def render_investment_model(case: dict[str, object]) -> None:
     render_investment_pnl("6. Baseline Operating P&L", "Shows the expected economics of the relevant business scope without the proposed investment.", model["baseline_pnl"], years)
     render_investment_pnl("7. Investment Scenario Operating P&L", "Shows the same business scope after incorporating the modeled investment effects.", model["scenario_pnl"], years)
 
+    scenario_cost_bridges = model.get("scenario_cost_bridges", {})
     with st.expander("Manufacturing COGS bridge", expanded=False):
-        st.caption("Manufacturing COGS reconciles Direct Materials, Direct Labor, Variable Manufacturing Overhead and Fixed Manufacturing Overhead to the reported COGS line.")
-        cogs_bridge = model["cogs_bridge"].astype(object).copy()
+        st.caption("Reconciles the modeled manufacturing cost base, operating effects and mapped savings to Scenario Manufacturing COGS.")
+        cogs_bridge = scenario_cost_bridges.get("manufacturing_cogs", pd.DataFrame()).astype(object).copy()
         for column in years:
             cogs_bridge[column] = cogs_bridge[column].map(money)
         render_finance_table(cogs_bridge, right_align=set(years))
+    with st.expander("Non-Manufacturing Personnel bridge", expanded=False):
+        st.caption("Reconciles the underlying personnel cost base and mapped personnel savings to the reported Scenario P&L line.")
+        personnel_bridge = scenario_cost_bridges.get("non_manufacturing_personnel", pd.DataFrame()).astype(object).copy()
+        for column in years:
+            personnel_bridge[column] = personnel_bridge[column].map(money)
+        render_finance_table(personnel_bridge, right_align=set(years))
+    with st.expander("Non-Manufacturing OPEX bridge", expanded=False):
+        st.caption("Reconciles recurring OPEX, mapped savings and any one-off integration costs to the reported Scenario P&L line.")
+        opex_bridge = scenario_cost_bridges.get("non_manufacturing_opex", pd.DataFrame()).astype(object).copy()
+        for column in years:
+            opex_bridge[column] = opex_bridge[column].map(money)
+        render_finance_table(opex_bridge, right_align=set(years))
     with st.expander("Depreciation & Amortization bridge", expanded=False):
         st.caption("Manufacturing D&A is intentionally shown separately below EBITDA for management-model transparency.")
         da_bridge = model["depreciation_bridge"].astype(object).copy()
+        da_bridge = da_bridge.loc[
+            da_bridge[years].apply(lambda row: any(abs(safe_float(value)) > 1e-9 for value in row), axis=1)
+        ]
         for column in years:
             da_bridge[column] = da_bridge[column].map(money)
         render_finance_table(da_bridge, right_align=set(years))

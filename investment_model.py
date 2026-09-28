@@ -204,7 +204,13 @@ def _cost_value(x:dict[str,Any], group:str, field:str, year:str, index:int)->flo
     return _escalated(x["operating_costs"].get(group,[]),field,index)
 
 
-def _manufacturing_costs(x: dict[str, Any], year: str, index: int, baseline_volume: float, scenario_volume: float) -> tuple[dict[str, float], dict[str, float]]:
+def _manufacturing_costs(
+    x: dict[str, Any],
+    year: str,
+    index: int,
+    baseline_volume: float,
+    scenario_volume: float,
+) -> tuple[dict[str, float], dict[str, float], dict[str, dict[str, float]]]:
     """Return the controlled manufacturing COGS bridge by component."""
     group = "manufacturing_cogs"
     rows = x.get("operating_costs", {}).get(group, [])
@@ -212,10 +218,15 @@ def _manufacturing_costs(x: dict[str, Any], year: str, index: int, baseline_volu
     components = ["Direct Materials", "Direct Labor", "Variable Manufacturing Overhead", "Fixed Manufacturing Overhead"]
     baseline = {component: 0.0 for component in components}
     scenario = {component: 0.0 for component in components}
+    scenario_scope = {
+        "Acquirer": {component: 0.0 for component in components},
+        "Target": {component: 0.0 for component in components},
+    }
     if method == "Annual Schedule":
         baseline["Direct Materials"] = _v(x.get("operating_cost_schedules", {}).get(group, {}).get("Baseline Cost", {}), year)
         scenario["Direct Materials"] = _v(x.get("operating_cost_schedules", {}).get(group, {}).get("Scenario Cost", {}), year)
-        return baseline, scenario
+        scenario_scope["Acquirer"]["Direct Materials"] = scenario["Direct Materials"]
+        return baseline, scenario, scenario_scope
     for row in rows:
         if not bool(row.get("Applicable", True)):
             continue
@@ -228,13 +239,25 @@ def _manufacturing_costs(x: dict[str, Any], year: str, index: int, baseline_volu
             baseline_input = row.get("Baseline Input", row.get("Baseline Unit Cost", 0.0))
             scenario_input = row.get("Scenario Input", row.get("Scenario Unit Cost", 0.0))
             baseline[line] += _n(baseline_input) * growth * baseline_volume
-            scenario[line] += _n(scenario_input) * growth * scenario_volume
+            scenario_value = _n(scenario_input) * growth * scenario_volume
         else:
             baseline_input = row.get("Baseline Input", row.get("Baseline Y1", 0.0))
             scenario_input = row.get("Scenario Input", row.get("Scenario Y1", 0.0))
             baseline[line] += _n(baseline_input) * growth
-            scenario[line] += _n(scenario_input) * growth
-    return baseline, scenario
+            scenario_value = _n(scenario_input) * growth
+        scenario[line] += scenario_value
+        scope = "Target" if "Target standalone cost base" in str(row.get("Comment", "")) else "Acquirer"
+        scenario_scope[scope][line] += scenario_value
+    return baseline, scenario, scenario_scope
+
+
+def _bridge_frame(rows: dict[str, dict[str, float]], label: str, years: list[str]) -> pd.DataFrame:
+    """Return non-zero bridge rows while preserving their controlled calculation order."""
+    return pd.DataFrame([
+        {label: name, **{year: values.get(year, 0.0) for year in years}}
+        for name, values in rows.items()
+        if any(abs(values.get(year, 0.0)) > 1e-9 for year in years)
+    ])
 
 
 def _saving_cost_bucket(mapping: Any) -> str:
@@ -330,6 +353,13 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
     acquisition_bridge={m:{} for m in ["Acquirer Baseline Revenue","Target Standalone Revenue","Realized Revenue Synergies","Scenario Revenue"]}
     cogs_components={name:{"Baseline":{},"Scenario":{}} for name in ["Direct Materials","Direct Labor","Variable Manufacturing Overhead","Fixed Manufacturing Overhead"]}
     savings_expected:dict[str,dict[str,float]]={}; savings_reflected:dict[str,dict[str,float]]={}
+    scenario_cost_bridges = {
+        "manufacturing_cogs": {},
+        "non_manufacturing_personnel": {},
+        "non_manufacturing_opex": {},
+    }
+    def bridge_value(group: str, row: str, year: str, value: float) -> None:
+        scenario_cost_bridges[group].setdefault(row, {})[year] = value
     sustaining_da={}; initial_da={}; baseline_da={}; target_da={}; baseline_materials={}; scenario_materials={}
     cumulative_sustaining=0.0
     for i,y in enumerate(years):
@@ -345,7 +375,7 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
         if archetype==CASE_ARCHETYPES[2]:
             ramp=min(1,max(0,_v(x["acquisition"]["Revenue Synergy Ramp %"],y))); target_revenue=_v(x["acquisition"]["Target Standalone Revenue"],y); realized_synergy=_v(x["acquisition"]["Revenue Synergies"],y)*ramp if rev else 0; sr=br+target_revenue+realized_synergy
             for metric,value in {"Acquirer Baseline Revenue":br,"Target Standalone Revenue":target_revenue,"Realized Revenue Synergies":realized_synergy,"Scenario Revenue":sr}.items(): acquisition_bridge[metric][y]=value
-        b_components,s_components=_manufacturing_costs(x,y,i,bv,sv)
+        b_components,s_components,scenario_scope=_manufacturing_costs(x,y,i,bv,sv)
         annual_savings:dict[str,float]={}
         if saving:
             for row in x.get("savings_register",[]):
@@ -364,6 +394,7 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
         bc=sum(b_components.values()); sc=sum(adjusted_s_components.values())
         bpers=_cost_value(x,"non_manufacturing_personnel","Baseline Y1",y,i); spers=max(0.0,_cost_value(x,"non_manufacturing_personnel","Scenario Y1",y,i))
         bo=_cost_value(x,"non_manufacturing_opex","Baseline Y1",y,i); s_o=max(0.0,_cost_value(x,"non_manufacturing_opex","Scenario Y1",y,i))
+        raw_spers, raw_s_o = spers, s_o
         for mapping,expected in annual_savings.items():
             if mapping.startswith("Non-Manufacturing Personnel"):
                 applied=min(spers,max(0.0,expected)); spers-=applied; reflected_savings[mapping]+=applied
@@ -375,6 +406,63 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
             savings_reflected.setdefault(mapping,{})[y]=reflected_savings.get(mapping,0.0)
         integration=_v(x["acquisition"]["One-off Integration Costs"],y) if archetype==CASE_ARCHETYPES[2] else 0
         if archetype==CASE_ARCHETYPES[2]: s_o+=integration
+
+        manufacturing_savings = sum(value for mapping, value in reflected_savings.items() if mapping.startswith("Manufacturing COGS"))
+        personnel_savings = sum(value for mapping, value in reflected_savings.items() if mapping.startswith("Non-Manufacturing Personnel"))
+        opex_savings = sum(value for mapping, value in reflected_savings.items() if mapping.startswith("Non-Manufacturing OPEX"))
+        if archetype == CASE_ARCHETYPES[2]:
+            for component in cogs_components:
+                acquirer_cost = scenario_scope["Acquirer"][component]
+                target_cost = scenario_scope["Target"][component]
+                component_saving = sum(
+                    value for mapping, value in reflected_savings.items()
+                    if mapping.startswith("Manufacturing COGS")
+                    and ((" · " not in mapping and component == "Direct Materials") or mapping.endswith(f" · {component}"))
+                )
+                bridge_value("manufacturing_cogs", f"{component} · Acquirer Cost Base", y, acquirer_cost)
+                bridge_value("manufacturing_cogs", f"{component} · Target Standalone Cost Base", y, target_cost)
+                bridge_value("manufacturing_cogs", f"{component} · Less: Mapped Savings", y, -component_saving)
+                bridge_value("manufacturing_cogs", f"{component} · Scenario COGS", y, adjusted_s_components[component])
+            bridge_value("manufacturing_cogs", "Total Scenario Manufacturing COGS", y, sc)
+
+            personnel_rows = x.get("operating_costs", {}).get("non_manufacturing_personnel", [])
+            personnel_method = str(x.get("operating_cost_input_methods", {}).get("non_manufacturing_personnel", "Y1 + Growth"))
+            target_personnel = 0.0 if personnel_method == "Annual Schedule" else _escalated(
+                [row for row in personnel_rows if "Target organization" in str(row.get("Comment", ""))], "Scenario Y1", i
+            )
+            bridge_value("non_manufacturing_personnel", "Acquirer Personnel", y, raw_spers - target_personnel)
+            bridge_value("non_manufacturing_personnel", "Target Standalone Personnel", y, target_personnel)
+            bridge_value("non_manufacturing_personnel", "Less: Mapped Personnel Savings", y, -personnel_savings)
+            bridge_value("non_manufacturing_personnel", "Scenario Non-Manufacturing Personnel", y, spers)
+
+            bridge_value("non_manufacturing_opex", "Acquirer / Combined OPEX Cost Base", y, raw_s_o)
+            bridge_value("non_manufacturing_opex", "Less: Recurring OPEX Savings", y, -opex_savings)
+            bridge_value("non_manufacturing_opex", "One-off Integration Costs", y, integration)
+            bridge_value("non_manufacturing_opex", "Scenario Non-Manufacturing OPEX", y, s_o)
+        elif archetype == CASE_ARCHETYPES[0]:
+            _, scenario_at_baseline_volume, _ = _manufacturing_costs(x, y, i, bv, bv)
+            scenario_at_baseline = sum(scenario_at_baseline_volume.values())
+            bridge_value("manufacturing_cogs", "Baseline Manufacturing COGS", y, bc)
+            bridge_value("manufacturing_cogs", "Volume Effect", y, sum(s_components.values()) - scenario_at_baseline)
+            bridge_value("manufacturing_cogs", "Unit Cost / Cost Base Effect", y, scenario_at_baseline - bc)
+            bridge_value("manufacturing_cogs", "Less: Mapped Savings", y, -manufacturing_savings)
+            bridge_value("manufacturing_cogs", "Scenario Manufacturing COGS", y, sc)
+            bridge_value("non_manufacturing_personnel", "Underlying Scenario Personnel Cost Base", y, raw_spers)
+            bridge_value("non_manufacturing_personnel", "Less: Mapped Personnel Savings", y, -personnel_savings)
+            bridge_value("non_manufacturing_personnel", "Scenario Non-Manufacturing Personnel", y, spers)
+            bridge_value("non_manufacturing_opex", "Underlying Scenario OPEX Cost Base", y, raw_s_o)
+            bridge_value("non_manufacturing_opex", "Less: Mapped Recurring Savings", y, -opex_savings)
+            bridge_value("non_manufacturing_opex", "Scenario Non-Manufacturing OPEX", y, s_o)
+        else:
+            bridge_value("manufacturing_cogs", "Underlying Scenario Manufacturing Cost Base", y, sum(s_components.values()))
+            bridge_value("manufacturing_cogs", "Less: Mapped Savings", y, -manufacturing_savings)
+            bridge_value("manufacturing_cogs", "Scenario Manufacturing COGS", y, sc)
+            bridge_value("non_manufacturing_personnel", "Underlying Scenario Personnel Cost Base", y, raw_spers)
+            bridge_value("non_manufacturing_personnel", "Less: Mapped Personnel Savings", y, -personnel_savings)
+            bridge_value("non_manufacturing_personnel", "Scenario Non-Manufacturing Personnel", y, spers)
+            bridge_value("non_manufacturing_opex", "Underlying Scenario OPEX Cost Base", y, raw_s_o)
+            bridge_value("non_manufacturing_opex", "Less: Mapped Recurring Savings", y, -opex_savings)
+            bridge_value("non_manufacturing_opex", "Scenario Non-Manufacturing OPEX", y, s_o)
         bgp,sgp=br-bc,sr-sc; be=bgp-bpers-bo
         se=sgp-spers-s_o
         cumulative_sustaining+=_v(x["investment"].get("Sustaining CAPEX",{}),y)
@@ -432,9 +520,14 @@ def calculate_investment_model(raw:dict[str,Any])->dict[str,Any]:
             {"COGS Component":"Investment Scenario COGS per Unit","Case":"Unit Economics",**{y:_r(scenario["COGS"][y],capacity_bridge["Scenario Volume"][y]) for y in years}},
         ])
     da_bridge=pd.DataFrame([{"D&A Component":"Baseline D&A (2.5% of baseline revenue)",**baseline_da},{"D&A Component":f"Initial Investment D&A (straight-line, {life} years)",**initial_da},{"D&A Component":f"Sustaining CAPEX D&A (straight-line by vintage, {life} years)",**sustaining_da},{"D&A Component":"Acquisition / Target D&A",**target_da},{"D&A Component":"Total Scenario D&A",**scenario["Depreciation & Amortization"]}])
+    scenario_cost_bridge_frames = {
+        "manufacturing_cogs": _bridge_frame(scenario_cost_bridges["manufacturing_cogs"], "Bridge Component", years),
+        "non_manufacturing_personnel": _bridge_frame(scenario_cost_bridges["non_manufacturing_personnel"], "Bridge Component", years),
+        "non_manufacturing_opex": _bridge_frame(scenario_cost_bridges["non_manufacturing_opex"], "Bridge Component", years),
+    }
     wacc_bridge=pd.DataFrame([{"Component":"Cost of Equity","Rate / Weight":ke},{"Component":"Equity Weight","Rate / Weight":equity},{"Component":"Pre-tax Cost of Debt","Rate / Weight":pre_tax_debt},{"Component":"After-tax Cost of Debt","Rate / Weight":kd},{"Component":"Debt Weight","Rate / Weight":debt},{"Component":"WACC","Rate / Weight":wacc}])
     savings_rows=[]
     for mapping in sorted(set(savings_expected)|set(savings_reflected)):
         savings_rows.append({"Mapped Line":mapping,**{f"Expected {y}":savings_expected.get(mapping,{}).get(y,0.0) for y in years},**{f"Reflected {y}":savings_reflected.get(mapping,{}).get(y,0.0) for y in years}})
     acquisition_frame=pd.DataFrame([{"Metric":metric,**values} for metric,values in acquisition_bridge.items()]) if archetype==CASE_ARCHETYPES[2] else pd.DataFrame()
-    return {"inputs":x,"years":years,"drivers":drivers,"capacity_bridge":bridge_frame,"acquisition_bridge":acquisition_frame,"savings_reconciliation":pd.DataFrame(savings_rows),"cogs_bridge":pd.DataFrame(cogs_rows),"depreciation_bridge":da_bridge,"baseline_pnl":baseline,"scenario_pnl":scenario_pnl,"incremental":incremental,"working_capital":pd.DataFrame(wc_rows),"tax_bridge":pd.DataFrame(tax_rows),"cash_flow":pd.DataFrame(rows),"wacc_bridge":wacc_bridge,"returns":returns,"total_initial_investment":initial,"working_capital_enabled":wc_on,"capital_structure_valid":True}
+    return {"inputs":x,"years":years,"drivers":drivers,"capacity_bridge":bridge_frame,"acquisition_bridge":acquisition_frame,"savings_reconciliation":pd.DataFrame(savings_rows),"cogs_bridge":pd.DataFrame(cogs_rows),"scenario_cost_bridges":scenario_cost_bridge_frames,"depreciation_bridge":da_bridge,"baseline_pnl":baseline,"scenario_pnl":scenario_pnl,"incremental":incremental,"working_capital":pd.DataFrame(wc_rows),"tax_bridge":pd.DataFrame(tax_rows),"cash_flow":pd.DataFrame(rows),"wacc_bridge":wacc_bridge,"returns":returns,"total_initial_investment":initial,"working_capital_enabled":wc_on,"capital_structure_valid":True}
