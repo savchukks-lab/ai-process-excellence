@@ -632,7 +632,7 @@ def inject_css() -> None:
             height: 0.75rem;
         }
         .platform-hero {
-            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            background: #ffffff;
             border: 1px solid #d7dee8;
             border-radius: 14px;
             padding: 1.15rem 1.25rem;
@@ -658,15 +658,22 @@ def inject_css() -> None:
             margin-top: 0.32rem;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) {
-            min-height: 15rem;
+            min-height: 14rem;
             position: relative;
             cursor: pointer;
+            background: #fdfefe;
+            border: 1px solid #d9e0e8 !important;
+            padding: 0.2rem;
             transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
         div[data-testid="stColumn"]:has(.module-card-marker) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
-            min-height: 15rem;
+            min-height: 14rem;
             position: relative;
             cursor: pointer;
+            background: #fdfefe;
+            border: 1px solid #d9e0e8 !important;
+            border-radius: 12px;
+            padding: 1rem;
             transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):hover {
@@ -676,12 +683,6 @@ def inject_css() -> None:
         div[data-testid="stColumn"]:has(.module-card-marker):hover > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
             transform: translateY(-1px);
             box-shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-available) {
-            border-color: #9fcfbe !important;
-        }
-        div[data-testid="stColumn"]:has(.module-card-available) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
-            border-color: #9fcfbe !important;
         }
         div[data-testid="stElementContainer"][class*="st-key-module_card_"] {
             position: absolute;
@@ -713,55 +714,43 @@ def inject_css() -> None:
         }
         .module-card-title {
             color: #0f172a;
-            font-size: 1.04rem;
-            font-weight: 740;
-            margin-bottom: 0.28rem;
+            font-size: 1.13rem;
+            font-weight: 760;
+            margin-bottom: 0.42rem;
         }
         .module-card-description {
             color: #334155;
-            font-size: 0.9rem;
-            min-height: 2.6rem;
+            font-size: 0.92rem;
+            min-height: 2.7rem;
             line-height: 1.42;
         }
         .module-card-process {
-            color: #64748b;
+            color: #526174;
             font-size: 0.84rem;
-            margin: 0.65rem 0;
+            font-weight: 620;
+            margin: 0.68rem 0 0.6rem;
         }
-        .module-card-explore {
-            position: absolute;
-            right: 1rem;
-            bottom: 0.82rem;
-            color: #7b8798;
-            font-size: 0.76rem;
-            font-style: italic;
-            transition: color 140ms ease;
+        .module-card-summary {
+            color: #667386;
+            font-size: 0.84rem;
+            line-height: 1.45;
+            margin: 0;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):hover .module-card-explore {
-            color: #16805d;
+        section.main:has(.platform-home-marker) {
+            background: #ffffff;
         }
-        .module-status {
-            display: inline-flex;
-            align-items: center;
-            border-radius: 999px;
-            padding: 0.22rem 0.55rem;
-            font-size: 0.74rem;
-            font-weight: 720;
-            margin-bottom: 0.72rem;
-        }
-        .module-status-available {
-            color: #0f513f;
-            background: #e8f5ef;
-            border: 1px solid #b7dfce;
-        }
-        .module-status-soon {
-            color: #475569;
-            background: #f1f5f9;
-            border: 1px solid #d7dee8;
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.platform-ai-container-marker) {
+            max-width: 64rem;
+            margin-top: 2rem;
+            padding: 1.05rem 1.15rem 0.95rem;
+            background: #f7fafc;
+            border: 1px solid #dbe4ec !important;
+            border-radius: 10px;
+            box-shadow: none;
         }
         .platform-ai-section {
-            margin-top: 2rem;
-            max-width: 58rem;
+            margin: 0;
+            max-width: 60rem;
         }
         .platform-ai-title {
             color: #0f172a;
@@ -776,22 +765,48 @@ def inject_css() -> None:
             line-height: 1.4;
         }
         .platform-ai-quota {
-            margin: 0.2rem 0 0.65rem;
+            margin: 0.35rem 0 0;
         }
         div[data-testid="stForm"]:has(.platform-ai-form-marker) {
             border: 0;
             padding: 0;
+            margin-top: 0.75rem;
+            background: transparent;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            align-items: flex-end;
+            gap: 0.55rem;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stColumn"]:first-of-type {
+            flex: 1 1 auto !important;
+            width: auto !important;
+            min-width: 0 !important;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stColumn"]:last-of-type {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            min-width: fit-content !important;
         }
         div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] button {
             min-height: 2.25rem;
             height: 2.25rem;
             width: auto;
-            padding: 0 1rem;
+            padding: 0 0.85rem;
             border-radius: 6px;
             font-weight: 650;
         }
         div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] {
             width: fit-content;
+        }
+        .platform-ai-examples {
+            color: #65758a;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            margin-top: 0.45rem;
+        }
+        .platform-ai-examples em {
+            color: #39766b;
         }
         .platform-ai-answer {
             max-width: 58rem;
@@ -4526,6 +4541,7 @@ def open_platform_module(module: str) -> None:
 
 
 def page_platform_home() -> None:
+    st.markdown("<span class='platform-home-marker'></span>", unsafe_allow_html=True)
     st.markdown(
         """
         <div class="platform-hero">
@@ -4542,10 +4558,7 @@ def page_platform_home() -> None:
             "title": "Deal Approval",
             "description": "Commercial pricing and deal governance",
             "process": "Prepare · Enrich · Review · Decide",
-            "status": "Available",
-            "status_class": "module-status-available",
-            "marker": "module-card-available",
-            "button": "Open Deal Approval",
+            "summary": "Evaluate pricing, commercial terms and approval readiness.",
             "enabled": True,
             "module": "deal",
         },
@@ -4553,10 +4566,7 @@ def page_platform_home() -> None:
             "title": "Launch Sandbox",
             "description": "Cross-functional launch planning, readiness and decision preparation",
             "process": "Collaborate · Validate · Build Case · Decide",
-            "status": "Available",
-            "status_class": "module-status-available",
-            "marker": "module-card-available",
-            "button": "Open Launch Sandbox",
+            "summary": "Align cross-functional launch plans and surface readiness gaps.",
             "enabled": True,
             "module": "launch",
         },
@@ -4564,10 +4574,7 @@ def page_platform_home() -> None:
             "title": "Investment Case",
             "description": "Integrated investment modelling, financing and capital allocation",
             "process": "Model · Finance · Stress-test · Decide",
-            "status": "Available",
-            "status_class": "module-status-available",
-            "marker": "module-card-available",
-            "button": "Open Investment Case",
+            "summary": "Model returns, financing, sensitivities and capital allocation.",
             "enabled": True,
             "module": "investment",
         },
@@ -4576,98 +4583,105 @@ def page_platform_home() -> None:
     cols = st.columns(3)
     for col, spec in zip(cols, card_specs):
         with col.container(border=True):
-            markers = "module-card-marker"
-            if spec["marker"]:
-                markers = f"{markers} {spec['marker']}"
-            st.markdown(f"<span class='{markers}'></span>", unsafe_allow_html=True)
+            st.markdown("<span class='module-card-marker'></span>", unsafe_allow_html=True)
             st.markdown(
                 f"""
                 <div class="module-card-title">{spec["title"]}</div>
                 <div class="module-card-description">{spec["description"]}</div>
                 <div class="module-card-process">{spec["process"]}</div>
-                <div class="module-status {spec["status_class"]}">{spec["status"]}</div>
-                <div class="module-card-explore">Explore</div>
+                <div class="module-card-summary">{spec["summary"]}</div>
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button(spec["button"], key=f"module_card_{spec['title'].lower().replace(' ', '_')}", disabled=not spec["enabled"]):
+            if st.button(spec["title"], key=f"module_card_{spec['title'].lower().replace(' ', '_')}", disabled=not spec["enabled"]):
                 open_platform_module(spec["module"])
                 st.rerun()
 
     remaining = platform_ai_questions_remaining()
-    st.markdown(
-        """
-        <div class="platform-ai-section">
-            <div class="platform-ai-title">Ask the Platform</div>
-            <div class="platform-ai-helper">Ask about the platform, its modules, workflows, or which module fits a use case.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    quota_placeholder = st.empty()
-    quota_placeholder.markdown(
-        f'<div class="platform-ai-quota">{remaining} AI question{"s" if remaining != 1 else ""} remaining in this session</div>',
-        unsafe_allow_html=True,
-    )
-
-    with st.form("platform_ai_question_form", clear_on_submit=False):
-        st.markdown("<span class='platform-ai-form-marker'></span>", unsafe_allow_html=True)
-        question = st.text_input(
-            "Ask about the platform or its modules",
-            placeholder="Ask about the platform or its modules...",
-            label_visibility="collapsed",
-            disabled=remaining <= 0,
-            key="platform_ai_question",
-        )
-        submitted = st.form_submit_button(
-            "Ask AI",
-            disabled=remaining <= 0,
-        )
-
-    if submitted:
-        clean_question = str(question or "").strip()
-        if not clean_question:
-            st.session_state.platform_ai_error = "Enter a question about the platform or its modules."
-            st.session_state.platform_ai_answer = ""
-        else:
-            st.session_state.platform_ai_questions_used = int(
-                st.session_state.get("platform_ai_questions_used", 0)
-            ) + 1
-            try:
-                st.session_state.platform_ai_answer = generate_text(
-                    clean_question,
-                    context=PLATFORM_AI_CONTEXT,
-                    model=DEFAULT_OPENAI_MODEL,
-                    max_output_tokens=PLATFORM_AI_MAX_OUTPUT_TOKENS,
-                )
-                st.session_state.platform_ai_error = ""
-            except OpenAIServiceError as exc:
-                st.session_state.platform_ai_answer = ""
-                st.session_state.platform_ai_error = str(exc)
-
-        updated_remaining = platform_ai_questions_remaining()
-        quota_placeholder.markdown(
-            f'<div class="platform-ai-quota">{updated_remaining} AI question{"s" if updated_remaining != 1 else ""} remaining in this session</div>',
-            unsafe_allow_html=True,
-        )
-
-    platform_ai_error = str(st.session_state.get("platform_ai_error", "")).strip()
-    if platform_ai_error:
-        st.warning(platform_ai_error)
-
-    platform_ai_answer = str(st.session_state.get("platform_ai_answer", "")).strip()
-    if platform_ai_answer:
-        safe_answer = escape(platform_ai_answer).replace("\n", "<br>")
+    with st.container(border=True):
+        st.markdown("<span class='platform-ai-container-marker'></span>", unsafe_allow_html=True)
         st.markdown(
-            f"""
-            <div class="platform-ai-answer">
-                <div class="platform-ai-answer-title">AI Platform Guide</div>
-                <div class="platform-ai-answer-body">{safe_answer}</div>
-                <div class="platform-ai-answer-footer">AI-generated · Based on platform documentation</div>
+            """
+            <div class="platform-ai-section">
+                <div class="platform-ai-title">Ask the Platform</div>
+                <div class="platform-ai-helper">Ask about the platform, its modules, workflows, or which module fits your use case.</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        with st.form("platform_ai_question_form", clear_on_submit=False):
+            st.markdown("<span class='platform-ai-form-marker'></span>", unsafe_allow_html=True)
+            input_col, action_col = st.columns([8, 1])
+            question = input_col.text_input(
+                "Ask about the platform or its modules",
+                placeholder="Ask about the platform or its modules...",
+                label_visibility="collapsed",
+                disabled=remaining <= 0,
+                key="platform_ai_question",
+            )
+            submitted = action_col.form_submit_button(
+                "Ask",
+                disabled=remaining <= 0,
+            )
+        st.markdown(
+            """
+            <div class="platform-ai-examples"><strong>Try:</strong>
+            <em>“Which module should I use for a pricing decision?”</em> ·
+            <em>“How is Launch Sandbox different from Investment Case?”</em> ·
+            <em>“What does Deal Approval cover?”</em></div>
+            """,
+            unsafe_allow_html=True,
+        )
+        quota_placeholder = st.empty()
+        quota_placeholder.markdown(
+            f'<div class="platform-ai-quota">{remaining} question{"s" if remaining != 1 else ""} remaining in this session</div>',
+            unsafe_allow_html=True,
+        )
+
+        if submitted:
+            clean_question = str(question or "").strip()
+            if not clean_question:
+                st.session_state.platform_ai_error = "Enter a question about the platform or its modules."
+                st.session_state.platform_ai_answer = ""
+            else:
+                st.session_state.platform_ai_questions_used = int(
+                    st.session_state.get("platform_ai_questions_used", 0)
+                ) + 1
+                try:
+                    st.session_state.platform_ai_answer = generate_text(
+                        clean_question,
+                        context=PLATFORM_AI_CONTEXT,
+                        model=DEFAULT_OPENAI_MODEL,
+                        max_output_tokens=PLATFORM_AI_MAX_OUTPUT_TOKENS,
+                    )
+                    st.session_state.platform_ai_error = ""
+                except OpenAIServiceError as exc:
+                    st.session_state.platform_ai_answer = ""
+                    st.session_state.platform_ai_error = str(exc)
+
+            updated_remaining = platform_ai_questions_remaining()
+            quota_placeholder.markdown(
+                f'<div class="platform-ai-quota">{updated_remaining} question{"s" if updated_remaining != 1 else ""} remaining in this session</div>',
+                unsafe_allow_html=True,
+            )
+
+        platform_ai_error = str(st.session_state.get("platform_ai_error", "")).strip()
+        if platform_ai_error:
+            st.warning(platform_ai_error)
+
+        platform_ai_answer = str(st.session_state.get("platform_ai_answer", "")).strip()
+        if platform_ai_answer:
+            safe_answer = escape(platform_ai_answer).replace("\n", "<br>")
+            st.markdown(
+                f"""
+                <div class="platform-ai-answer">
+                    <div class="platform-ai-answer-title">AI Platform Guide</div>
+                    <div class="platform-ai-answer-body">{safe_answer}</div>
+                    <div class="platform-ai-answer-footer">AI-generated · Based on platform documentation</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 def launch_product(products: pd.DataFrame, product_name: str) -> dict[str, object]:
