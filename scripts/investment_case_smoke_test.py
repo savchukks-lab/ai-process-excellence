@@ -271,7 +271,7 @@ acquisition_app.session_state["investment_case_inputs"] = {acquisition_case["Cas
 acquisition_app.session_state[f"investment_case_section_{acquisition_case['Case ID']}"] = "Model"
 acquisition_app.run()
 assert_clean(acquisition_app, "Acquisition first-edit setup")
-acquisition_editor_key = f"investment_driver_{acquisition_case['Case ID']}_acquisition_monetary_value_10_simplified_v1"
+acquisition_editor_key = f"investment_driver_{acquisition_case['Case ID']}_acquisition_monetary_value_10_simplified_v2"
 acquisition_app.session_state[acquisition_editor_key] = {"edited_rows": {1: {"Y1": 3_750_000}}, "added_rows": [], "deleted_rows": []}
 acquisition_app.run()
 assert_clean(acquisition_app, "Acquisition synergy first edit")

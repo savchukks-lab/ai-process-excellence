@@ -11800,9 +11800,12 @@ def render_investment_driver_editor(
     metrics: list[str],
     years: list[str],
     compact_ten_year: bool = False,
+    metric_labels: dict[str, str] | None = None,
 ) -> dict[str, dict[str, float]]:
     st.markdown(f"**{title}**")
     updated = deepcopy(source)
+    visible_metric_labels = metric_labels or {}
+    stored_metric_labels = {label: metric for metric, label in visible_metric_labels.items()}
     grouped_metrics: dict[str, list[str]] = {}
     for metric in metrics:
         grouped_metrics.setdefault(investment_driver_display_kind(metric), []).append(metric)
@@ -11811,7 +11814,7 @@ def render_investment_driver_editor(
         original_display_values: dict[tuple[str, str], float] = {}
         for metric in kind_metrics:
             is_percent = "%" in metric
-            row = {"Input": metric}
+            row = {"Input": visible_metric_labels.get(metric, metric)}
             for year in years:
                 value = safe_float(source.get(metric, {}).get(year, 0.0))
                 display_value = value * 100 if is_percent else value
@@ -11829,7 +11832,7 @@ def render_investment_driver_editor(
             for year in years
         }
         source_frame = pd.DataFrame(rows)
-        schema_suffix = "_simplified_v1" if section_key == "acquisition" else ""
+        schema_suffix = "_simplified_v2" if section_key == "acquisition" else ""
         editor_key = f"investment_driver_{case_id}_{section_key}_{kind.lower().replace(' ', '_')}_{len(years)}{schema_suffix}"
         editor_source = apply_data_editor_state(source_frame, st.session_state.get(editor_key))
         editor_kwargs = {
@@ -11850,7 +11853,8 @@ def render_investment_driver_editor(
             editor = st.data_editor(editor_source, **editor_kwargs)
         updated_editor = apply_data_editor_state(editor.copy(), st.session_state.get(editor_key))
         for _, row in updated_editor.iterrows():
-            metric = str(row.get("Input", ""))
+            displayed_metric = str(row.get("Input", ""))
+            metric = stored_metric_labels.get(displayed_metric, displayed_metric)
             updated.setdefault(metric, {})
             for year in years:
                 edited_value = safe_float(row.get(year, 0.0))
@@ -12459,15 +12463,24 @@ def render_investment_model(case: dict[str, object]) -> None:
     else:
         st.caption("Build the acquisition revenue case from the acquirer baseline, target standalone revenue and realized revenue synergies.")
         inputs = render_investment_revenue_inputs(case_id, "acquirer_base", inputs, years, False, compact_ten_year=True)
-        st.caption("Revenue Synergies are modeled here. Cost synergies are entered once in the Savings / Benefits Register and mapped to their operating cost line.")
-        inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition","Target Standalone Revenue and Revenue Synergies",inputs["acquisition"],["Target Standalone Revenue","Revenue Synergies","Revenue Synergy Ramp %"],years,compact_ten_year=True)
+        st.caption("Revenue Synergy Potential is modeled here. Cost synergies are entered once in the Savings / Benefits Register and mapped to their operating cost line.")
+        inputs["acquisition"] = render_investment_driver_editor(
+            case_id,
+            "acquisition",
+            "Target Standalone Revenue and Revenue Synergy Potential",
+            inputs["acquisition"],
+            ["Target Standalone Revenue", "Revenue Synergies", "Revenue Synergy Ramp %"],
+            years,
+            compact_ten_year=True,
+            metric_labels={"Revenue Synergies": "Revenue Synergy Potential"},
+        )
         acquisition_bridge = calculate_investment_model(inputs).get("acquisition_bridge", pd.DataFrame())
         if not acquisition_bridge.empty:
             st.markdown("**Revenue Bridge**")
             st.caption("Acquirer Baseline Revenue + Target Standalone Revenue + Realized Revenue Synergies = Scenario Revenue.")
             render_finance_table(format_investment_driver_table(acquisition_bridge, years), right_align=set(years), compact_ten_year=True)
         st.markdown("**One-off Integration Costs**")
-        st.caption("Temporary integration execution costs are modeled only in the years incurred and remain separate from recurring savings.")
+        st.caption("One-time transaction and integration effects")
         inputs["acquisition"] = render_investment_driver_editor(case_id,"acquisition_integration","Integration Cost Schedule",inputs["acquisition"],["One-off Integration Costs"],years,compact_ten_year=True)
         st.caption("Projected working capital is calculated consistently from DSO, DIO and DPO. Any opening or transaction working-capital reference is not used as a second forecast input.")
 
@@ -12498,9 +12511,29 @@ def render_investment_model(case: dict[str, object]) -> None:
                 else:
                     st.caption("Baseline Y1 / Scenario Y1 plus Annual Growth % determines future-year values.")
                 rows=[]
-                for row in current_rows: item=dict(row);item["Annual Growth %"]=safe_float(item.get("Annual Growth %"))*100;rows.append(item)
-                rows=render_investment_record_editor(case_id,f"cost_{group}",rows)
-                for row in rows: row["Annual Growth %"]=safe_float(row.get("Annual Growth %"))/100
+                acquisition_cogs = archetype == CASE_ARCHETYPES[2] and group == "manufacturing_cogs"
+                for row in current_rows:
+                    item = dict(row)
+                    item["Annual Growth %"] = safe_float(item.get("Annual Growth %")) * 100
+                    if acquisition_cogs:
+                        comment = str(item.get("Comment / Rationale", item.get("Comment", "")))
+                        scope = "Target" if "Target standalone cost base" in comment else "Acquirer"
+                        item = {
+                            "Applicable": item.get("Applicable", True),
+                            "Cost Scope": scope,
+                            **{key: value for key, value in item.items() if key != "Applicable"},
+                        }
+                    rows.append(item)
+                editor_key = f"cost_{group}_acquisition_scope" if acquisition_cogs else f"cost_{group}"
+                rows = render_investment_record_editor(
+                    case_id,
+                    editor_key,
+                    rows,
+                    disabled=["Cost Scope"] if acquisition_cogs else None,
+                )
+                for row in rows:
+                    row.pop("Cost Scope", None)
+                    row["Annual Growth %"] = safe_float(row.get("Annual Growth %")) / 100
                 inputs["operating_costs"][group]=rows
                 st.caption("Use the add-row control to add a cost line.")
 
