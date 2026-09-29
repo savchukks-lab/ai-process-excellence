@@ -634,10 +634,10 @@ def inject_css() -> None:
         .platform-hero {
             background: #ffffff;
             border: 1px solid #d7dee8;
-            border-radius: 14px;
-            padding: 1.15rem 1.25rem;
-            margin: 0.65rem 0 1.1rem;
-            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+            border-radius: 12px;
+            padding: 1.2rem 1.35rem;
+            margin: 0.65rem 0 1.35rem;
+            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.035);
         }
         .platform-eyebrow {
             color: #16805d;
@@ -658,22 +658,27 @@ def inject_css() -> None:
             margin-top: 0.32rem;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) {
-            min-height: 14rem;
+            min-height: 13.5rem;
             position: relative;
             cursor: pointer;
-            background: #fdfefe;
+            background: #ffffff;
             border: 1px solid #d9e0e8 !important;
-            padding: 0.2rem;
+            border-radius: 12px;
+            padding: 26px !important;
+            overflow: hidden;
+            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.04);
             transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
         div[data-testid="stColumn"]:has(.module-card-marker) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
-            min-height: 14rem;
+            min-height: 13.5rem;
             position: relative;
             cursor: pointer;
-            background: #fdfefe;
+            background: #ffffff;
             border: 1px solid #d9e0e8 !important;
             border-radius: 12px;
-            padding: 1rem;
+            padding: 26px;
+            overflow: hidden;
+            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.04);
             transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):hover {
@@ -684,25 +689,41 @@ def inject_css() -> None:
             transform: translateY(-1px);
             box-shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
         }
-        div[data-testid="stElementContainer"][class*="st-key-module_card_"] {
-            position: absolute;
-            inset: 0;
-            z-index: 3;
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) div[data-testid="stButton"],
+        div[data-testid="stColumn"]:has(.module-card-marker) div[data-testid="stButton"] {
+            position: absolute !important;
+            inset: 0 !important;
+            z-index: 50 !important;
             width: 100% !important;
             height: 100% !important;
+            pointer-events: auto !important;
         }
-        div[data-testid="stElementContainer"][class*="st-key-module_card_"] div[data-testid="stButton"],
-        div[data-testid="stElementContainer"][class*="st-key-module_card_"] div[data-testid="stButton"] > button {
-            width: 100%;
-            height: 100%;
-            min-height: 100%;
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) div[data-testid="stButton"] > button,
+        div[data-testid="stColumn"]:has(.module-card-marker) div[data-testid="stButton"] > button {
+            position: absolute !important;
+            inset: 0 !important;
+            z-index: 51 !important;
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 100% !important;
             padding: 0;
             border: 0 !important;
             border-radius: inherit;
             background: transparent !important;
             box-shadow: none !important;
-            opacity: 0;
+            opacity: 0.001;
+            color: transparent !important;
+            font-size: 0 !important;
             cursor: pointer;
+            pointer-events: auto !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-marker,
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-title,
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-description,
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-process,
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-summary {
+            pointer-events: none !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):has(div[data-testid="stButton"] > button:hover) {
             border-color: #72b89f !important;
@@ -712,11 +733,16 @@ def inject_css() -> None:
             border-color: #72b89f !important;
             box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
         }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):has(button:focus-visible),
+        div[data-testid="stColumn"]:has(.module-card-marker):has(button:focus-visible) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+            border-color: #16805d !important;
+            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16);
+        }
         .module-card-title {
             color: #0f172a;
             font-size: 1.13rem;
             font-weight: 760;
-            margin-bottom: 0.42rem;
+            margin-bottom: 0.7rem;
         }
         .module-card-description {
             color: #334155;
@@ -728,7 +754,7 @@ def inject_css() -> None:
             color: #526174;
             font-size: 0.84rem;
             font-weight: 620;
-            margin: 0.68rem 0 0.6rem;
+            margin: 0.9rem 0 0.72rem;
         }
         .module-card-summary {
             color: #667386;
@@ -739,14 +765,30 @@ def inject_css() -> None:
         section.main:has(.platform-home-marker) {
             background: #ffffff;
         }
+        .stApp:has(.platform-home-marker),
+        [data-testid="stAppViewContainer"]:has(.platform-home-marker),
+        [data-testid="stMain"]:has(.platform-home-marker),
+        [data-testid="stMainBlockContainer"]:has(.platform-home-marker) {
+            background: #ffffff !important;
+        }
+        [data-testid="stMainBlockContainer"]:has(.platform-home-marker),
+        .block-container:has(.platform-home-marker) {
+            width: calc(100% - 64px) !important;
+            max-width: 1520px !important;
+            margin-left: auto !important;
+            margin-right: auto !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+        }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.platform-ai-container-marker) {
-            max-width: 64rem;
+            width: 100%;
+            max-width: none;
             margin-top: 2rem;
-            padding: 1.05rem 1.15rem 0.95rem;
-            background: #f7fafc;
+            padding: 1.25rem 1.35rem 1.1rem;
+            background: #ffffff;
             border: 1px solid #dbe4ec !important;
             border-radius: 10px;
-            box-shadow: none;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.03);
         }
         .platform-ai-section {
             margin: 0;
@@ -792,9 +834,26 @@ def inject_css() -> None:
             min-height: 2.25rem;
             height: 2.25rem;
             width: auto;
-            padding: 0 0.85rem;
-            border-radius: 6px;
+            padding: 0 0.2rem;
+            border: 0 !important;
+            border-radius: 0;
+            background: transparent !important;
+            box-shadow: none !important;
+            color: #16735a !important;
             font-weight: 650;
+            transition: color 140ms ease, text-decoration-color 140ms ease;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] button p,
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] button span {
+            color: inherit !important;
+            font-weight: 650 !important;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] button:hover,
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] button:focus-visible {
+            color: #0f5f49 !important;
+            background: transparent !important;
+            text-decoration: underline;
+            text-underline-offset: 3px;
         }
         div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] {
             width: fit-content;
@@ -809,13 +868,30 @@ def inject_css() -> None:
             color: #39766b;
         }
         .platform-ai-answer {
-            max-width: 58rem;
+            max-width: 64rem;
             margin-top: 1rem;
             padding: 1rem 1.05rem 0.85rem;
             border: 1px solid #d7dee8;
             border-radius: 8px;
             background: #ffffff;
             box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+        }
+        @media (max-width: 700px) {
+            [data-testid="stMainBlockContainer"]:has(.platform-home-marker),
+            .block-container:has(.platform-home-marker) {
+                width: calc(100% - 24px) !important;
+                max-width: none !important;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+            }
+            div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker),
+            div[data-testid="stColumn"]:has(.module-card-marker) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+                min-height: auto;
+                padding: 20px !important;
+            }
+            .module-card-description {
+                min-height: 0;
+            }
         }
         .platform-ai-answer-title {
             color: #0f172a;
