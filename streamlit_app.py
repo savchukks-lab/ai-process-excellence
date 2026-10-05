@@ -745,16 +745,6 @@ def inject_css() -> None:
             padding-left: 0 !important;
             padding-right: 0 !important;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.platform-ai-container-marker) {
-            width: 100%;
-            max-width: none;
-            margin-top: 0;
-            padding: 1.25rem 1.35rem 1.1rem;
-            background: #ffffff;
-            border: 1px solid #dbe4ec !important;
-            border-radius: 10px;
-            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.03);
-        }
         .platform-ai-section {
             margin: 0;
             max-width: 60rem;
