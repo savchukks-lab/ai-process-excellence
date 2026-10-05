@@ -638,7 +638,7 @@ def inject_css() -> None:
             border: 1px solid #d7dee8;
             border-radius: 12px;
             padding: 1.2rem 1.35rem;
-            margin: 0.65rem 0 1.35rem;
+            margin: 0 0 1.375rem;
             box-shadow: 0 5px 16px rgba(15, 23, 42, 0.035);
         }
         .platform-eyebrow {
@@ -669,7 +669,7 @@ def inject_css() -> None:
             justify-content: flex-start;
             width: 100%;
             height: 13.5rem;
-            margin-bottom: 1rem;
+            margin-bottom: 1.875rem;
             padding: 26px;
             overflow: hidden;
             cursor: pointer;
@@ -730,6 +730,9 @@ def inject_css() -> None:
         [data-testid="stMain"]:has(.platform-home-marker),
         [data-testid="stMainBlockContainer"]:has(.platform-home-marker) {
             background: #ffffff !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
         }
         [data-testid="stMainBlockContainer"]:has(.platform-home-marker),
         .block-container:has(.platform-home-marker) {
@@ -737,13 +740,15 @@ def inject_css() -> None:
             max-width: 1520px !important;
             margin-left: auto !important;
             margin-right: auto !important;
+            padding-top: 30px !important;
+            padding-bottom: 30px !important;
             padding-left: 0 !important;
             padding-right: 0 !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.platform-ai-container-marker) {
             width: 100%;
             max-width: none;
-            margin-top: 2rem;
+            margin-top: 0;
             padding: 1.25rem 1.35rem 1.1rem;
             background: #ffffff;
             border: 1px solid #dbe4ec !important;
