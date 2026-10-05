@@ -469,7 +469,9 @@ def inject_css() -> None:
             background: #ffffff;
         }
         .launch-funnel {
-            width: 100%;
+            width: 100% !important;
+            align-self: stretch !important;
+            display: block !important;
             border-collapse: collapse;
             font-size: 0.82rem;
         }
@@ -657,110 +659,108 @@ def inject_css() -> None:
             font-size: 0.96rem;
             margin-top: 0.32rem;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) {
-            min-height: 13.5rem;
-            position: relative;
-            cursor: pointer;
-            background: #ffffff;
-            border: 1px solid #d9e0e8 !important;
-            border-radius: 12px;
+        div[class*="st-key-module_card_"] {
+            height: 100%;
+        }
+        div[class*="st-key-module_card_"] div[data-testid="stButton"] {
+            height: 100%;
+        }
+        div[class*="st-key-module_card_"] button {
+            box-sizing: border-box;
+            display: flex !important;
+            flex-direction: column;
+            align-items: flex-start;
+            justify-content: flex-start;
+            width: 100% !important;
+            height: 13.5rem !important;
             padding: 26px !important;
             overflow: hidden;
-            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.04);
-            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
-        }
-        div[data-testid="stColumn"]:has(.module-card-marker) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
-            min-height: 13.5rem;
-            position: relative;
-            cursor: pointer;
-            background: #ffffff;
+            cursor: pointer !important;
+            text-align: left !important;
+            white-space: normal !important;
+            background: #ffffff !important;
             border: 1px solid #d9e0e8 !important;
-            border-radius: 12px;
-            padding: 26px;
-            overflow: hidden;
-            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.04);
-            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+            border-radius: 12px !important;
+            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.04) !important;
+            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease !important;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):hover {
+        div[class*="st-key-module_card_"] button:hover {
+            color: inherit !important;
+            border-color: #72b89f !important;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09) !important;
             transform: translateY(-1px);
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
         }
-        div[data-testid="stColumn"]:has(.module-card-marker):hover > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
-            transform: translateY(-1px);
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
+        div[class*="st-key-module_card_"] button:focus-visible {
+            border-color: #16805d !important;
+            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16) !important;
+            outline: none !important;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) div[data-testid="stButton"],
-        div[data-testid="stColumn"]:has(.module-card-marker) div[data-testid="stButton"] {
-            position: absolute !important;
-            inset: 0 !important;
-            z-index: 50 !important;
-            width: 100% !important;
-            height: 100% !important;
-            pointer-events: auto !important;
+        div[class*="st-key-module_card_"] button p {
+            order: 1;
+            width: 100%;
+            color: #0f172a !important;
+            font-size: 1.13rem !important;
+            font-weight: 760 !important;
+            line-height: 1.25 !important;
+            text-align: left !important;
+            margin: 0 !important;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) div[data-testid="stButton"] > button,
-        div[data-testid="stColumn"]:has(.module-card-marker) div[data-testid="stButton"] > button {
-            position: absolute !important;
-            inset: 0 !important;
-            z-index: 51 !important;
+        div[class*="st-key-module_card_"] button > div,
+        div[class*="st-key-module_card_"] button div[data-testid="stMarkdownContainer"] {
             display: block !important;
             width: 100% !important;
-            height: 100% !important;
-            min-height: 100% !important;
-            padding: 0;
-            border: 0 !important;
-            border-radius: inherit;
-            background: transparent !important;
-            box-shadow: none !important;
-            opacity: 0.001;
-            color: transparent !important;
-            font-size: 0 !important;
-            cursor: pointer;
-            pointer-events: auto !important;
+            text-align: left !important;
         }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-marker,
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-title,
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-description,
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-process,
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker) .module-card-summary {
-            pointer-events: none !important;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):has(div[data-testid="stButton"] > button:hover) {
-            border-color: #72b89f !important;
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
-        }
-        div[data-testid="stColumn"]:has(.module-card-marker):has(button:hover) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
-            border-color: #72b89f !important;
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker):has(button:focus-visible),
-        div[data-testid="stColumn"]:has(.module-card-marker):has(button:focus-visible) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
-            border-color: #16805d !important;
-            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16);
-        }
-        .module-card-title {
-            color: #0f172a;
-            font-size: 1.13rem;
-            font-weight: 760;
-            margin-bottom: 0.7rem;
-        }
-        .module-card-description {
+        div[class*="st-key-module_card_"] button p::after {
+            display: block;
+            min-height: 2.7rem;
+            margin-top: 0.7rem;
             color: #334155;
             font-size: 0.92rem;
-            min-height: 2.7rem;
+            font-weight: 400;
             line-height: 1.42;
         }
-        .module-card-process {
+        div[class*="st-key-module_card_"] button::before {
+            order: 2;
+            margin: 0.9rem 0 0.72rem;
             color: #526174;
             font-size: 0.84rem;
             font-weight: 620;
-            margin: 0.9rem 0 0.72rem;
+            line-height: 1.35;
         }
-        .module-card-summary {
+        div[class*="st-key-module_card_"] button::after {
+            order: 3;
             color: #667386;
             font-size: 0.84rem;
+            font-weight: 400;
             line-height: 1.45;
-            margin: 0;
+        }
+        div[class*="st-key-module_card_deal_approval"] button p::after {
+            content: "Commercial pricing and deal governance";
+        }
+        div[class*="st-key-module_card_deal_approval"] button::before {
+            content: "Prepare · Enrich · Review · Decide";
+        }
+        div[class*="st-key-module_card_deal_approval"] button::after {
+            content: "Evaluate pricing, commercial terms and approval readiness.";
+        }
+        div[class*="st-key-module_card_launch_sandbox"] button p::after {
+            content: "Cross-functional launch planning, readiness and decision preparation";
+        }
+        div[class*="st-key-module_card_launch_sandbox"] button::before {
+            content: "Collaborate · Validate · Build Case · Decide";
+        }
+        div[class*="st-key-module_card_launch_sandbox"] button::after {
+            content: "Align cross-functional launch plans and surface readiness gaps.";
+        }
+        div[class*="st-key-module_card_investment_case"] button p::after {
+            content: "Integrated investment modelling, financing and capital allocation";
+        }
+        div[class*="st-key-module_card_investment_case"] button::before {
+            content: "Model · Finance · Stress-test · Decide";
+        }
+        div[class*="st-key-module_card_investment_case"] button::after {
+            content: "Model returns, financing, sensitivities and capital allocation.";
         }
         section.main:has(.platform-home-marker) {
             background: #ffffff;
@@ -884,12 +884,12 @@ def inject_css() -> None:
                 padding-left: 0 !important;
                 padding-right: 0 !important;
             }
-            div[data-testid="stVerticalBlockBorderWrapper"]:has(.module-card-marker),
-            div[data-testid="stColumn"]:has(.module-card-marker) > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
-                min-height: auto;
+            div[class*="st-key-module_card_"] button {
+                height: auto !important;
+                min-height: 13.5rem !important;
                 padding: 20px !important;
             }
-            .module-card-description {
+            div[class*="st-key-module_card_"] button p::after {
                 min-height: 0;
             }
         }
@@ -4658,17 +4658,7 @@ def page_platform_home() -> None:
 
     cols = st.columns(3)
     for col, spec in zip(cols, card_specs):
-        with col.container(border=True):
-            st.markdown("<span class='module-card-marker'></span>", unsafe_allow_html=True)
-            st.markdown(
-                f"""
-                <div class="module-card-title">{spec["title"]}</div>
-                <div class="module-card-description">{spec["description"]}</div>
-                <div class="module-card-process">{spec["process"]}</div>
-                <div class="module-card-summary">{spec["summary"]}</div>
-                """,
-                unsafe_allow_html=True,
-            )
+        with col:
             if st.button(spec["title"], key=f"module_card_{spec['title'].lower().replace(' ', '_')}", disabled=not spec["enabled"]):
                 open_platform_module(spec["module"])
                 st.rerun()
