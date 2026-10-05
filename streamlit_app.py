@@ -4619,7 +4619,7 @@ def page_platform_home() -> None:
         with col:
             st.markdown(
                 f"""
-                <a class="platform-module-card" href="{spec['path']}" target="_self">
+                <a class="platform-module-card" href="{spec['path']}" target="_top">
                     <div class="module-card-title">{spec['title']}</div>
                     <div class="module-card-description">{spec['description']}</div>
                     <div class="module-card-process">{spec['process']}</div>
