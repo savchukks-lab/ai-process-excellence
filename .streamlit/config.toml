@@ -10,3 +10,5 @@ font = "sans serif"
 headless = true
 runOnSave = false
 
+[client]
+showSidebarNavigation = false

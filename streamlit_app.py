@@ -4571,16 +4571,6 @@ def open_platform_module(module: str) -> None:
     st.session_state.selected_investment_case_id = None
 
 
-def apply_platform_module_query() -> None:
-    requested_module = st.query_params.get("module")
-    if isinstance(requested_module, list):
-        requested_module = requested_module[0] if requested_module else None
-    if requested_module not in {"deal", "launch", "investment"}:
-        return
-    open_platform_module(str(requested_module))
-    del st.query_params["module"]
-
-
 def page_platform_home() -> None:
     st.markdown("<span class='platform-home-marker'></span>", unsafe_allow_html=True)
     st.markdown(
@@ -4602,6 +4592,7 @@ def page_platform_home() -> None:
             "summary": "Evaluate pricing, commercial terms and approval readiness.",
             "enabled": True,
             "module": "deal",
+            "path": "/deal-approval",
         },
         {
             "title": "Launch Sandbox",
@@ -4610,6 +4601,7 @@ def page_platform_home() -> None:
             "summary": "Align cross-functional launch plans and surface readiness gaps.",
             "enabled": True,
             "module": "launch",
+            "path": "/launch-sandbox",
         },
         {
             "title": "Investment Case",
@@ -4618,6 +4610,7 @@ def page_platform_home() -> None:
             "summary": "Model returns, financing, sensitivities and capital allocation.",
             "enabled": True,
             "module": "investment",
+            "path": "/investment-case",
         },
     ]
 
@@ -4626,7 +4619,7 @@ def page_platform_home() -> None:
         with col:
             st.markdown(
                 f"""
-                <a class="platform-module-card" href="?module={spec['module']}" target="_self">
+                <a class="platform-module-card" href="{spec['path']}" target="_self">
                     <div class="module-card-title">{spec['title']}</div>
                     <div class="module-card-description">{spec['description']}</div>
                     <div class="module-card-process">{spec['process']}</div>
@@ -6799,10 +6792,9 @@ def launch_top_navigation() -> None:
     nav_cols[0].markdown("<span class='module-nav-marker'></span>", unsafe_allow_html=True)
     if nav_cols[0].button("Platform Home", key="launch_platform_home"):
         clear_launch_case_selection()
-        st.session_state.current_module = "platform_home"
         st.session_state.launch_page = "Launch Sandbox Home"
         st.session_state.selected_launch_case_id = None
-        st.rerun()
+        st.switch_page("streamlit_app.py")
     nav_cols[1].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'Launch Sandbox Home' else ''}'></span>", unsafe_allow_html=True)
     if nav_cols[1].button("Launch Sandbox Home", key="launch_home"):
         clear_launch_case_selection()
@@ -11570,10 +11562,9 @@ def investment_top_navigation() -> None:
     nav[0].markdown("<span class='module-nav-marker'></span>", unsafe_allow_html=True)
     if nav[0].button("Platform Home", key="investment_platform_home"):
         clear_investment_case_selection()
-        st.session_state.current_module = "platform_home"
         st.session_state.investment_page = "Investment Case Home"
         st.session_state.selected_investment_case_id = None
-        st.rerun()
+        st.switch_page("streamlit_app.py")
     nav[1].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'Investment Case Home' else ''}'></span>", unsafe_allow_html=True)
     if nav[1].button("Investment Case Home", key="investment_home"):
         clear_investment_case_selection()
@@ -16435,8 +16426,7 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
             st.session_state.deal_list_selected_deal_id = None
             st.session_state.approval_queue_selected_deal_id = None
             st.session_state.current_page = "Deal Request List"
-            st.session_state.current_module = "platform_home"
-            st.rerun()
+            st.switch_page("streamlit_app.py")
         nav_cols[1].markdown(f"<span class='module-nav-marker {'module-nav-active' if current_page == 'Deal Request List' else ''}'></span>", unsafe_allow_html=True)
         if nav_cols[1].button("Deal Approval Home", key="top_navigation_home"):
             clear_deal_editor_state()
@@ -16501,10 +16491,13 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
     return st.session_state.current_page
 
 
-def main() -> None:
+def render_registered_page(module: str) -> None:
     log_runtime_checkpoint("startup")
     init_state()
-    apply_platform_module_query()
+    if module == "platform_home":
+        st.session_state.current_module = "platform_home"
+    elif st.session_state.get("current_module") != module:
+        open_platform_module(module)
     if os.environ.get("APP_DIAGNOSTIC_MODE") == "1":
         st.title("Deal Desk Copilot")
         st.write("Diagnostic mode is active. Core imports and session initialization completed.")
@@ -16513,14 +16506,13 @@ def main() -> None:
     data = load_demo_data()
     log_runtime_checkpoint("after demo data load")
     seed_demo_workflow_state(data)
-    current_module = st.session_state.get("current_module", "platform_home")
-    if current_module == "platform_home":
+    if module == "platform_home":
         page_platform_home()
         return
-    if current_module == "launch":
+    if module == "launch":
         page_launch_sandbox(data)
         return
-    if current_module == "investment":
+    if module == "investment":
         page_investment_case_module()
         return
 
@@ -16545,6 +16537,10 @@ def main() -> None:
         page_delegate_administration(data)
     elif page == "Audit Log":
         page_audit_log(data)
+
+
+def main() -> None:
+    render_registered_page("platform_home")
 
 
 if __name__ == "__main__":
