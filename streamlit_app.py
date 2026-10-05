@@ -659,108 +659,68 @@ def inject_css() -> None:
             font-size: 0.96rem;
             margin-top: 0.32rem;
         }
-        div[class*="st-key-module_card_"] {
-            height: 100%;
-        }
-        div[class*="st-key-module_card_"] div[data-testid="stButton"] {
-            height: 100%;
-        }
-        div[class*="st-key-module_card_"] button {
+        .platform-module-card,
+        .platform-module-card:link,
+        .platform-module-card:visited {
             box-sizing: border-box;
-            display: flex !important;
+            display: flex;
             flex-direction: column;
             align-items: flex-start;
             justify-content: flex-start;
-            width: 100% !important;
-            height: 13.5rem !important;
-            padding: 26px !important;
+            width: 100%;
+            height: 13.5rem;
+            margin-bottom: 1rem;
+            padding: 26px;
             overflow: hidden;
-            cursor: pointer !important;
-            text-align: left !important;
-            white-space: normal !important;
-            background: #ffffff !important;
-            border: 1px solid #d9e0e8 !important;
-            border-radius: 12px !important;
-            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.04) !important;
-            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease !important;
+            cursor: pointer;
+            text-align: left;
+            text-decoration: none !important;
+            background: #ffffff;
+            border: 1px solid #d9e0e8;
+            border-radius: 12px;
+            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.04);
+            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
-        div[class*="st-key-module_card_"] button:hover {
-            color: inherit !important;
-            border-color: #72b89f !important;
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09) !important;
+        .platform-module-card:hover {
+            text-decoration: none !important;
+            border-color: #72b89f;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
             transform: translateY(-1px);
         }
-        div[class*="st-key-module_card_"] button:focus-visible {
-            border-color: #16805d !important;
-            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16) !important;
-            outline: none !important;
+        .platform-module-card:focus-visible {
+            border-color: #16805d;
+            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16);
+            outline: none;
         }
-        div[class*="st-key-module_card_"] button p {
-            order: 1;
-            width: 100%;
-            color: #0f172a !important;
-            font-size: 1.13rem !important;
-            font-weight: 760 !important;
-            line-height: 1.25 !important;
-            text-align: left !important;
-            margin: 0 !important;
+        .platform-module-card:hover .module-card-title {
+            color: #146b52;
         }
-        div[class*="st-key-module_card_"] button > div,
-        div[class*="st-key-module_card_"] button div[data-testid="stMarkdownContainer"] {
-            display: block !important;
-            width: 100% !important;
-            text-align: left !important;
+        .module-card-title {
+            color: #0f172a;
+            font-size: 1.13rem;
+            font-weight: 760;
+            line-height: 1.25;
+            margin: 0 0 0.7rem;
+            transition: color 140ms ease;
         }
-        div[class*="st-key-module_card_"] button p::after {
-            display: block;
+        .module-card-description {
             min-height: 2.7rem;
-            margin-top: 0.7rem;
             color: #334155;
             font-size: 0.92rem;
-            font-weight: 400;
             line-height: 1.42;
         }
-        div[class*="st-key-module_card_"] button::before {
-            order: 2;
-            margin: 0.9rem 0 0.72rem;
+        .module-card-process {
             color: #526174;
             font-size: 0.84rem;
             font-weight: 620;
             line-height: 1.35;
+            margin: 0.9rem 0 0.72rem;
         }
-        div[class*="st-key-module_card_"] button::after {
-            order: 3;
+        .module-card-summary {
             color: #667386;
             font-size: 0.84rem;
-            font-weight: 400;
             line-height: 1.45;
-        }
-        div[class*="st-key-module_card_deal_approval"] button p::after {
-            content: "Commercial pricing and deal governance";
-        }
-        div[class*="st-key-module_card_deal_approval"] button::before {
-            content: "Prepare · Enrich · Review · Decide";
-        }
-        div[class*="st-key-module_card_deal_approval"] button::after {
-            content: "Evaluate pricing, commercial terms and approval readiness.";
-        }
-        div[class*="st-key-module_card_launch_sandbox"] button p::after {
-            content: "Cross-functional launch planning, readiness and decision preparation";
-        }
-        div[class*="st-key-module_card_launch_sandbox"] button::before {
-            content: "Collaborate · Validate · Build Case · Decide";
-        }
-        div[class*="st-key-module_card_launch_sandbox"] button::after {
-            content: "Align cross-functional launch plans and surface readiness gaps.";
-        }
-        div[class*="st-key-module_card_investment_case"] button p::after {
-            content: "Integrated investment modelling, financing and capital allocation";
-        }
-        div[class*="st-key-module_card_investment_case"] button::before {
-            content: "Model · Finance · Stress-test · Decide";
-        }
-        div[class*="st-key-module_card_investment_case"] button::after {
-            content: "Model returns, financing, sensitivities and capital allocation.";
+            margin: 0;
         }
         section.main:has(.platform-home-marker) {
             background: #ffffff;
@@ -884,12 +844,12 @@ def inject_css() -> None:
                 padding-left: 0 !important;
                 padding-right: 0 !important;
             }
-            div[class*="st-key-module_card_"] button {
-                height: auto !important;
-                min-height: 13.5rem !important;
-                padding: 20px !important;
+            .platform-module-card {
+                height: auto;
+                min-height: 13.5rem;
+                padding: 20px;
             }
-            div[class*="st-key-module_card_"] button p::after {
+            .module-card-description {
                 min-height: 0;
             }
         }
@@ -4616,6 +4576,16 @@ def open_platform_module(module: str) -> None:
     st.session_state.selected_investment_case_id = None
 
 
+def apply_platform_module_query() -> None:
+    requested_module = st.query_params.get("module")
+    if isinstance(requested_module, list):
+        requested_module = requested_module[0] if requested_module else None
+    if requested_module not in {"deal", "launch", "investment"}:
+        return
+    open_platform_module(str(requested_module))
+    del st.query_params["module"]
+
+
 def page_platform_home() -> None:
     st.markdown("<span class='platform-home-marker'></span>", unsafe_allow_html=True)
     st.markdown(
@@ -4659,9 +4629,17 @@ def page_platform_home() -> None:
     cols = st.columns(3)
     for col, spec in zip(cols, card_specs):
         with col:
-            if st.button(spec["title"], key=f"module_card_{spec['title'].lower().replace(' ', '_')}", disabled=not spec["enabled"]):
-                open_platform_module(spec["module"])
-                st.rerun()
+            st.markdown(
+                f"""
+                <a class="platform-module-card" href="?module={spec['module']}" target="_self">
+                    <div class="module-card-title">{spec['title']}</div>
+                    <div class="module-card-description">{spec['description']}</div>
+                    <div class="module-card-process">{spec['process']}</div>
+                    <div class="module-card-summary">{spec['summary']}</div>
+                </a>
+                """,
+                unsafe_allow_html=True,
+            )
 
     remaining = platform_ai_questions_remaining()
     with st.container(border=True):
@@ -16531,6 +16509,7 @@ def top_navigation(data: dict[str, pd.DataFrame]) -> str:
 def main() -> None:
     log_runtime_checkpoint("startup")
     init_state()
+    apply_platform_module_query()
     if os.environ.get("APP_DIAGNOSTIC_MODE") == "1":
         st.title("Deal Desk Copilot")
         st.write("Diagnostic mode is active. Core imports and session initialization completed.")
