@@ -695,21 +695,21 @@ def inject_css() -> None:
         .platform-module-card:hover .module-card-title {
             color: #146b52;
         }
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host) {
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host) {
             position: relative;
         }
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
-            > div[data-testid="stElementContainer"]:has([data-testid="stPageLink"]) {
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host)
+            > div:is([data-testid="stElementContainer"], [data-testid="element-container"]):has([data-testid="stPageLink"]) {
             position: absolute;
             inset: 0;
             z-index: 4;
             margin: 0;
         }
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host)
             [data-testid="stPageLink"],
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host)
             [data-testid="stPageLink"] > div,
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host)
             [data-testid="stPageLink"] a {
             width: 100%;
             height: 100%;
@@ -718,21 +718,21 @@ def inject_css() -> None:
             padding: 0;
             cursor: pointer;
         }
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host)
             [data-testid="stPageLink"] a {
             opacity: 0;
         }
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host):hover
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host):hover
             .platform-module-card {
             border-color: #72b89f;
             box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
             transform: translateY(-1px);
         }
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host):hover
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host):hover
             .module-card-title {
             color: #146b52;
         }
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host):has([data-testid="stPageLink"] a:focus-visible)
+        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host):has([data-testid="stPageLink"] a:focus-visible)
             .platform-module-card {
             border-color: #16805d;
             box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16);
