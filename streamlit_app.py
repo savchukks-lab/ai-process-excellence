@@ -678,22 +678,22 @@ def inject_css() -> None:
             background: #ffffff;
             border: 1px solid #d9e0e8;
             border-radius: 12px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.025);
-            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+            box-shadow: none;
+            transition: border-color 140ms ease;
         }
         .platform-module-card:hover {
             text-decoration: none !important;
             border-color: #72b89f;
-            box-shadow: 0 5px 14px rgba(15, 23, 42, 0.055);
-            transform: translateY(-1px);
+            box-shadow: none;
+            transform: none;
         }
         .platform-module-card:focus-visible {
             border-color: #16805d;
-            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16);
+            box-shadow: none;
             outline: none;
         }
-        .platform-module-card:hover .module-card-title {
-            color: #146b52;
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.platform-module-route-host) {
+            box-shadow: none !important;
         }
         div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host) {
             position: relative;
@@ -725,17 +725,13 @@ def inject_css() -> None:
         div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host):hover
             .platform-module-card {
             border-color: #72b89f;
-            box-shadow: 0 5px 14px rgba(15, 23, 42, 0.055);
-            transform: translateY(-1px);
-        }
-        div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host):hover
-            .module-card-title {
-            color: #146b52;
+            box-shadow: none;
+            transform: none;
         }
         div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host):has([data-testid="stPageLink"] a:focus-visible)
             .platform-module-card {
             border-color: #16805d;
-            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16);
+            box-shadow: none;
         }
         .module-card-title {
             color: #0f172a;
@@ -811,6 +807,21 @@ def inject_css() -> None:
             padding: 0;
             margin-top: 0.75rem;
             background: transparent;
+            box-shadow: none !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.platform-ai-container-marker),
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stVerticalBlockBorderWrapper"],
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) [data-testid="textInputRootElement"],
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) [data-baseweb="input"],
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stTextInput"] input {
+            box-shadow: none !important;
+        }
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stTextInput"] input:focus-visible,
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) [data-testid="textInputRootElement"]:focus-within,
+        div[data-testid="stForm"]:has(.platform-ai-form-marker) [data-baseweb="input"]:focus-within {
+            border-color: #16805d !important;
+            box-shadow: none !important;
         }
         div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stHorizontalBlock"] {
             flex-wrap: nowrap !important;
@@ -849,6 +860,8 @@ def inject_css() -> None:
         div[data-testid="stForm"]:has(.platform-ai-form-marker) div[data-testid="stFormSubmitButton"] button:focus-visible {
             color: #0f5f49 !important;
             background: transparent !important;
+            box-shadow: none !important;
+            transform: none !important;
             text-decoration: underline;
             text-underline-offset: 3px;
         }
