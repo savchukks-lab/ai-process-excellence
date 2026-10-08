@@ -678,13 +678,13 @@ def inject_css() -> None:
             background: #ffffff;
             border: 1px solid #d9e0e8;
             border-radius: 12px;
-            box-shadow: 0 5px 16px rgba(15, 23, 42, 0.04);
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.025);
             transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
         .platform-module-card:hover {
             text-decoration: none !important;
             border-color: #72b89f;
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
+            box-shadow: 0 5px 14px rgba(15, 23, 42, 0.055);
             transform: translateY(-1px);
         }
         .platform-module-card:focus-visible {
@@ -725,7 +725,7 @@ def inject_css() -> None:
         div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host):hover
             .platform-module-card {
             border-color: #72b89f;
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
+            box-shadow: 0 5px 14px rgba(15, 23, 42, 0.055);
             transform: translateY(-1px);
         }
         div[data-testid="stVerticalBlock"]:has(> div:is([data-testid="stElementContainer"], [data-testid="element-container"]) .platform-module-route-host):hover
