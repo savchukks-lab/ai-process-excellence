@@ -695,6 +695,48 @@ def inject_css() -> None:
         .platform-module-card:hover .module-card-title {
             color: #146b52;
         }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host) {
+            position: relative;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+            > div[data-testid="stElementContainer"]:has([data-testid="stPageLink"]) {
+            position: absolute;
+            inset: 0;
+            z-index: 4;
+            margin: 0;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+            [data-testid="stPageLink"],
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+            [data-testid="stPageLink"] > div,
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+            [data-testid="stPageLink"] a {
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+            margin: 0;
+            padding: 0;
+            cursor: pointer;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host)
+            [data-testid="stPageLink"] a {
+            opacity: 0;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host):hover
+            .platform-module-card {
+            border-color: #72b89f;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
+            transform: translateY(-1px);
+        }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host):hover
+            .module-card-title {
+            color: #146b52;
+        }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .platform-module-route-host):has([data-testid="stPageLink"] a:focus-visible)
+            .platform-module-card {
+            border-color: #16805d;
+            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.16);
+        }
         .module-card-title {
             color: #0f172a;
             font-size: 1.13rem;
@@ -4592,7 +4634,7 @@ def page_platform_home() -> None:
             "summary": "Evaluate pricing, commercial terms and approval readiness.",
             "enabled": True,
             "module": "deal",
-            "path": "/deal-approval",
+            "page": "pages/deal-approval.py",
         },
         {
             "title": "Launch Sandbox",
@@ -4601,7 +4643,7 @@ def page_platform_home() -> None:
             "summary": "Align cross-functional launch plans and surface readiness gaps.",
             "enabled": True,
             "module": "launch",
-            "path": "/launch-sandbox",
+            "page": "pages/launch-sandbox.py",
         },
         {
             "title": "Investment Case",
@@ -4610,24 +4652,27 @@ def page_platform_home() -> None:
             "summary": "Model returns, financing, sensitivities and capital allocation.",
             "enabled": True,
             "module": "investment",
-            "path": "/investment-case",
+            "page": "pages/investment-case.py",
         },
     ]
 
     cols = st.columns(3)
     for col, spec in zip(cols, card_specs):
         with col:
-            st.markdown(
-                f"""
-                <a class="platform-module-card" href="{spec['path']}" target="_top">
-                    <div class="module-card-title">{spec['title']}</div>
-                    <div class="module-card-description">{spec['description']}</div>
-                    <div class="module-card-process">{spec['process']}</div>
-                    <div class="module-card-summary">{spec['summary']}</div>
-                </a>
-                """,
-                unsafe_allow_html=True,
-            )
+            with st.container():
+                st.markdown(
+                    f"""
+                    <span class="platform-module-route-host"></span>
+                    <div class="platform-module-card">
+                        <div class="module-card-title">{spec['title']}</div>
+                        <div class="module-card-description">{spec['description']}</div>
+                        <div class="module-card-process">{spec['process']}</div>
+                        <div class="module-card-summary">{spec['summary']}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.page_link(spec["page"], label=spec["title"], use_container_width=True)
 
     remaining = platform_ai_questions_remaining()
     with st.container(border=True):
