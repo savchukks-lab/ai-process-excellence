@@ -330,7 +330,7 @@ def inject_css() -> None:
             margin-top: 0.9rem;
             border-radius: 12px;
             border: 1px solid #d7dee8;
-            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+            box-shadow: none;
             overflow: hidden;
         }
         div[data-testid="stExpander"] details summary {
@@ -370,7 +370,8 @@ def inject_css() -> None:
             color: #0f513f;
             background: #ffffff;
             border-color: #16805d;
-            box-shadow: inset 0 -3px 0 #16805d;
+            box-shadow: none;
+            border-bottom: 3px solid #16805d;
         }
         div[data-testid="stTabs"] button[data-baseweb="tab"] p {
             color: inherit !important;
@@ -381,7 +382,7 @@ def inject_css() -> None:
         div[data-testid="stVerticalBlockBorderWrapper"] {
             border-radius: 12px;
             border-color: #d7dee8 !important;
-            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.045);
+            box-shadow: none;
             background: #ffffff;
         }
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.approval-action-marker) {
@@ -389,7 +390,7 @@ def inject_css() -> None:
             top: 0.75rem;
             z-index: 20;
             background: #ffffff;
-            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+            box-shadow: none;
         }
         hr {
             margin: 0.55rem 0 !important;
@@ -401,12 +402,12 @@ def inject_css() -> None:
             padding: 13px 15px;
             min-height: 92px;
             height: 100%;
-            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.055);
-            transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+            box-shadow: none;
+            transition: border-color 140ms ease;
         }
         [data-testid="stMetric"]:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+            transform: none;
+            box-shadow: none;
             border-color: #c4cedb;
         }
         [data-testid="stMetric"] label {
@@ -430,14 +431,14 @@ def inject_css() -> None:
             border-color: #cbd5e1;
             color: #1f2937;
             font-weight: 650;
-            transition: background 140ms ease, border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+            transition: background 140ms ease, border-color 140ms ease;
         }
         div[data-testid="stButton"] button:hover,
         div[data-testid="stPopover"] button:hover {
-            transform: translateY(-1px);
+            transform: none;
             background: #f8fafc;
             border-color: #9fb0c2;
-            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+            box-shadow: none;
         }
         div[data-testid="stButton"] button:disabled,
         div[data-testid="stPopover"] button:disabled {
@@ -556,7 +557,7 @@ def inject_css() -> None:
         div[data-testid="stNumberInput"] input:focus,
         div[data-testid="stDateInput"] input:focus {
             border-color: #16805d !important;
-            box-shadow: 0 0 0 3px rgba(22, 128, 93, 0.09) !important;
+            box-shadow: none !important;
         }
         div[data-testid="stRadio"] {
             margin: 0.1rem 0 0.6rem;
@@ -567,7 +568,7 @@ def inject_css() -> None:
         div[data-testid="stDataFrame"] {
             border: 1px solid #d7dee8;
             border-radius: 10px;
-            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+            box-shadow: none;
             overflow: hidden;
             margin: 0.25rem 0 0.85rem;
         }
@@ -583,7 +584,7 @@ def inject_css() -> None:
             border: 1px solid #d7dee8;
             border-radius: 10px;
             overflow: hidden;
-            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+            box-shadow: none;
             margin: 0.25rem 0 0.85rem;
         }
         div[data-testid="stTable"] table {
@@ -609,7 +610,7 @@ def inject_css() -> None:
             border-radius: 14px;
             padding: 1rem 1.15rem;
             margin: 0.65rem 0 1.15rem;
-            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+            box-shadow: none;
         }
         .home-hero-eyebrow {
             color: #16805d;
@@ -1157,15 +1158,17 @@ def inject_css() -> None:
             padding: 0.42rem 0.6rem;
             align-items: center;
             min-height: 3.25rem;
-            transition: background 120ms ease, box-shadow 120ms ease;
+            transition: background 120ms ease, border-color 120ms ease;
         }
         div[data-testid="stHorizontalBlock"]:has(.deal-row-marker):hover {
             background: #f8fafc;
-            box-shadow: inset 3px 0 0 #d5e7df;
+            box-shadow: none;
+            border-left-color: #9fcfc1;
         }
         div[data-testid="stHorizontalBlock"]:has(.deal-row-selected-marker) {
             background: #f5faf7;
-            box-shadow: inset 3px 0 0 #16805d;
+            box-shadow: none;
+            border-left: 3px solid #16805d;
         }
         .deal-cell {
             color: #1f2937;
@@ -1200,7 +1203,7 @@ def inject_css() -> None:
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.preview-shell-marker) {
             border-radius: 14px;
             background: #ffffff;
-            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+            box-shadow: none;
             margin-top: 1.05rem;
         }
         .preview-block-title {
@@ -1350,7 +1353,7 @@ def inject_css() -> None:
             background: #eff6ff;
             border-color: #93c5fd;
             color: #1d4ed8;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+            box-shadow: none;
         }
         .approval-step-upcoming {
             background: #ffffff;
@@ -1487,16 +1490,18 @@ def inject_css() -> None:
                 border: 1px solid #d7dee8;
                 border-radius: 12px;
                 background: #ffffff;
-                box-shadow: 0 8px 22px rgba(15, 23, 42, 0.045);
+                box-shadow: none;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker):hover {
                 background: #fbfdff;
-                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.065);
+                box-shadow: none;
+                border-color: #b9c7d5;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-selected-marker) {
                 background: #f5faf7;
                 border-color: #b7dbc9;
-                box-shadow: inset 3px 0 0 #16805d, 0 8px 22px rgba(15, 23, 42, 0.045);
+                border-left: 3px solid #16805d;
+                box-shadow: none;
             }
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="stColumn"],
             div[data-testid="stHorizontalBlock"]:has(.deal-row-marker) > div[data-testid="column"] {
